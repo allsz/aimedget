@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 278 700" width="556" height="1400"><title>Tonearm (pivot 118,100 - stylus 99,665)</title>
+  <defs>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#262c35"/><stop offset="1" stop-color="#0c1016"/></linearGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2b3138"/><stop offset="0.2" stop-color="#d4d9de"/><stop offset="0.5" stop-color="#ffffff"/>
+      <stop offset="0.8" stop-color="#aeb6bd"/><stop offset="1" stop-color="#2b3138"/>
+    </linearGradient>
+    <filter id="sh" x="-30%" y="-10%" width="170%" height="130%"><feDropShadow dx="5" dy="9" stdDeviation="6" flood-color="#00142b" flood-opacity="0.35"/></filter>
+  </defs>
+  <g filter="url(#sh)">
+    <!-- counterweight -->
+    <rect x="82" y="62" width="56" height="70" rx="3" fill="url(#dark)"/>
+    <rect x="86" y="66" width="48" height="3" rx="1.5" fill="#fff" fill-opacity="0.12"/>
+    <!-- elbow -->
+    <path d="M132,76 H164 Q172,76 172,85 L168,172 H146 L149,98 H132 Z" fill="url(#dark)"/>
+    <path d="M150,100 L148,168" stroke="#fff" stroke-opacity="0.10" stroke-width="2"/>
+    <!-- tube -->
+    <rect x="146" y="168" width="17" height="368" fill="url(#tube)"/>
+    <!-- collar + headshell -->
+    <g transform="translate(155,530) rotate(20)">
+      <path d="M-9,-6 H9 L16,36 H-14 Z" fill="url(#dark)"/>
+      <rect x="-17" y="30" width="36" height="106" rx="7" fill="url(#dark)"/>
+      <rect x="15" y="52" width="13" height="30" rx="3" fill="#2a313b"/>
+      <rect x="-12" y="36" width="4" height="86" rx="2" fill="#fff" fill-opacity="0.10"/>
+      <path d="M-7,136 L-6,146" stroke="#c9d3dc" stroke-width="2.2" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

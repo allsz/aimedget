@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 700" width="960" height="1400">
+  <title>Tonearm swinging in and out of the record</title>
+  <style>
+    .arm{transform-origin:318px 100px;animation:swing 7s cubic-bezier(.45,0,.25,1) infinite}
+    @keyframes swing{
+      0%,12%{transform:rotate(-22.0deg)}
+      32%{transform:rotate(19.5deg)} 36%{transform:rotate(17.2deg)} 40%{transform:rotate(17.7deg)}
+      72%{transform:rotate(22.2deg)}
+      90%,100%{transform:rotate(-22.0deg)}
+    }
+    @media (prefers-reduced-motion:reduce){.arm{animation:none}}
+  </style>
+  <rect width="480" height="700" fill="#1566a3"/>
+  <circle cx="68" cy="398" r="339" fill="#0b0b0d"/><circle cx="68" cy="398" r="325" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="316" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="307" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="298" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="289" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="280" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="271" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="262" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="253" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="244" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="235" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="226" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="217" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="208" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="199" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="190" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="181" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="172" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="163" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="154" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="145" fill="none" stroke="#fff" stroke-opacity="0.17"/><circle cx="68" cy="398" r="136" fill="none" stroke="#fff" stroke-opacity="0.07"/><circle cx="68" cy="398" r="127" fill="none" stroke="#fff" stroke-opacity="0.12"/><circle cx="68" cy="398" r="118" fill="none" stroke="#fff" stroke-opacity="0.17"/>
+  
+  <defs>
+    <linearGradient id="dark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#262c35"/><stop offset="1" stop-color="#0c1016"/></linearGradient>
+    <linearGradient id="tube" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2b3138"/><stop offset="0.2" stop-color="#d4d9de"/><stop offset="0.5" stop-color="#ffffff"/>
+      <stop offset="0.8" stop-color="#aeb6bd"/><stop offset="1" stop-color="#2b3138"/>
+    </linearGradient>
+    <filter id="sh" x="-30%" y="-10%" width="170%" height="130%"><feDropShadow dx="5" dy="9" stdDeviation="6" flood-color="#00142b" flood-opacity="0.35"/></filter>
+  </defs>
+  <g transform="translate(200,0)"><defs><linearGradient id="bp" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0a2c52" stop-opacity="0.55"/><stop offset="1" stop-color="#04162c" stop-opacity="0.35"/></linearGradient></defs><rect x="40.5" y="9.5" width="181" height="277" rx="90.5" fill="url(#bp)" stroke="#fff" stroke-opacity="0.14" stroke-width="2"/><rect x="48" y="17" width="166" height="262" rx="83" fill="none" stroke="#000" stroke-opacity="0.18" stroke-width="2"/></g>
+  <g class="arm"><g transform="translate(200,0)">
+  <g filter="url(#sh)">
+    <!-- counterweight -->
+    <rect x="82" y="62" width="56" height="70" rx="3" fill="url(#dark)"/>
+    <rect x="86" y="66" width="48" height="3" rx="1.5" fill="#fff" fill-opacity="0.12"/>
+    <!-- elbow -->
+    <path d="M132,76 H164 Q172,76 172,85 L168,172 H146 L149,98 H132 Z" fill="url(#dark)"/>
+    <path d="M150,100 L148,168" stroke="#fff" stroke-opacity="0.10" stroke-width="2"/>
+    <!-- tube -->
+    <rect x="146" y="168" width="17" height="368" fill="url(#tube)"/>
+    <!-- collar + headshell -->
+    <g transform="translate(155,530) rotate(20)">
+      <path d="M-9,-6 H9 L16,36 H-14 Z" fill="url(#dark)"/>
+      <rect x="-17" y="30" width="36" height="106" rx="7" fill="url(#dark)"/>
+      <rect x="15" y="52" width="13" height="30" rx="3" fill="#2a313b"/>
+      <rect x="-12" y="36" width="4" height="86" rx="2" fill="#fff" fill-opacity="0.10"/>
+      <path d="M-7,136 L-6,146" stroke="#c9d3dc" stroke-width="2.2" stroke-linecap="round"/>
+    </g>
+  </g></g></g>
+</svg>

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 680" width="100%" height="100%">
+  <defs>
+    <!-- Gradiente da base escura -->
+    <radialGradient id="baseGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1e262c" />
+      <stop offset="75%" stop-color="#101518" />
+      <stop offset="100%" stop-color="#090c0e" />
+    </radialGradient>
+
+    <!-- Metal cromado do pivô -->
+    <linearGradient id="chromeGimbal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8a9399" />
+      <stop offset="25%" stop-color="#d5dde2" />
+      <stop offset="50%" stop-color="#ffffff" />
+      <stop offset="75%" stop-color="#8f99a0" />
+      <stop offset="100%" stop-color="#4e565c" />
+    </linearGradient>
+
+    <filter id="subtleShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="5" stdDeviation="4" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- ================= BASE CIRCULAR FIXA ================= -->
+  <g id="base-gimbal">
+    <circle cx="230" cy="125" r="92" fill="#000000" opacity="0.15" />
+    <circle cx="230" cy="125" r="88" fill="none" stroke="#25303a" stroke-width="2" />
+    <circle cx="230" cy="125" r="82" fill="url(#baseGrad)" stroke="#1a2026" stroke-width="3" filter="url(#subtleShadow)" />
+    <circle cx="230" cy="125" r="56" fill="none" stroke="#2b3640" stroke-width="3" />
+    <circle cx="230" cy="125" r="54" fill="#0d1114" />
+    <circle cx="230" cy="125" r="34" fill="url(#chromeGimbal)" stroke="#4a5257" stroke-width="1.5" />
+    <circle cx="230" cy="125" r="24" fill="#181d21" />
+    <circle cx="230" cy="125" r="14" fill="url(#chromeGimbal)" />
+    <circle cx="230" cy="125" r="6" fill="#0a0d0f" />
+  </g>
+</svg>
+

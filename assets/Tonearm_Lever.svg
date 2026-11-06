@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 680" width="100%" height="100%">
+  <defs>
+    <!-- Metal cromado do pivô -->
+    <linearGradient id="chromeGimbal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8a9399" />
+      <stop offset="25%" stop-color="#d5dde2" />
+      <stop offset="50%" stop-color="#ffffff" />
+      <stop offset="75%" stop-color="#8f99a0" />
+      <stop offset="100%" stop-color="#4e565c" />
+    </linearGradient>
+
+    <!-- Metal do tubo do braço -->
+    <linearGradient id="armMetal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#737c82" />
+      <stop offset="20%" stop-color="#b8c2c7" />
+      <stop offset="45%" stop-color="#ffffff" />
+      <stop offset="75%" stop-color="#939ca2" />
+      <stop offset="100%" stop-color="#4f565b" />
+    </linearGradient>
+
+    <!-- Peças pretas foscas -->
+    <linearGradient id="matteBlack" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2c3238" />
+      <stop offset="100%" stop-color="#121517" />
+    </linearGradient>
+
+    <filter id="subtleShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="5" stdDeviation="4" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- PIVÔ EM (230, 125) - Contrapeso para cima, Tubo e Cabeçote para baixo -->
+  <g id="arm-assembly">
+    <!-- Contrapeso (acima do pivô) -->
+    <g id="counterweight" filter="url(#subtleShadow)">
+      <rect x="214" y="44" width="32" height="12" rx="2" fill="#1c2125" />
+      <rect x="206" y="2" width="48" height="42" rx="5" fill="url(#chromeGimbal)" stroke="#3e454a" stroke-width="1.5" />
+      <line x1="210" y1="20" x2="250" y2="20" stroke="#252b30" stroke-width="1.2" stroke-dasharray="2 3" opacity="0.6" />
+      <rect x="222" y="44" width="16" height="46" fill="url(#chromeGimbal)" stroke="#4a5257" stroke-width="1" />
+    </g>
+
+    <!-- Tubo do braço (abaixo do pivô) -->
+    <g id="tonearm-tube" filter="url(#subtleShadow)">
+      <rect x="224" y="152" width="12" height="340" rx="6" fill="url(#armMetal)" />
+      <line x1="227" y1="156" x2="227" y2="488" stroke="#ffffff" stroke-width="1.5" opacity="0.8" />
+      <rect x="221" y="488" width="18" height="14" rx="2" fill="url(#matteBlack)" stroke="#0b0e10" stroke-width="1.5" />
+      <line x1="221" y1="495" x2="239" y2="495" stroke="#454f57" stroke-width="1" />
+    </g>
+
+    <!-- Cabeçote / Cápsula (Headshell angulado) -->
+    <g id="headshell" transform="translate(230, 502) rotate(24)" filter="url(#subtleShadow)">
+      <path d="M -13,0 L 13,0 L 10,72 L -10,72 Z" fill="url(#matteBlack)" stroke="#0e1214" stroke-width="1.5" />
+      <path d="M 13,18 C 28,24 32,32 30,42" fill="none" stroke="url(#chromeGimbal)" stroke-width="2.5" stroke-linecap="round" />
+      <circle cx="-5" cy="22" r="3.5" fill="url(#chromeGimbal)" />
+      <circle cx="5" cy="22" r="3.5" fill="url(#chromeGimbal)" />
+      <rect x="-8" y="72" width="16" height="10" rx="1.5" fill="#f5f7f8" stroke="#1d2226" stroke-width="1" />
+      <path d="M 0,78 L 0,84" stroke="#ff2a2a" stroke-width="1.8" stroke-linecap="round" />
+    </g>
+  </g>
+</svg>
+

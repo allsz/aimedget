@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 650 650" width="100%" height="100%">
+  <defs>
+    <!-- Gradiente de profundidade do vinil -->
+    <radialGradient id="vinylBody" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#141618" />
+      <stop offset="55%" stop-color="#0a0b0c" />
+      <stop offset="96%" stop-color="#17191b" />
+      <stop offset="100%" stop-color="#050506" />
+    </radialGradient>
+
+    <!-- Reflexos de luz / brilho característico do vinil (efeito anisotrópico) -->
+    <linearGradient id="sheenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.14" />
+      <stop offset="35%" stop-color="#ffffff" stop-opacity="0.01" />
+      <stop offset="65%" stop-color="#ffffff" stop-opacity="0.01" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.14" />
+    </linearGradient>
+
+    <!-- Cor do selo central (World Music Radio - Jon Batiste) -->
+    <linearGradient id="labelGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8ec5e8" />
+      <stop offset="100%" stop-color="#69aedb" />
+    </linearGradient>
+
+    <!-- Sombra projetada do disco -->
+    <filter id="vinylDropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <g id="vinyl-disc" filter="url(#vinylDropShadow)">
+    <!-- Borda externa e base do disco -->
+    <circle cx="325" cy="325" r="300" fill="url(#vinylBody)" stroke="#222629" stroke-width="2" />
+    <circle cx="325" cy="325" r="296" fill="none" stroke="#2a2e32" stroke-width="1.5" />
+
+    <!-- ================= SULCOS / RANHURAS DO VINIL ================= -->
+    <g id="grooves" fill="none" stroke-opacity="0.08" stroke="#ffffff">
+      <!-- Faixa de lead-in -->
+      <circle cx="325" cy="325" r="286" stroke-width="1" />
+      <circle cx="325" cy="325" r="280" stroke-width="1.2" />
+      
+      <!-- Sulcos gravados da reprodução -->
+      <circle cx="325" cy="325" r="268" stroke-width="0.8" />
+      <circle cx="325" cy="325" r="256" stroke-width="1" />
+      <circle cx="325" cy="325" r="248" stroke-width="0.6" stroke-opacity="0.14" />
+      <circle cx="325" cy="325" r="236" stroke-width="0.8" />
+      <circle cx="325" cy="325" r="222" stroke-width="1" stroke-opacity="0.12" />
+      <circle cx="325" cy="325" r="210" stroke-width="0.6" />
+      <circle cx="325" cy="325" r="198" stroke-width="1.1" stroke-opacity="0.15" />
+      <circle cx="325" cy="325" r="184" stroke-width="0.7" />
+      <circle cx="325" cy="325" r="172" stroke-width="1" stroke-opacity="0.11" />
+      <circle cx="325" cy="325" r="160" stroke-width="0.8" />
+      
+      <!-- Faixa de saída (Run-out / Lead-out groove) -->
+      <circle cx="325" cy="325" r="144" stroke-width="1.2" stroke="#000000" stroke-opacity="0.5" />
+      <circle cx="325" cy="325" r="132" stroke-width="0.9" stroke-opacity="0.1" />
+      <circle cx="325" cy="325" r="124" stroke-width="1.4" stroke-opacity="0.14" />
+    </g>
+
+    <!-- Brilho de reflexo radial em cruz/ampulheta -->
+    <path d="M 325,325 L 210,35 A 300,300 0 0,1 440,35 Z" fill="url(#sheenGrad)" />
+    <path d="M 325,325 L 440,615 A 300,300 0 0,1 210,615 Z" fill="url(#sheenGrad)" />
+
+    <!-- ================= RÓTULO CENTRAL ================= -->
+    <g id="center-label">
+      <!-- Selo redondo azul -->
+      <circle cx="325" cy="325" r="115" fill="url(#labelGrad)" stroke="#4a8cb8" stroke-width="2" />
+      
+      <!-- Detalhes de borda concêntrica do selo -->
+      <circle cx="325" cy="325" r="105" fill="none" stroke="#5093be" stroke-width="0.8" stroke-dasharray="3 2" opacity="0.6" />
+      <circle cx="325" cy="325" r="76" fill="none" stroke="#5093be" stroke-width="0.8" opacity="0.4" />
+
+      <!-- Textos do Álbum e Artista -->
+      <!-- Título Principal -->
+      <text x="325" y="278" font-family="-apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0c2033" text-anchor="middle" letter-spacing="0.4">
+        World Music Radio
+      </text>
+
+      <!-- Artista -->
+      <text x="325" y="380" font-family="-apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#0f263d" text-anchor="middle" letter-spacing="0.2">
+        Jon Batiste
+      </text>
+
+      <!-- Microtextos decorativos perimetrais -->
+      <text x="325" y="244" font-family="monospace" font-size="5" fill="#143452" text-anchor="middle" letter-spacing="1.5" opacity="0.6">
+        VERVE RECORDS • INTERSCOPE • 33 ⅓ RPM
+      </text>
+      <text x="325" y="412" font-family="monospace" font-size="4.5" fill="#143452" text-anchor="middle" letter-spacing="1" opacity="0.6">
+        STEREO / SIDE A / ALL RIGHTS RESERVED
+      </text>
+
+      <!-- Furo central do fuso (Spindle Hole) -->
+      <circle cx="325" cy="325" r="14" fill="#589bc5" stroke="#3d7da6" stroke-width="1.5" />
+      <circle cx="325" cy="325" r="10" fill="#000000" stroke="#dbe7ef" stroke-width="1.5" />
+    </g>
+  </g>
+</svg>

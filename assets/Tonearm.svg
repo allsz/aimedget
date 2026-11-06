@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 350 680" width="100%" height="100%">
+  <defs>
+    <!-- Gradiente da base escura -->
+    <radialGradient id="baseGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1e262c" />
+      <stop offset="75%" stop-color="#101518" />
+      <stop offset="100%" stop-color="#090c0e" />
+    </radialGradient>
+
+    <!-- Metal cromado do pivô -->
+    <linearGradient id="chromeGimbal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8a9399" />
+      <stop offset="25%" stop-color="#d5dde2" />
+      <stop offset="50%" stop-color="#ffffff" />
+      <stop offset="75%" stop-color="#8f99a0" />
+      <stop offset="100%" stop-color="#4e565c" />
+    </linearGradient>
+
+    <!-- Metal do tubo do braço -->
+    <linearGradient id="armMetal" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#737c82" />
+      <stop offset="20%" stop-color="#b8c2c7" />
+      <stop offset="45%" stop-color="#ffffff" />
+      <stop offset="75%" stop-color="#939ca2" />
+      <stop offset="100%" stop-color="#4f565b" />
+    </linearGradient>
+
+    <!-- Peças pretas foscas -->
+    <linearGradient id="matteBlack" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2c3238" />
+      <stop offset="100%" stop-color="#121517" />
+    </linearGradient>
+
+    <!-- Sombra suave das peças -->
+    <filter id="subtleShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="3" dy="5" stdDeviation="4" flood-color="#000000" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- ================= BASE CIRCULAR ================= -->
+  <g id="base-gimbal">
+    <!-- Círculo de acabamento externo -->
+    <circle cx="230" cy="125" r="92" fill="#000000" opacity="0.15" />
+    <circle cx="230" cy="125" r="88" fill="none" stroke="#25303a" stroke-width="2" />
+    
+    <!-- Base circular preta principal -->
+    <circle cx="230" cy="125" r="82" fill="url(#baseGrad)" stroke="#1a2026" stroke-width="3" filter="url(#subtleShadow)" />
+    
+    <!-- Anel interno rebaixado -->
+    <circle cx="230" cy="125" r="56" fill="none" stroke="#2b3640" stroke-width="3" />
+    <circle cx="230" cy="125" r="54" fill="#0d1114" />
+
+    <!-- Cilindro de montagem / Contrapeso superior -->
+    <rect x="217" y="32" width="26" height="42" rx="3" fill="url(#chromeGimbal)" stroke="#3f474d" stroke-width="1.5" />
+    <rect x="214" y="44" width="32" height="12" rx="2" fill="#1c2125" />
+    <rect x="225" y="24" width="10" height="10" fill="#a0a8ad" />
+
+    <!-- Mancal central do rolamento -->
+    <circle cx="230" cy="125" r="34" fill="url(#chromeGimbal)" stroke="#4a5257" stroke-width="1.5" />
+    <circle cx="230" cy="125" r="24" fill="#181d21" />
+    <circle cx="230" cy="125" r="14" fill="url(#chromeGimbal)" />
+    <circle cx="230" cy="125" r="6" fill="#0a0d0f" />
+  </g>
+
+  <!-- ================= BRAÇO METÁLICO ================= -->
+  <g id="tonearm-tube" filter="url(#subtleShadow)">
+    <!-- Haste metálica reta vertical -->
+    <rect x="224" y="152" width="12" height="340" rx="6" fill="url(#armMetal)" />
+
+    <!-- Conector de transição para a concha/cápsula -->
+    <rect x="221" y="484" width="18" height="14" rx="2" fill="url(#chromeGimbal)" stroke="#333" stroke-width="1" />
+    <rect x="223" y="498" width="14" height="6" fill="#14171a" />
+  </g>
+
+  <!-- ================= HEADSHELL / CÁPSULA / AGULHA ================= -->
+  <!-- Angulação típica do cabeçote em direção ao centro do disco (~24°) -->
+  <g id="headshell" transform="translate(230, 502) rotate(24)" filter="url(#subtleShadow)">
+    <!-- Corpo da concha (headshell) -->
+    <path d="M -14,0 L 14,0 L 11,62 L -11,62 Z" fill="url(#matteBlack)" stroke="#3a4249" stroke-width="1.5" />
+
+    <!-- Detalhes superiores / parafusos de fixação -->
+    <circle cx="-5" cy="22" r="2.5" fill="url(#chromeGimbal)" />
+    <circle cx="5" cy="22" r="2.5" fill="url(#chromeGimbal)" />
+
+    <!-- Aleta de levantamento manual (finger lift) -->
+    <path d="M 12,20 C 24,18 28,30 25,38" fill="none" stroke="#252a2e" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Bloco da cápsula fonocaptora -->
+    <rect x="-8.5" y="48" width="17" height="24" rx="1.5" fill="#111315" stroke="#2c3338" stroke-width="1" />
+
+    <!-- Ponta plástica da agulha / stylus protector -->
+    <polygon points="-6,72 6,72 4,82 -4,82" fill="#1f2429" />
+    <!-- Ponta da agulha -->
+    <rect x="-1" y="82" width="2" height="4" fill="#d0d5d8" />
+  </g>
+</svg>

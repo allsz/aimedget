@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vinyl widget demo</title>
+<style>
+  body{margin:0;display:grid;place-items:center;min-height:100vh;background:#0b1220;font-family:system-ui,sans-serif}
+  .stage{position:relative;width:760px;height:500px;border-radius:24px;overflow:hidden;cursor:pointer;
+    background:linear-gradient(135deg,#0a1a2e,#1170b5);box-shadow:0 20px 60px #0008}
+  .layer{position:absolute}
+  #cover{left:20px;top:20px;width:460px;height:460px}
+  #cover div{position:absolute;left:33%;top:33%;width:34%;height:34%;border-radius:50%;
+    background:radial-gradient(circle at 40% 35%,#bcdcf3,#7fb2dc);display:grid;place-items:center;color:#1b2a38;font-weight:700;text-align:center;font-size:13px}
+  #vinyl{left:20px;top:20px;width:460px;height:460px;animation:spin 3.2s linear infinite;animation-play-state:paused}
+  #vinyl.spinning{animation-play-state:running}
+  #glare{left:20px;top:20px;width:460px;height:460px;pointer-events:none}
+  #arm{left:535px;top:5px;width:200px;height:500px;transform-origin:115px 65px;transform:rotate(0deg);
+    transition:transform 1.2s cubic-bezier(.5,0,.2,1)}
+  .stage.play #arm{transform:rotate(31deg)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  small{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:#fff8;font-size:12px}
+</style></head>
+<body>
+<div class="stage" id="stage">
+  <!-- 1) anything you like behind the vinyl: album art, a gradient, a visualiser -->
+  <div class="layer" id="cover"><div>World Music<br>Radio</div></div>
+  <!-- 2) the record (spins) -->
+  <img class="layer" id="vinyl" src="vinyl.svg" alt="">
+  <!-- 3) static glare on top, never rotates -->
+  <img class="layer" id="glare" src="vinyl-glare.svg" alt="">
+  <!-- 4) tonearm -->
+  <img class="layer" id="arm" src="tonearm.svg" alt="">
+  <small>Click to place / lift the needle</small>
+</div>
+<script>
+  const stage=document.getElementById('stage'), vinyl=document.getElementById('vinyl'), arm=document.getElementById('arm');
+  stage.addEventListener('click',()=>{
+    const playing=stage.classList.toggle('play');
+    if(!playing) vinyl.classList.remove('spinning');     // lift needle: stop right away
+  });
+  arm.addEventListener('transitionend',()=>{            // needle landed: start spinning
+    if(stage.classList.contains('play')) vinyl.classList.add('spinning');
+  });
+</script>
+</body></html>
