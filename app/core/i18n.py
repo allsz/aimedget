@@ -1,0 +1,449 @@
+"""
+Sistema centralizado de internacionalização (i18n) do Aimedget.
+Suporta alternância dinâmica em tempo de execução entre Português e Inglês.
+Preserva intencionalmente termos técnicos e de marca (Widgets, Caps Lock, Num Lock, etc.).
+"""
+
+from typing import Any, Dict, Optional
+from PySide6.QtCore import QObject, Signal
+
+from app.core.config_manager import config_manager
+
+
+TRANSLATIONS: Dict[str, Dict[str, str]] = {
+    "pt": {
+        # Sidebar
+        "sidebar_overview": "Personalização",
+        "sidebar_music": "Música",
+        "sidebar_keys": "Lock keys",
+        "sidebar_volume": "Volume & mixer",
+        "sidebar_timer": "Timer",
+        "sidebar_general": "Geral",
+
+        # Overview Page
+        "overview_title": "Personalização",
+        "overview_subtitle": "Personalize a aparência e o comportamento dos widgets de mesa e flyouts do sistema.",
+        "overview_search_placeholder": "Buscar por módulo, categoria ou estilo...",
+        "overview_filter_all": "Todos",
+        "overview_filter_widget": "Widget",
+        "overview_filter_flyout": "Flyout",
+        "overview_card_music": "Music Player",
+        "overview_card_keys": "Caps / Num Lock",
+        "overview_card_keys_skin": "Acrílico Moderno",
+        "overview_card_volume": "Volume por Aplicativo",
+        "overview_card_volume_skin": "Controles Minimalistas",
+        "overview_card_timer": "Timer & Foco",
+
+        # Widget Card
+        "card_configure": "Configurar",
+
+        # Music Page
+        "music_title": "Music Player",
+        "music_subtitle": "Personalize a aparência, posição de tela, atalho global e comportamento do reprodutor flutuante.",
+        "music_pos_title": "Posição padrão na tela",
+        "music_pos_sub": "Clique em um quadrante para ancorar o reprodutor no monitor.",
+        "music_scale_title": "Tamanho e escala",
+        "music_scale_sub": "Adaptação automática proporcional à resolução da tela ou escolha uma escala manual.",
+        "music_scale_auto": "Automático",
+        "music_style_title": "Estilo do reprodutor",
+        "music_style_sub": "Escolha o design visual do widget de música flutuante no desktop.",
+        "music_auto_launch_title": "Abrir automaticamente ao tocar música",
+        "music_auto_launch_sub": "Exibe o widget assim que o Spotify ou reprodutor iniciar a reprodução.",
+        "music_auto_hide_title": "Ocultar ao pausar a reprodução",
+        "music_auto_hide_sub": "Recolhe o widget após alguns segundos de música pausada.",
+        "timer_min_start_hint": "Defina pelo menos 10 s para iniciar",
+        "music_wheel_volume_title": "Rolar para ajustar o volume",
+        "music_wheel_volume_sub": "Gire a roda do mouse sobre o widget para mudar o volume do player (ou do navegador). Se não for possível identificá-lo, muda o volume do sistema.",
+        "music_hotkey_title": "Atalho de teclado",
+        "music_hotkey_sub": "Pressione a combinação para abrir ou alternar a exibição do reprodutor no desktop.",
+
+        # Music Skins
+        "skin_vinyl_title": "Vinil Retrô",
+        "skin_vinyl_sub": "Toca-discos analógico",
+        "skin_fullcover_title": "Capa Completa",
+        "skin_fullcover_sub": "Capa imersiva",
+        "skin_ripple_title": "Ecos da Capa",
+        "skin_ripple_sub": "Ondas circulares da capa",
+        "skin_stacked_title": "Capa Empilhada",
+        "skin_stacked_sub": "Envelopes 3D e pastel",
+        "menu_skins": "Skins",
+        "menu_manage_skins": "Gerenciar skins no Hub...",
+        "music_skin_active_badge": "EM USO",
+        "music_skin_toggle_tooltip": "Mostrar no menu de troca rápida do widget",
+        "music_skin_min_one": "Mínimo de 1 skin deve permanecer ativa.",
+
+        # Lock Keys Page
+        "keys_title": "Lock keys",
+        "keys_subtitle": "Flyouts visuais modernos e minimalistas para Caps Lock e Num Lock.",
+        "keys_test_title": "Testar flyout na tela",
+        "keys_test_sub": "Dispara uma pré-visualização instantânea do efeito visual de acionamento.",
+        "keys_test_btn": "Disparar teste",
+        "keys_opt_caps_title": "Caps Lock",
+        "keys_opt_caps_sub": "Exibir indicador quando alternar Caps Lock",
+        "keys_opt_num_title": "Num Lock",
+        "keys_opt_num_sub": "Exibir indicador quando alternar Num Lock",
+        "keys_hotkey_title": "Atalho de teclado",
+        "keys_hotkey_sub": "Pressione a combinação para acionar ou testar a exibição do indicador visual na tela.",
+        "theme_picker_title": "Tema visual",
+        "theme_picker_sub": "Escolha a aparência deste flyout. Cada tema é uma pasta dentro da pasta de temas.",
+        "theme_default": "Padrão",
+        "theme_custom": "Personalizado",
+        "theme_open_folder": "Abrir pasta de temas",
+        "theme_import_btn": "Importar tema…",
+        "theme_export_btn": "Exportar tema…",
+        "theme_export_tip": "Exporta o tema em uso (marcado como EM USO); se o mesmo tema existir no outro flyout, vai junto",
+        "theme_import_pick_title": "Escolher tema para importar",
+        "theme_import_filter": "Tema do Aimedget (*.aimskin)",
+        "theme_import_title": "Importar tema",
+        "theme_import_choose": "Escolha onde instalar:",
+        "theme_import_target_keylock": "Caps/Num Lock",
+        "theme_import_target_mixer": "Volume e mixer",
+        "theme_import_applies": "Será aplicado: {items}",
+        "theme_import_nothing": "nada (ficaria igual ao padrão)",
+        "theme_import_art": "{n} figurinhas",
+        "theme_import_art_one": "{n} figurinha",
+        "theme_import_cat_colors": "cores",
+        "theme_import_cat_corners": "cantos",
+        "theme_import_cat_size": "tamanho",
+        "theme_import_cat_shadow": "sombra",
+        "theme_import_cat_background": "fundo",
+        "theme_import_cat_layout": "texto e indicador",
+        "theme_import_and": " e ",
+        "theme_import_row_exists": "Já existe um tema com este nome: ele será substituído.",
+        "theme_import_row_ignored": "{n} ajustes com problema serão ignorados.",
+        "theme_import_row_ignored_one": "1 ajuste com problema será ignorado.",
+        "theme_import_files_summary": "{n} arquivos do pacote não serão instalados.",
+        "theme_import_files_summary_one": "1 arquivo do pacote não será instalado.",
+        "theme_import_details_show": "Ver detalhes",
+        "theme_import_details_hide": "Ocultar detalhes",
+        "theme_import_ignored_head": "Será ignorado:",
+        "theme_import_all_ok": "Tudo certo: nada será ignorado.",
+        "theme_import_blocked": "Não pode ser instalado: {why}",
+        "theme_import_files_head": "Arquivos que não serão instalados:",
+        "theme_import_install": "Instalar e aplicar",
+        "theme_import_replace": "Substituir e aplicar",
+        "theme_import_copy": "Instalar como cópia…",
+        "theme_import_copy_confirm": "Instalar como cópia? O tema que você já tem será mantido e o novo ficará como “{name} (2)” (ou o próximo número livre).",
+        "theme_import_cancel": "Cancelar",
+        "theme_import_error": "Não foi possível importar este tema:\n{why}",
+        "theme_export_pick_title": "Exportar tema",
+        "theme_export_done": "Tema exportado ({n} arquivo(s)): {where}.",
+        "theme_export_error": "Não foi possível exportar:\n{why}",
+        "theme_export_default": "O visual Padrão já vem com o app e não pode ser exportado. Selecione outro tema.",
+
+        # Volume Page
+        "volume_title": "Volume & mixer",
+        "volume_subtitle": "Controle de volume do sistema e ajuste individual para cada jogo ou aplicativo aberto.",
+        "volume_test_title": "Testar flyout de volume",
+        "volume_test_sub": "Abre o mixer de volume sobre a barra de tarefas para teste interativo.",
+        "volume_test_btn": "Abrir mixer",
+        "volume_opt_mixer_title": "Mixer de aplicativos ativo",
+        "volume_opt_mixer_sub": "Detecta e permite controlar volumes independentes de Discord, Chrome, Spotify, etc.",
+        "volume_hotkey_title": "Atalho de teclado",
+        "volume_hotkey_sub": "Pressione a combinação para abrir ou alternar o mixer de volume sobre a barra de tarefas.",
+        "volume_tab_output": "Saída",
+        "volume_tab_input": "Entrada",
+
+        # Timer Page
+        "timer_title": "Timer & Foco",
+        "timer_subtitle": "Personalize o estilo visual, atalho de teclado, posição e comportamento do widget flutuante.",
+        "timer_pos_title": "Posição padrão na tela",
+        "timer_pos_sub": "Ancore o temporizador no topo da tela (padrão) ou em outros quadrantes.",
+        "timer_style_title": "Estilo e Skins do Timer",
+        "timer_style_sub": "Escolha o design visual do widget de foco e contagem no desktop.",
+        "timer_opt_remember_title": "Lembrar posição na tela",
+        "timer_opt_remember_sub": "Salva e restaura as coordenadas exatas onde o widget for solto após o arraste.",
+        "timer_opt_smart_hover_title": "Hover Inteligente de Tempo (Scroll nos dígitos)",
+        "timer_opt_smart_hover_sub": "Ajusta horas, minutos ou segundos rolando a roda do mouse sobre cada dígito (skins digitais).",
+        "timer_opt_show_title": "Exibir ou focar o widget no desktop",
+        "timer_opt_show_sub": "Abre e destaca o temporizador no topo da tela para acesso imediato.",
+        "timer_opt_show_btn": "Exibir Timer",
+        "timer_hotkey_title": "Atalho de teclado",
+        "timer_hotkey_sub": "Pressione a combinação para abrir ou alternar a exibição do temporizador no desktop.",
+        "skin_windows_sub": "PIP clássico",
+        "skin_coming_soon": "Em breve",
+
+        # General Page
+        "gen_title": "Geral",
+        "gen_subtitle": "Configurações globais e comportamento do Aimedget no Windows.",
+        "gen_startup_title": "Iniciar com o Windows",
+        "gen_startup_sub": "Abre o Aimedget em segundo plano ao ligar o computador.",
+        "gen_start_minimized_title": "Iniciar minimizado",
+        "gen_start_minimized_sub": "Inicia o aplicativo oculto na bandeja do sistema, exibindo apenas seus widgets ativos.",
+        "gen_tray_title": "Manter na bandeja do sistema",
+        "gen_tray_sub": "Fechar a janela do Hub mantém seus widgets ativos na barra de tarefas.",
+        "gen_theme_title": "Aparência",
+        "gen_theme_sub": "Escolha o modo de cor ou sincronize com o Windows. O modo OLED usa preto absoluto, que apaga os pixels em telas OLED.",
+        "gen_theme_light": "Claro",
+        "gen_theme_dark": "Escuro",
+        "gen_theme_true_dark": "OLED",
+        "gen_theme_system": "Sistema",
+        "gen_language_title": "Idioma",
+        "gen_language_sub": "Escolha o idioma de exibição para a interface do aplicativo.",
+        "gen_lang_en": "English",
+        "gen_lang_pt": "Português",
+        "gen_updates_title": "Atualizações",
+        "gen_updates_sub": "Mantenha o Aimedget sempre atualizado com as últimas melhorias.",
+        "gen_updates_installed": "Versão instalada: v{version}",
+        "gen_updates_btn_check": "Verificar agora",
+        "gen_updates_checking": "Verificando...",
+        "gen_updates_up_to_date": "Você está na versão mais recente.",
+        "gen_updates_found": "Nova versão v{version} disponível!",
+        "gen_updates_btn_download": "Atualizar agora",
+        "gen_updates_downloading": "Baixando atualização ({percent}%)...",
+        "gen_updates_applying": "Instalando e reiniciando...",
+        "gen_updates_err": "Não foi possível verificar atualizações.",
+
+        # Shortcut Picker
+        "shortcut_edit": "Alterar",
+        "shortcut_cancel": "Cancelar",
+        "shortcut_reset": "Padrão",
+        "shortcut_reset_tooltip": "Restaurar atalho sugerido ({hotkey})",
+        "shortcut_hint": "Pressione as teclas desejadas • Esc cancela",
+        "shortcut_recording": "Gravando...",
+
+        # System Tray Menu
+        "tray_open_hub": "Abrir Hub",
+        "tray_music_widget": "Music Widget",
+        "tray_keys_flyout": "Caps Lock Flyout",
+        "tray_vol_mixer": "Volume Mixer",
+        "tray_quit": "Encerrar Aimedget",
+    },
+    "en": {
+        # Sidebar
+        "sidebar_overview": "Customization",
+        "sidebar_music": "Music",
+        "sidebar_keys": "Lock keys",
+        "sidebar_volume": "Volume & mixer",
+        "sidebar_timer": "Timer",
+        "sidebar_general": "General",
+
+        # Overview Page
+        "overview_title": "Customization",
+        "overview_subtitle": "Customize the look and behavior of desktop widgets and system flyouts.",
+        "overview_search_placeholder": "Search by module, category or style...",
+        "overview_filter_all": "All",
+        "overview_filter_widget": "Widget",
+        "overview_filter_flyout": "Flyout",
+        "overview_card_music": "Music Player",
+        "overview_card_keys": "Caps / Num Lock",
+        "overview_card_keys_skin": "Modern Acrylic",
+        "overview_card_volume": "Per-App Volume",
+        "overview_card_volume_skin": "Minimal Sliders",
+        "overview_card_timer": "Timer & Focus",
+
+        # Widget Card
+        "card_configure": "Configure",
+
+        # Music Page
+        "music_title": "Music Player",
+        "music_subtitle": "Customize appearance, screen position, global shortcut, and floating player behavior.",
+        "music_pos_title": "Default screen position",
+        "music_pos_sub": "Click on a quadrant to anchor the player on the monitor.",
+        "music_scale_title": "Size and scale",
+        "music_scale_sub": "Automatic scaling proportional to screen resolution or choose a manual scale.",
+        "music_scale_auto": "Auto",
+        "music_style_title": "Player style",
+        "music_style_sub": "Choose the visual design of the floating music widget on the desktop.",
+        "music_auto_launch_title": "Open automatically when playing music",
+        "music_auto_launch_sub": "Shows the widget as soon as Spotify or media player begins playback.",
+        "music_auto_hide_title": "Hide when playback is paused",
+        "music_auto_hide_sub": "Hides the widget after a few seconds of paused music.",
+        "timer_min_start_hint": "Set at least 10 s to start",
+        "music_wheel_volume_title": "Scroll to adjust volume",
+        "music_wheel_volume_sub": "Use the mouse wheel over the widget to change the volume of the player (or browser). If it can't be identified, the system volume changes instead.",
+        "music_hotkey_title": "Keyboard shortcut",
+        "music_hotkey_sub": "Press the key combination to open or toggle the player on desktop.",
+
+        # Music Skins
+        "skin_vinyl_title": "Retro Vinyl",
+        "skin_vinyl_sub": "Analog turntable",
+        "skin_fullcover_title": "Full Cover",
+        "skin_fullcover_sub": "Immersive album art",
+        "skin_ripple_title": "Ripple Glass",
+        "skin_ripple_sub": "Sound waves",
+        "skin_stacked_title": "Stacked Cover",
+        "skin_stacked_sub": "3D sleeves and pastel",
+        "music_skin_active_badge": "IN USE",
+        "music_skin_toggle_tooltip": "Enable in quick switch menu",
+        "menu_skins": "Skins",
+        "menu_manage_skins": "Manage skins in Hub...",
+        "music_skin_min_one": "At least 1 skin must remain active.",
+
+        # Lock Keys Page
+        "keys_title": "Lock keys",
+        "keys_subtitle": "Modern, minimalist visual flyouts for Caps Lock and Num Lock.",
+        "keys_test_title": "Test on-screen flyout",
+        "keys_test_sub": "Triggers an instant preview of the visual activation effect.",
+        "keys_test_btn": "Trigger test",
+        "keys_opt_caps_title": "Caps Lock",
+        "keys_opt_caps_sub": "Show indicator when toggling Caps Lock",
+        "keys_opt_num_title": "Num Lock",
+        "keys_opt_num_sub": "Show indicator when toggling Num Lock",
+        "keys_hotkey_title": "Keyboard shortcut",
+        "keys_hotkey_sub": "Press the key combination to trigger or test the on-screen visual indicator.",
+        "theme_picker_title": "Visual theme",
+        "theme_picker_sub": "Pick how this flyout looks. Each theme is a folder inside the themes folder.",
+        "theme_default": "Default",
+        "theme_custom": "Custom",
+        "theme_open_folder": "Open themes folder",
+        "theme_import_btn": "Import theme…",
+        "theme_export_btn": "Export theme…",
+        "theme_export_tip": "Exports the theme in use (marked IN USE); if the same theme exists in the other flyout it goes along",
+        "theme_import_pick_title": "Choose a theme to import",
+        "theme_import_filter": "Aimedget theme (*.aimskin)",
+        "theme_import_title": "Import theme",
+        "theme_import_choose": "Choose where to install:",
+        "theme_import_target_keylock": "Caps/Num Lock",
+        "theme_import_target_mixer": "Volume & mixer",
+        "theme_import_applies": "Will be applied: {items}",
+        "theme_import_nothing": "nothing (it would look like the default)",
+        "theme_import_art": "{n} stickers",
+        "theme_import_art_one": "{n} sticker",
+        "theme_import_cat_colors": "colors",
+        "theme_import_cat_corners": "corners",
+        "theme_import_cat_size": "size",
+        "theme_import_cat_shadow": "shadow",
+        "theme_import_cat_background": "background",
+        "theme_import_cat_layout": "text and indicator",
+        "theme_import_and": " and ",
+        "theme_import_row_exists": "A theme with this name already exists: it will be replaced.",
+        "theme_import_row_ignored": "{n} settings with a problem will be ignored.",
+        "theme_import_row_ignored_one": "1 setting with a problem will be ignored.",
+        "theme_import_files_summary": "{n} files in the package will not be installed.",
+        "theme_import_files_summary_one": "1 file in the package will not be installed.",
+        "theme_import_details_show": "Show details",
+        "theme_import_details_hide": "Hide details",
+        "theme_import_ignored_head": "Will be ignored:",
+        "theme_import_all_ok": "All good: nothing will be ignored.",
+        "theme_import_blocked": "Cannot be installed: {why}",
+        "theme_import_files_head": "Files that will not be installed:",
+        "theme_import_install": "Install and apply",
+        "theme_import_replace": "Replace and apply",
+        "theme_import_copy": "Install as a copy…",
+        "theme_import_copy_confirm": "Install as a copy? The theme you already have is kept and the new one becomes “{name} (2)” (or the next free number).",
+        "theme_import_cancel": "Cancel",
+        "theme_import_error": "This theme could not be imported:\n{why}",
+        "theme_export_pick_title": "Export theme",
+        "theme_export_done": "Theme exported ({n} file(s)): {where}.",
+        "theme_export_error": "Could not export:\n{why}",
+        "theme_export_default": "The Default look ships with the app and cannot be exported. Select another theme.",
+
+        # Volume Page
+        "volume_title": "Volume & mixer",
+        "volume_subtitle": "System volume control and individual adjustment for each open game or app.",
+        "volume_test_title": "Test volume flyout",
+        "volume_test_sub": "Opens the volume mixer above the taskbar for interactive testing.",
+        "volume_test_btn": "Open mixer",
+        "volume_opt_mixer_title": "App volume mixer active",
+        "volume_opt_mixer_sub": "Detects and allows controlling individual volume for Discord, Chrome, Spotify, etc.",
+        "volume_hotkey_title": "Keyboard shortcut",
+        "volume_hotkey_sub": "Press the combination to open or toggle the volume mixer above the taskbar.",
+        "volume_tab_output": "Output",
+        "volume_tab_input": "Input",
+
+        # Timer Page
+        "timer_title": "Timer & Focus",
+        "timer_subtitle": "Customize visual style, keyboard shortcut, position, and floating widget behavior.",
+        "timer_pos_title": "Default screen position",
+        "timer_pos_sub": "Anchor the timer to the top of the screen (default) or other quadrants.",
+        "timer_style_title": "Timer Styles & Skins",
+        "timer_style_sub": "Choose the visual design of the focus and countdown widget on the desktop.",
+        "timer_opt_remember_title": "Remember screen position",
+        "timer_opt_remember_sub": "Saves and restores the exact coordinates where the widget is dropped after dragging.",
+        "timer_opt_smart_hover_title": "Smart Time Hover (Scroll on digits)",
+        "timer_opt_smart_hover_sub": "Adjust hours, minutes, or seconds by scrolling the mouse wheel over each digit (digital skins).",
+        "timer_opt_show_title": "Show or focus widget on desktop",
+        "timer_opt_show_sub": "Opens and brings the timer to the top of the screen for instant access.",
+        "timer_opt_show_btn": "Show Timer",
+        "timer_hotkey_title": "Keyboard shortcut",
+        "timer_hotkey_sub": "Press the combination to open or toggle the timer widget on the desktop.",
+        "skin_windows_sub": "Classic PIP",
+        "skin_coming_soon": "Coming soon",
+
+        # General Page
+        "gen_title": "General",
+        "gen_subtitle": "Global settings and Aimedget behavior in Windows.",
+        "gen_startup_title": "Start with Windows",
+        "gen_startup_sub": "Launches Aimedget in the background when your computer starts.",
+        "gen_start_minimized_title": "Start minimized",
+        "gen_start_minimized_sub": "Launch the application hidden in the system tray, keeping only your active widgets visible.",
+        "gen_tray_title": "Keep in system tray",
+        "gen_tray_sub": "Closing the Hub window keeps your widgets active in the taskbar.",
+        "gen_theme_title": "Appearance",
+        "gen_theme_sub": "Choose a color mode or sync with Windows. OLED mode uses pure black, which turns pixels off on OLED displays.",
+        "gen_theme_light": "Light",
+        "gen_theme_dark": "Dark",
+        "gen_theme_true_dark": "OLED",
+        "gen_theme_system": "System",
+        "gen_language_title": "Language",
+        "gen_language_sub": "Choose the display language for the application interface.",
+        "gen_lang_en": "English",
+        "gen_lang_pt": "Português",
+        "gen_updates_title": "Updates",
+        "gen_updates_sub": "Keep Aimedget up to date with the latest features and fixes.",
+        "gen_updates_installed": "Installed version: v{version}",
+        "gen_updates_btn_check": "Check now",
+        "gen_updates_checking": "Checking...",
+        "gen_updates_up_to_date": "You are running the latest version.",
+        "gen_updates_found": "New version v{version} available!",
+        "gen_updates_btn_download": "Update now",
+        "gen_updates_downloading": "Downloading update ({percent}%)...",
+        "gen_updates_applying": "Installing and restarting...",
+        "gen_updates_err": "Unable to check for updates.",
+
+        # Shortcut Picker
+        "shortcut_edit": "Change",
+        "shortcut_cancel": "Cancel",
+        "shortcut_reset": "Default",
+        "shortcut_reset_tooltip": "Restore default shortcut ({hotkey})",
+        "shortcut_hint": "Press desired keys • Esc cancels",
+        "shortcut_recording": "Recording...",
+
+        # System Tray Menu
+        "tray_open_hub": "Open Hub",
+        "tray_music_widget": "Music Widget",
+        "tray_keys_flyout": "Caps Lock Flyout",
+        "tray_vol_mixer": "Volume Mixer",
+        "tray_quit": "Quit Aimedget",
+    },
+}
+
+
+class I18nManager(QObject):
+    language_changed = Signal(str)  # 'pt' ou 'en'
+
+    def __init__(self):
+        super().__init__()
+        self._current_lang = config_manager.get_language(default="pt")
+
+    @property
+    def current_language(self) -> str:
+        return self._current_lang
+
+    def set_language(self, lang: str):
+        if lang not in ("pt", "en"):
+            lang = "pt"
+        if self._current_lang != lang:
+            self._current_lang = lang
+            config_manager.set_language(lang)
+            self.language_changed.emit(lang)
+
+    def t(self, key: str, default: Optional[str] = None, **kwargs: Any) -> str:
+        translations = TRANSLATIONS.get(self._current_lang, TRANSLATIONS["pt"])
+        text = translations.get(key)
+        if text is None:
+            # Fallback
+            fallback = TRANSLATIONS.get("en" if self._current_lang == "pt" else "pt", {})
+            text = fallback.get(key, default or key)
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except Exception:
+                return text
+        return text
+
+
+# Instância global reutilizável
+i18n = I18nManager()
+t = i18n.t
