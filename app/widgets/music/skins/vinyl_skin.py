@@ -1,22 +1,24 @@
+import math
+import os
 import time
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QFontMetrics
 from PySide6.QtSvg import QSvgRenderer
 
-from app.core.paths import get_vinyl_asset
+from app.core.paths import get_vinyl_asset, get_provider_icon_path
 from app.core.typography import get_ui_font
 from app.core.colorimetry import (
     lerp_palette,
     palettes_are_close,
     render_adaptive_card_background,
 )
-from app.ui_components.pill_button import draw_pill_button
+from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
+from app.ui_components.tactile_button import draw_tactile_physical_button
 from app.widgets.music.skins.base_skin import BaseMusicSkin
 
-# Escala da janela desktop em relação ao canvas 16:9 (960 x 540 -> 480 x 270)
-SCALE = 0.50
-WIDGET_W = int(960 * SCALE)  # 480 px
-WIDGET_H = int(540 * SCALE)  # 270 px
+# Dimensões nativas do canvas 16:9
+CANVAS_W = 960
+CANVAS_H = 540
 
 
 class VinylMusicSkin(BaseMusicSkin):
@@ -28,9 +30,10 @@ class VinylMusicSkin(BaseMusicSkin):
     - Colorimetria Dinâmica (Passo 4): gradiente adaptativo extraído da capa do álbum com transição suave a 60 FPS.
     """
     tonearm_landed = Signal()
+    CARD_RADIUS: float = 40.0
 
-    def __init__(self):
-        super().__init__(WIDGET_W, WIDGET_H)
+    def __init__(self, scale: float | None = None):
+        super().__init__(CANVAS_W, CANVAS_H, scale=scale)
 
         # Renderizadores SVG exclusivos da skin de Vinil
         self.svg_cover = QSvgRenderer(get_vinyl_asset("cover-placeholder.svg"))
@@ -38,13 +41,30 @@ class VinylMusicSkin(BaseMusicSkin):
         self.svg_glare = QSvgRenderer(get_vinyl_asset("vinyl-glare.svg"))
         self.svg_arm_base = QSvgRenderer(get_vinyl_asset("tonearm-base.svg"))
         self.svg_arm = QSvgRenderer(get_vinyl_asset("tonearm.svg"))
-        self.svg_prev = QSvgRenderer(get_vinyl_asset("icon-prev.svg"))
-        self.svg_play = QSvgRenderer(get_vinyl_asset("icon-play.svg"))
-        self.svg_pause = QSvgRenderer(get_vinyl_asset("icon-pause.svg"))
-        self.svg_next = QSvgRenderer(get_vinyl_asset("icon-next.svg"))
+
+        # Visualizador de Onda Sonora Animada (Fallback reativo da imagem do usuário)
+        self.soundwave = SoundWaveVisualizer()
+
+        # Renderizadores SVG dos provedores oficiais de streaming
+        self.provider_renderers = {}
+        for p_name in ("spotify", "youtube_music", "apple_music", "deezer", "tidal", "amazon_music", "soundcloud"):
+            p_path = get_provider_icon_path(p_name)
+            if os.path.exists(p_path):
+                self.provider_renderers[p_name] = QSvgRenderer(p_path)
+
+        self.provider_display_names = {
+            "spotify": "Spotify",
+            "youtube_music": "YouTube Music",
+            "apple_music": "Apple Music",
+            "deezer": "Deezer",
+            "tidal": "Tidal",
+            "amazon_music": "Amazon Music",
+            "soundcloud": "SoundCloud",
+            "generic": "Áudio",
+        }
 
         # Parâmetros de ângulo da agulha
-        self.park_angle = -22.0
+        self.park_angle = 0.0
         self.play_angle = 17.7
         self.drift_max = 4.5
 
@@ -63,7 +83,7 @@ class VinylMusicSkin(BaseMusicSkin):
         self.vinyl_angle = 0.0
         self.scrub_velocity = 0.0
 
-        # Estado de interação do Mouse
+        # Estado de interação do Mouse e Arraste do Braço (Tonearm)
         self.hovered_btn = None
         self.pressed_btn = None
         self.is_dragging_bar = False
@@ -71,20 +91,42 @@ class VinylMusicSkin(BaseMusicSkin):
         self.last_scrub_x = 0.0
         self.last_scrub_t = 0.0
 
-        # Retângulos de colisão (convertidos via SCALE para hit-test)
-        self.rect_main = QRectF(52 * SCALE, 402 * SCALE, 132 * SCALE, 60 * SCALE)
-        self.rect_prev = QRectF(204 * SCALE, 402 * SCALE, 90 * SCALE, 60 * SCALE)
-        self.rect_next = QRectF(310 * SCALE, 402 * SCALE, 90 * SCALE, 60 * SCALE)
-        self.rect_bar_hit = QRectF(52 * SCALE, 310 * SCALE, 348 * SCALE, 36 * SCALE)
+        self._arm_drag_started = False
+        self._arm_press_pos = QPointF()
+        self._arm_mouse_initial_angle = 0.0
+        self._arm_drag_initial_angle = self.park_angle
+        self._arm_started_on_disc = False
+
+        # Retângulos de colisão para os botões físicos e barra de progresso expandida
+        self._update_hitboxes()
 
         # Loop de física a ~60 FPS
         self.last_tick = time.perf_counter()
         self.timer = QTimer(self)
         self.timer.setInterval(16)
-        self.timer.timeout.connect(self._on_physics_tick)
-        self.timer.start()
+        self.timer.timeout.connect(self._on_physics_tick)  # iniciado/pausado pela base (show/hide)
 
-    def on_media_updated(self, title: str, artist: str, is_playing: bool, pos: float, dur: float, thumb_bytes: bytes):
+    def _update_hitboxes(self):
+        s = self.scale
+        btn_y = 398.0
+        btn_w = 110.0
+        btn_h = 78.0
+        gap = 16.0
+        self.rect_main = QRectF(52 * s, btn_y * s, btn_w * s, btn_h * s)
+        self.rect_prev = QRectF((52 + btn_w + gap) * s, btn_y * s, btn_w * s, btn_h * s)
+        self.rect_next = QRectF((52 + (btn_w + gap) * 2) * s, btn_y * s, btn_w * s, btn_h * s)
+        self.rect_bar_hit = QRectF(52 * s, 310 * s, 405 * s, 36 * s)
+
+    def on_media_updated(
+        self,
+        title: str,
+        artist: str,
+        is_playing: bool,
+        pos: float,
+        dur: float,
+        thumb_bytes: bytes,
+        provider: str = "generic",
+    ):
         changed = False
         track_changed = (title != self.title_text or artist != self.artist_text)
         if track_changed:
@@ -92,11 +134,15 @@ class VinylMusicSkin(BaseMusicSkin):
             self.artist_text = artist
             changed = True
 
+        if provider != self.provider:
+            self.provider = provider
+            changed = True
+
         if self._update_and_cache_cover(thumb_bytes):
             changed = True
 
         now = time.perf_counter()
-        if not self._pending_play_on_land and now >= self._ignore_external_state_until:
+        if not self._pending_play_on_land and now >= self._ignore_external_state_until and self.arm_state != "dragging":
             if is_playing != self.is_playing:
                 self._set_playing_state(is_playing)
                 changed = True
@@ -107,7 +153,7 @@ class VinylMusicSkin(BaseMusicSkin):
         # Sincronização refinada da barra de progresso (sem saltos entre snapshots antigos e novos)
         can_sync_pos = (
             not self.is_dragging_bar
-            and self.pressed_btn != "bar"
+            and self.pressed_btn not in ("bar", "arm")
             and not self._pending_play_on_land
             and (now - self._last_seek_sent > 1.5)
         )
@@ -175,6 +221,11 @@ class VinylMusicSkin(BaseMusicSkin):
             self.current_palette = lerp_palette(self.current_palette, self.target_palette, min(1.0, dt * 4.5))
             needs_update = True
 
+        # --- 0.1 Atualização da Onda Sonora Animada (Fallback) ---
+        self.soundwave.update(dt, self.is_playing)
+        if self.provider == "generic" and self.is_playing:
+            needs_update = True
+
         target_play = self._compute_target_play_angle()
 
         # --- 1. Animação de Keyframes da Agulha ---
@@ -194,6 +245,19 @@ class VinylMusicSkin(BaseMusicSkin):
             else:
                 sub = self._cubic_ease((p - 0.88) / (1.0 - 0.88))
                 self.arm_current_angle = (target_play - 0.4) + (target_play - (target_play - 0.4)) * sub
+
+            if p >= 1.0:
+                self.arm_state = "on"
+                self.arm_current_angle = target_play
+                self.tonearm_landed.emit()
+            needs_update = True
+
+        elif self.arm_state == "landing":
+            elapsed = now - self.arm_anim_start
+            dur = 0.16
+            p = min(1.0, elapsed / dur)
+            sub = self._cubic_ease(p)
+            self.arm_current_angle = self.arm_anim_from + (target_play - self.arm_anim_from) * sub
 
             if p >= 1.0:
                 self.arm_state = "on"
@@ -249,7 +313,7 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
-        painter.scale(SCALE, SCALE)
+        painter.scale(self.scale, self.scale)
 
         # --- 1. Card Arredondado (960x540, radius 40) com Colorimetria Dinâmica (Passo 4) ---
         card_rect = QRectF(0, 0, 960, 540)
@@ -263,25 +327,44 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(QRectF(1, 1, 958, 538), 39, 39)
 
-        # --- 2. Tipografia com Fonte "Inter" Unificada em Todo o App ---
+        # --- 2. Logo Monocromático Branco do Provedor ou Onda Sonora Animada ---
+        logo_x = 52.0
+        logo_y = 52.0
+        logo_s = 44.0
+
+        if self.provider in self.provider_renderers:
+            # Provedor oficial reconhecido: logotipo monocromático branco
+            icon_rect = QRectF(logo_x, logo_y, logo_s, logo_s)
+            self.provider_renderers[self.provider].render(painter, icon_rect)
+        else:
+            # Player genérico/não reconhecido: onda sonora com 7 barras animadas
+            wave_rect = QRectF(logo_x, logo_y, logo_s, logo_s)
+            self.soundwave.render(painter, wave_rect, QColor(255, 255, 255, 240))
+
+        # --- 3. Tipografia com Espaço Expandido no Meio do Widget ---
+        # Título da Música: y=186 (espaço expandido para 405px)
+        title_y = 186.0
+        title_w = 405.0
         font_title = get_ui_font(44, QFont.Weight.Bold)
         font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 98.0)
         painter.setFont(font_title)
         painter.setPen(QColor("#FFFFFF"))
         fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, 356)
-        painter.drawText(QRectF(52, 54, 356, 54), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
+        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, int(title_w))
+        painter.drawText(QRectF(52, title_y, title_w, 54), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
 
+        # Nome do Artista: y=248
+        artist_y = 248.0
         font_artist = get_ui_font(24, QFont.Weight.Medium)
         painter.setFont(font_artist)
         painter.setPen(QColor(255, 255, 255, 175))
         fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.artist_text, Qt.TextElideMode.ElideRight, 356)
-        painter.drawText(QRectF(52, 114, 356, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
+        elided_artist = fm_artist.elidedText(self.artist_text, Qt.TextElideMode.ElideRight, int(title_w))
+        painter.drawText(QRectF(52, artist_y, title_w, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
 
-        # --- 3. Barra de Progresso e Tempos (left=52, top=326, w=348) ---
+        # --- 3. Barra de Progresso Expandida (left=52, top=326, w=405) ---
         progress_ratio = max(0.0, min(1.0, self.current_time / self.duration)) if self.duration > 0 else 0.0
-        bar_x, bar_y, bar_w, bar_h = 52.0, 326.0, 348.0, 6.0
+        bar_x, bar_y, bar_w, bar_h = 52.0, 326.0, 405.0, 6.0
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(255, 255, 255, 56))
@@ -307,23 +390,34 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.drawText(QRectF(bar_x, bar_y + 14, 110, 26), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._fmt_time(self.current_time))
         painter.drawText(QRectF(bar_x + bar_w - 110, bar_y + 14, 110, 26), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._fmt_time(self.duration))
 
-        # --- 4. Botões Pill Translúcidos ---
-        play_or_pause_svg = self.svg_pause if self.is_playing else self.svg_play
-        draw_pill_button(painter, play_or_pause_svg, QRectF(52, 402, 132, 60), self.hovered_btn == "main", self.pressed_btn == "main")
-        draw_pill_button(painter, self.svg_prev, QRectF(204, 402, 90, 60), self.hovered_btn == "prev", self.pressed_btn == "prev")
-        draw_pill_button(painter, self.svg_next, QRectF(310, 402, 90, 60), self.hovered_btn == "next", self.pressed_btn == "next")
+        # --- 4. Botões Físicos Estilizados (Fiel aos SVGs e Mockup do Usuário) ---
+        btn_y = 398.0
+        btn_w = 110.0
+        btn_h = 78.0
+        gap = 16.0
+        r_main = QRectF(52, btn_y, btn_w, btn_h)
+        r_prev = QRectF(52 + btn_w + gap, btn_y, btn_w, btn_h)
+        r_next = QRectF(52 + (btn_w + gap) * 2, btn_y, btn_w, btn_h)
 
-        font_lbl = get_ui_font(20, QFont.Weight.Medium)
-        painter.setFont(font_lbl)
-        painter.setPen(QColor(255, 255, 255, 175))
-        lbl_str = "Pause" if self.is_playing else "Play"
-        painter.drawText(QRectF(52, 470, 132, 26), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, lbl_str)
+        main_kind = "pause" if self.is_playing else "play"
+        draw_tactile_physical_button(
+            painter, r_main, self.current_palette, main_kind,
+            is_hovered=(self.hovered_btn == "main"), is_pressed=(self.pressed_btn == "main")
+        )
+        draw_tactile_physical_button(
+            painter, r_prev, self.current_palette, "prev",
+            is_hovered=(self.hovered_btn == "prev"), is_pressed=(self.pressed_btn == "prev")
+        )
+        draw_tactile_physical_button(
+            painter, r_next, self.current_palette, "next",
+            is_hovered=(self.hovered_btn == "next"), is_pressed=(self.pressed_btn == "next")
+        )
 
-        # --- 5. Base Estática da Agulha (757.0, 28.9, 112.2x171.7) ---
-        self.svg_arm_base.render(painter, QRectF(757.0, 28.9, 112.2, 171.7))
+        # --- 5. Base Estática da Agulha (Alinhada com o disco mais à direita) ---
+        self.svg_arm_base.render(painter, QRectF(821.5, 74.9, 99.5, 148.8))
 
-        # --- 6. O Disco de Vinil (440, 60, 420x420) ---
-        disc_x, disc_y, disc_s = 440.0, 60.0, 420.0
+        # --- 6. O Disco de Vinil (Deslocado mais à direita: disc_x=480.0) ---
+        disc_x, disc_y, disc_s = 480.0, 60.0, 420.0
         disc_cx = disc_x + disc_s / 2.0
         disc_cy = disc_y + disc_s / 2.0
 
@@ -357,9 +451,9 @@ class VinylMusicSkin(BaseMusicSkin):
 
         self.svg_glare.render(painter, QRectF(disc_x, disc_y, disc_s, disc_s))
 
-        # --- 7. A Agulha (731.8, 23.0, 172.4x434.0, origin=73.2, 62.0) ---
-        arm_left, arm_top, arm_w, arm_h = 731.8, 23.0, 172.4, 434.0
-        origin_x, origin_y = 73.2, 62.0
+        # --- 7. A Agulha Reduzida em 8% (Pivô alinhado com a base) ---
+        arm_left, arm_top, arm_w, arm_h = 800.2, 70.0, 158.6, 399.3
+        origin_x, origin_y = 67.34, 57.04
 
         painter.save()
         painter.translate(arm_left + origin_x, arm_top + origin_y)
@@ -367,7 +461,24 @@ class VinylMusicSkin(BaseMusicSkin):
         self.svg_arm.render(painter, QRectF(-origin_x, -origin_y, arm_w, arm_h))
         painter.restore()
 
+        self.paint_resize_grip(painter)
+
+    def _is_pos_on_arm(self, pos) -> bool:
+        """Verifica se o ponto (em coordenadas do widget) colide com a geometria do tonearm."""
+        cx = pos.x() / self.scale
+        cy = pos.y() / self.scale
+        dx = cx - 857.54
+        dy = cy - 127.04
+
+        rad = math.radians(-self.arm_current_angle)
+        lx = dx * math.cos(rad) - dy * math.sin(rad)
+        ly = dx * math.sin(rad) + dy * math.cos(rad)
+
+        return (-45.0 <= lx <= 65.0) and (-45.0 <= ly <= 390.0)
+
     def _hit_test(self, pos):
+        if self._is_pos_on_arm(pos):
+            return "arm"
         if self.rect_main.contains(pos):
             return "main"
         if self.rect_prev.contains(pos):
@@ -379,11 +490,37 @@ class VinylMusicSkin(BaseMusicSkin):
         return None
 
     def mousePressEvent(self, event):
+        if self.handle_resize_press(event):
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
             hit = self._hit_test(pos)
 
-            if hit == "bar":
+            if hit == "arm":
+                self.pressed_btn = "arm"
+                self._arm_press_pos = pos
+                self._arm_drag_started = False
+
+                cx = pos.x() / self.scale
+                cy = pos.y() / self.scale
+                self._arm_mouse_initial_angle = math.degrees(math.atan2(cy - 127.04, cx - 857.54))
+                self._arm_drag_initial_angle = self.arm_current_angle
+
+                # Detecta se a agulha estava sobre o disco de vinil
+                arm_on_disc = (self.arm_current_angle >= 11.5 or self.is_playing or self.arm_state in ("on", "in"))
+                self._arm_started_on_disc = arm_on_disc
+
+                if arm_on_disc:
+                    # Pausa imediata da reprodução
+                    self.is_playing = False
+                    self._pending_play_on_land = False
+                    self._ignore_external_state_until = time.perf_counter() + 1.2
+                    self.command_requested.emit("pause", None)
+
+                self.arm_state = "dragging"
+                self.update()
+            elif hit == "bar":
                 self.pressed_btn = "bar"
                 self.is_dragging_bar = False
                 self.press_bar_x = pos.x()
@@ -398,8 +535,34 @@ class VinylMusicSkin(BaseMusicSkin):
                 self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, event):
+        if self.handle_resize_move(event):
+            return
+
         pos = event.position()
 
+        # Arraste físico do Braço do Toca-Discos
+        if (event.buttons() & Qt.MouseButton.LeftButton) and self.pressed_btn == "arm":
+            cx = pos.x() / self.scale
+            cy = pos.y() / self.scale
+            dx = cx - 857.54
+            dy = cy - 127.04
+
+            dist = (pos - self._arm_press_pos).manhattanLength()
+            if dist > 3.0:
+                self._arm_drag_started = True
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+            if self._arm_drag_started:
+                current_mouse_angle = math.degrees(math.atan2(dy, dx))
+                delta = current_mouse_angle - self._arm_mouse_initial_angle
+                target_angle = self._arm_drag_initial_angle + delta
+                # Limite mecânico do braço: descanso (-1.5°) a sulco interno máximo (24.0°)
+                self.arm_current_angle = max(-1.5, min(24.0, target_angle))
+                self.arm_state = "dragging"
+                self.update()
+            return
+
+        # Arraste da barra de progresso (DJ Scrubbing)
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.pressed_btn == "bar":
             now = time.perf_counter()
             dx = pos.x() - self.last_scrub_x
@@ -419,22 +582,79 @@ class VinylMusicSkin(BaseMusicSkin):
                 self.update()
             return
 
+        # Movimentação da janela na área de trabalho
         if (event.buttons() & Qt.MouseButton.LeftButton) and not self._drag_pos.isNull():
             self.move(event.globalPosition().toPoint() - self._drag_pos)
+            return
+
+        # Atualização dinâmica de hover e cursores
+        if self.handle_resize_hover(pos):
             return
 
         hit = self._hit_test(pos)
         if hit != self.hovered_btn:
             self.hovered_btn = hit
-            self.setCursor(Qt.CursorShape.PointingHandCursor if hit else Qt.CursorShape.ArrowCursor)
+            if hit == "arm":
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            elif hit:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
             self.update()
 
     def mouseReleaseEvent(self, event):
+        if self.handle_resize_release(event):
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging_window = not self._drag_pos.isNull()
             pos = event.position()
             hit = self._hit_test(pos)
 
-            if self.pressed_btn == "main" and hit == "main":
+            if self.pressed_btn == "arm":
+                if not self._arm_drag_started:
+                    # Usuário apenas clicou no braço sem arrastar
+                    if self._arm_started_on_disc:
+                        # Estava no disco: o som de scratch e o pause já ocorreram no press.
+                        # O braço agora sai sozinho até a posição de descanso
+                        self.arm_anim_start = time.perf_counter()
+                        self.arm_anim_from = self.arm_current_angle
+                        self.arm_state = "out"
+                    else:
+                        # Estava em descanso: anima sozinho até o disco e toca ao aterrissar
+                        self._set_playing_state(True)
+                        self._pending_play_on_land = True
+                else:
+                    # Usuário arrastou o braço
+                    if self.arm_current_angle >= 11.5:
+                        # Soltou sobre o disco de vinil:
+                        # 1. Ajusta o seek correspondente ao ponto onde a agulha pousou
+                        if self.duration > 0:
+                            progress = max(0.0, min(1.0, (self.arm_current_angle - self.play_angle) / self.drift_max))
+                            self.current_time = progress * self.duration
+                            self._last_seek_sent = time.perf_counter()
+                            self.command_requested.emit("seek", self.current_time)
+
+                        # 2. Pouso suave (landing) com som característico e retomada do áudio
+                        self.arm_anim_start = time.perf_counter()
+                        self.arm_anim_from = self.arm_current_angle
+                        self.arm_state = "landing"
+                        self._pending_play_on_land = True
+                        self.is_playing = True
+                    else:
+                        # Soltou fora do disco / próximo da base: recolhe sozinho para descanso
+                        self.arm_anim_start = time.perf_counter()
+                        self.arm_anim_from = self.arm_current_angle
+                        self.arm_state = "out"
+                        self.is_playing = False
+                        self._pending_play_on_land = False
+
+                self.pressed_btn = None
+                self._arm_drag_started = False
+                self.setCursor(Qt.CursorShape.OpenHandCursor if self._is_pos_on_arm(pos) else Qt.CursorShape.ArrowCursor)
+                self.update()
+
+            elif self.pressed_btn == "main" and hit == "main":
                 self.toggle_play()
             elif self.pressed_btn == "prev" and hit == "prev":
                 self.current_time = 0.0
@@ -452,10 +672,12 @@ class VinylMusicSkin(BaseMusicSkin):
             self.is_dragging_bar = False
             self._drag_pos = QPoint()
             self.update()
+            if was_dragging_window:
+                self._on_window_drag_finished()
 
     def _seek_to_x(self, x_widget: float):
-        bar_start = 52.0 * SCALE
-        bar_width = 348.0 * SCALE
+        bar_start = 52.0 * self.scale
+        bar_width = 405.0 * self.scale
         ratio = max(0.0, min(1.0, (x_widget - bar_start) / bar_width))
         self.current_time = ratio * self.duration
         if self.arm_state == "on":
