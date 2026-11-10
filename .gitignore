@@ -27,6 +27,8 @@ share/python-wheels/
 
 # PyInstaller / Nuitka
 *.manifest
+*.spec
+!Aimedget.spec
 
 # Environments
 .env
@@ -55,3 +57,31 @@ assets/files.zip
 
 # Logs e arquivos locais temporários
 *.log
+crash_reports/
+mockups/
+scratch/
+
+# Scripts de desenvolvimento e execução local rápida
+run_app.bat
+run_hub.bat
+dev_live.py
+PASSO_A_PASSO_WIDGET.md
+
+# Agent metadata
+.codex/
+.impeccable/
+
+
+
+# Skin exclusiva (distribuida manualmente, fora do repositorio)
+tools/build_lavanda_theme.py
+tests/test_lavanda_build.py
+**/*tassia*
+**/*exclusive*
+
+# Metadados de agente/produto (so o skill modular-architecture fica versionado)
+.agents/skills/impeccable/
+PRODUCT.md
+
+# Snapshots gerados pelos testes
+tests/snapshots/
