@@ -1,6 +1,7 @@
-PySide6>=6.6
-winrt-runtime>=3.2
-winrt-Windows.Foundation>=3.2
-winrt-Windows.Foundation.Collections>=3.2
-winrt-Windows.Media.Control>=3.2
-winrt-Windows.Storage.Streams>=3.2
+# Versões exatas usadas no build da release (reprodutível). Para atualizar: teste e rode a suíte antes de mudar.
+PySide6==6.12.0
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Media.Control==3.2.1
+winrt-Windows.Storage.Streams==3.2.1
