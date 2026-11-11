@@ -4,6 +4,35 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.0.3] - 2026-11-11
+
+### Corrigido
+- **Music Player com o Firefox**: músicas tocando no Firefox (ex.: YouTube Music) não eram reconhecidas.
+- **Vídeos do YouTube Music** (faixas enviadas por canais, sem capa oficial) eram ignorados e o widget mostrava
+  "Nenhuma mídia ativa". Agora aparecem com título e artista; a capa oficial é buscada online e, se não for
+  encontrada, fica a capa padrão (em vez do quadro do vídeo ou da capa da música anterior).
+- **Barra de progresso** que nascia adiantada ou dava saltos na troca de faixa quando o player envia a posição da
+  faixa anterior junto com o título novo (Firefox). Agora ela recomeça do zero até chegar a posição da nova faixa.
+- **Importar tema** com um widget aberto por cima: o seletor de arquivos podia ficar atrás do widget, com os cliques
+  bloqueados e o som de erro do Windows. Agora o seletor abre na frente, e os widgets continuam clicáveis e
+  arrastáveis enquanto ele está aberto.
+
+### Alterado
+- Instalações novas seguem o **tema do Windows** (claro ou escuro) em vez de começar no modo claro.
+- O seletor de importar/exportar temas **lembra a última pasta usada** também depois de fechar o app.
+- Texto da opção de verificar atualizações: "Consulta automática uma vez ao dia, e pergunta antes de atualizar."
+- O nome **Aimedget** aparece no preview da barra de tarefas (a janela continua sem título visível) e na dica do
+  ícone da bandeja, que antes dizia "Aimedget Suite".
+
+### Adicionado
+- **Fechar widget** no menu de contexto do Music Player (clique direito), como já existia no Timer. Fechar assim
+  não reabre o widget sozinho enquanto a mesma música continua tocando.
+- Ícone **?** na página do **Caps/Num Lock** explicando que alguns notebooks (Lenovo, Dell, HP, ASUS...) mostram um
+  indicador próprio do fabricante junto com o do Aimedget, e que ele precisa ser desativado no sistema do notebook.
+- Ícone **?** na página do **Music Player** avisando que, com o YouTube Music no **Firefox**, o estado de
+  play/pausa e a barra de progresso podem atrasar ou saltar (o Firefox informa esses dados com atraso); no Chrome
+  e em players de desktop o widget funciona normalmente.
+
 ## [1.0.2] - 2026-11-11
 
 ### Corrigido
@@ -48,6 +77,7 @@ Primeira versão pública.
 - **Atualização automática** pelo instalador, com conferência do SHA-256 do download.
 - Instalador por usuário (sem administrador) e versão portátil.
 
+[1.0.3]: https://github.com/allsz/aimedget/releases/tag/v1.0.3
 [1.0.2]: https://github.com/allsz/aimedget/releases/tag/v1.0.2
 [1.0.1]: https://github.com/allsz/aimedget/releases/tag/v1.0.1
 [1.0.0]: https://github.com/allsz/aimedget/releases/tag/v1.0.0

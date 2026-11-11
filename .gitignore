@@ -70,6 +70,7 @@ PASSO_A_PASSO_WIDGET.md
 # Agent metadata
 .codex/
 .impeccable/
+.claude
 
 
 # Metadados de agente/produto (so o skill modular-architecture fica versionado)
@@ -78,3 +79,6 @@ PRODUCT.md
 
 # Snapshots gerados pelos testes
 tests/snapshots/
+
+#Anotações Pessoais
+Bug_Notes.md
