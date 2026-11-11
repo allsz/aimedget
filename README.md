@@ -15,8 +15,8 @@ por um único app, o **Hub**.
 - **Timer & Foco** — timer, cronômetro e alarme sempre à mão, com som de fim.
 - **Hub** — temas claro, escuro e OLED (ou o do Windows), cor de destaque, português e inglês, iniciar com o
   Windows, posição de cada flyout na tela (8 posições) e atualização automática.
-- **Temas** — cada flyout e widget aceita temas visuais (cores, fundo, figurinhas), importáveis, exportáveis e excluíveis em um
-  arquivo `.aimskin`. Guia completo em [docs/temas.md](docs/temas.md).
+- **Temas** — cada flyout e widget aceita temas visuais (cores, fundo, figurinhas), importáveis e exportáveis em um
+  arquivo `.aimskin`, e removíveis pelo Hub. Guia completo em [docs/temas.md](docs/temas.md).
 
 ### Atalhos
 

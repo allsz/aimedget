@@ -4,6 +4,30 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.0.4] - 2026-11-11
+
+### Corrigido
+- **Timer**: ao abrir o menu de contexto (clique direito), o widget perdia as cores do tema (destaque, borda e
+  botões voltavam ao padrão) e ficava com bordas escuras. O menu agora usa só as cores do Windows/Hub, legível
+  também no modo claro, e o widget mantém o tema.
+- **Mixer de volume**: o nome do app que aparece ao passar o mouse no ícone podia piscar ao cruzar o espaço
+  entre dois ícones. Agora some com um pequeno atraso e só troca o texto ao passar para outro ícone.
+- O título da skin do **Timer** ficava em inglês ("Default") depois de trocar o idioma para português, e vice-versa.
+
+### Adicionado
+- **Modo Alarme no Timer** (clique direito, Modo): você escolhe um horário e o widget conta até ele, hoje ou
+  amanhã se já passou. Funciona pelo relógio do sistema, então toca certo mesmo se o PC dormir. Pausar desarma e
+  reiniciar zera o horário, como no Temporizador.
+- **Excluir temas pelo Hub** ("Excluir tema..." na galeria de cada widget), com confirmação e a opção de
+  exportar antes. Se o tema excluído estava em uso, o visual volta ao Padrão. O Padrão, o Windows e os temas que
+  vêm com o app não podem ser excluídos.
+
+### Alterado
+- O **Timer**, o menu de contexto do **Music Player** e o texto "sem mídia" agora seguem o idioma do app
+  (português e inglês).
+- Se o tema escolhido for apagado direto da pasta, o app volta ao padrão e grava a escolha, em vez de repetir o
+  aviso no console a cada abertura.
+
 ## [1.0.3] - 2026-11-11
 
 ### Corrigido
@@ -77,6 +101,7 @@ Primeira versão pública.
 - **Atualização automática** pelo instalador, com conferência do SHA-256 do download.
 - Instalador por usuário (sem administrador) e versão portátil.
 
+[1.0.4]: https://github.com/allsz/aimedget/releases/tag/v1.0.4
 [1.0.3]: https://github.com/allsz/aimedget/releases/tag/v1.0.3
 [1.0.2]: https://github.com/allsz/aimedget/releases/tag/v1.0.2
 [1.0.1]: https://github.com/allsz/aimedget/releases/tag/v1.0.1
