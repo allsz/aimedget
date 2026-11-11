@@ -9,25 +9,24 @@ import threading
 import traceback
 from typing import Any, Optional
 
-from app.core.paths import get_base_dir
+from app.core.paths import get_app_data_dir, get_base_dir
 
 
 def get_crash_reports_dir() -> str:
     """
     Retorna o diretório destinado aos relatórios de crash.
     Em modo desenvolvimento, salva prioritariamente na pasta 'crash_reports/' na raiz do projeto.
-    Em executável congelado (.exe), salva em '%LOCALAPPDATA%/WindowsRedesign/crash_reports/'.
+    Em executável congelado (.exe), salva em '%LOCALAPPDATA%/Aimedget/crash_reports/'.
     """
     if getattr(sys, "frozen", False):
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        reports_dir = os.path.join(base, "WindowsRedesign", "crash_reports")
+        reports_dir = os.path.join(get_app_data_dir(), "crash_reports")
     else:
         reports_dir = os.path.join(get_base_dir(), "crash_reports")
 
     try:
         os.makedirs(reports_dir, exist_ok=True)
     except Exception:
-        fallback = os.path.join(os.environ.get("TEMP", "."), "WindowsRedesign_crash_reports")
+        fallback = os.path.join(os.environ.get("TEMP", "."), "Aimedget_crash_reports")
         os.makedirs(fallback, exist_ok=True)
         return fallback
 

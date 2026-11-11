@@ -4,6 +4,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QWheelEvent
 from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
+from app.core import osd_anchor
 from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
 from app.services.audio_mixer_service import AppAudioSession
@@ -26,6 +27,9 @@ class VolumeMixerFlyout(QWidget):
     - Animação de entrada surgindo de baixo para cima em poucos ms (cubic-out).
     - Barra superior (240x50px): Ícone de Speaker (mute), Master Slider, Volume numérico e botão retrátil (^ / v).
     - Gaveta retrátil (até 240x270px): Lista de aplicativos com ícones nativos reais, sliders individuais e scroll suave.
+    - Âncora configurável (8 posições, compartilhada com o Caps Lock; ver app/core/osd_anchor.py): a borda ancorada
+      do card fica parada e a gaveta cresce para longe dela (para cima embaixo, para baixo no topo, dos dois lados
+      no meio). Nada é desenhado de cabeça para baixo.
     """
 
     master_volume_dragged = Signal(int)
@@ -35,6 +39,8 @@ class VolumeMixerFlyout(QWidget):
     app_routing_changed = Signal(str, str, str)  # (app_id, flow, device_id)
     refresh_requested = Signal()
     card_top_changed = Signal(float, bool)
+    card_bounds_changed = Signal(float, float, bool)   # (topo visual, base visual, ativo) em coordenadas de tela
+    visibility_changed = Signal(bool)   # na tela / fora: o serviço só varre os apps com o mixer visível
 
     CARD_W = 240
     COLLAPSED_H = 50
@@ -78,7 +84,17 @@ class VolumeMixerFlyout(QWidget):
         self._margins = (float(self.SHADOW_MARGIN),) * 4
         self._art_top = 0.0
         self._art_bottom = 0.0
+        self._art_left = 0.0
+        self._art_right = 0.0
         self._canvas_expanded = False   # tamanho de janela em uso (recolhido ou com espaço para a gaveta)
+
+        # Âncora na tela e empilhamento com o Caps Lock no meio da tela: o mixer desce metade da altura do
+        # Caps Lock (+ o espaço entre eles) para o PAR ficar centralizado; animado para os dois se afastarem juntos
+        self._anchor = osd_anchor.DEFAULT_ANCHOR
+        self._caps_active = False
+        self._caps_visual_h = 0.0
+        self._stack_offset = 0.0
+        self._stack_offset_target = 0.0
 
         # Estado de hover/press nos botões do cabeçalho
         self._speaker_hovered = False
@@ -198,33 +214,106 @@ class VolumeMixerFlyout(QWidget):
         self.update()
 
     def _apply_window_canvas_size(self, expanded_canvas: bool):
-        """Ajusta a geometria da janela mantendo a base ancorada exatamente acima da barra de tarefas."""
+        """Ajusta o tamanho da janela (recolhido ou com espaço para a gaveta) e a reposiciona pela âncora."""
         self._canvas_expanded = expanded_canvas
         ml, mt, mr, mb = self._margins
         win_w = int(self.CARD_W + ml + mr)
-        max_card_h = self.EXPANDED_MAX_H if expanded_canvas else self.COLLAPSED_H
-        win_h = int(max_card_h + mt + mb + self.SLIDE_TRAVEL_PX)
+        win_h = int(self._slot_height() + mt + mb + self.SLIDE_TRAVEL_PX)
+        self.setFixedSize(win_w, win_h)
+        self._place_window()
 
-        app = QApplication.instance()
-        if app and app.primaryScreen():
-            avail = app.primaryScreen().availableGeometry()
-            # O CARD fica centralizado e com a base sempre no mesmo ponto sobre a barra de tarefas;
-            # a folga (e a arte que pende sob o card) ficam por fora disso.
-            x = int(avail.x() + (avail.width() - self.CARD_W) // 2 - ml)
-            card_bottom_gap = self.TASKBAR_GAP_PX + self.SHADOW_MARGIN + self._art_bottom
-            y = int(avail.y() + avail.height() - card_bottom_gap + mb + self.SLIDE_TRAVEL_PX - win_h)
-            self.setFixedSize(win_w, win_h)
-            self.move(x, y)
+    def _slot_height(self) -> float:
+        """Altura máxima que o card pode ter com o tamanho de janela em uso."""
+        return float(self.EXPANDED_MAX_H if self._canvas_expanded else self.COLLAPSED_H)
+
+    def _vertical(self) -> str:
+        return osd_anchor.vertical(self._anchor)
+
+    def _place_window(self):
+        """
+        Move a janela para que a borda ANCORADA do card fique sempre no mesmo ponto da tela; a folga (e a arte
+        que passa da borda) ficam por fora disso. Layout vertical da janela (o deslize vem do lado da âncora):
+        - embaixo / meio: [folga][card][folga][deslize]
+        - em cima:        [folga][deslize][card][folga]
+        """
+        avail = osd_anchor.primary_available_geometry()
+        if avail is None:
+            return
+        ml, mt, _mr, mb = self._margins
+        card_x = osd_anchor.card_left_x(self._anchor, avail, float(self.CARD_W), self._art_left, self._art_right)
+        x = int(round(card_x - ml))
+        edge_gap = self.TASKBAR_GAP_PX + self.SHADOW_MARGIN
+        v = self._vertical()
+        if v == "top":
+            card_top = avail.y() + edge_gap + self._art_top
+            y = card_top - mt - self.SLIDE_TRAVEL_PX
+        elif v == "middle":
+            center = avail.y() + avail.height() / 2.0 + self._stack_offset
+            y = center - (mt + self._slot_height() / 2.0)
         else:
-            self.setFixedSize(win_w, win_h)
+            card_bottom_gap = edge_gap + self._art_bottom
+            y = avail.y() + avail.height() - card_bottom_gap + mb + self.SLIDE_TRAVEL_PX - self.height()
+        self.move(x, int(round(y)))
 
     def _card_rect(self) -> QRectF:
         x0 = self._margins[0]
+        mt = self._margins[1]
         card_h = self._current_card_height()
-        base_bottom = float(self.height() - self._margins[3] - self.SLIDE_TRAVEL_PX)
         slide_offset = (1.0 - self._slide_t) * self.SLIDE_TRAVEL_PX
-        y0 = base_bottom + slide_offset - card_h
+        v = self._vertical()
+        if v == "top":
+            # topo fixo: a gaveta cresce para BAIXO e o card desliza vindo de cima
+            y0 = mt + self.SLIDE_TRAVEL_PX - slide_offset
+        elif v == "middle":
+            # centro fixo: a gaveta cresce para os dois lados
+            y0 = mt + self._slot_height() / 2.0 - card_h / 2.0 + slide_offset
+        else:
+            base_bottom = float(self.height() - self._margins[3] - self.SLIDE_TRAVEL_PX)
+            y0 = base_bottom + slide_offset - card_h
         return QRectF(x0, y0, float(self.CARD_W), card_h)
+
+    # --- Âncora e empilhamento com o Caps Lock ---
+
+    def set_anchor(self, anchor: str):
+        """Troca a âncora (Hub) e reposiciona na hora, inclusive com o flyout na tela."""
+        anchor = osd_anchor.normalize(anchor)
+        if anchor == self._anchor:
+            return
+        self._anchor = anchor
+        self._update_stack_offset_target()
+        self._stack_offset = self._stack_offset_target
+        self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)
+        if self.isVisible():
+            self._notify_card_top()
+            self.update()
+
+    def anchor(self) -> str:
+        return self._anchor
+
+    def column_center_x(self) -> float | None:
+        """Centro X (tela) do card na âncora atual, mesmo fora da tela: o Caps Lock se alinha por ele."""
+        avail = osd_anchor.primary_available_geometry()
+        if avail is None:
+            return None
+        left = osd_anchor.card_left_x(self._anchor, avail, float(self.CARD_W), self._art_left, self._art_right)
+        return left + self.CARD_W / 2.0
+
+    def _update_stack_offset_target(self):
+        if self._vertical() == "middle" and self._caps_active:
+            self._stack_offset_target = (self._caps_visual_h + osd_anchor.STACK_GAP_PX) / 2.0
+        else:
+            self._stack_offset_target = 0.0
+
+    def on_caps_presence_changed(self, visual_h: float, is_active: bool):
+        """O Caps Lock apareceu/sumiu: no meio da tela, abre (ou fecha) espaço para o par ficar centralizado."""
+        self._caps_active = is_active
+        self._caps_visual_h = float(visual_h) if is_active else 0.0
+        self._update_stack_offset_target()
+        if not self.isVisible():
+            self._stack_offset = self._stack_offset_target
+            return
+        if abs(self._stack_offset - self._stack_offset_target) > 0.3:
+            self._start_anim_timer()
 
     def _apply_theme(self, theme: MixerTheme):
         """Propaga o tema ao cabeçalho e a todas as linhas. Não faz nada se o tema não mudou."""
@@ -251,6 +340,8 @@ class VolumeMixerFlyout(QWidget):
         self._margins = (grow(ov_l), grow(ov_t), grow(ov_r), grow(ov_b))
         self._art_top = float(math.ceil(ov_t)) if ov_t else 0.0
         self._art_bottom = float(math.ceil(ov_b)) if ov_b else 0.0
+        self._art_left = float(math.ceil(ov_l)) if ov_l else 0.0
+        self._art_right = float(math.ceil(ov_r)) if ov_r else 0.0
 
     def on_master_volume_changed(self, volume: int, is_muted: bool):
         """Sincroniza o estado do volume principal vindo do AudioMixerService."""
@@ -308,10 +399,30 @@ class VolumeMixerFlyout(QWidget):
         # topo VISUAL (inclui figurinhas e sombra acima do card): o Caps Lock empilha acima disso
         return float(self.y() + self._card_rect().top() - self._art_top)
 
-    def _notify_card_top(self):
+    def get_card_screen_bounds(self) -> tuple[float, float] | None:
+        """(topo, base) VISUAIS do card na tela, incluindo a arte que passa das bordas; None se não está ativo."""
         top = self.get_card_screen_top()
-        is_active = (top is not None)
-        self.card_top_changed.emit(top if is_active else 0.0, is_active)
+        if top is None:
+            return None
+        return top, float(self.y() + self._card_rect().bottom() + self._art_bottom)
+
+    def _notify_card_top(self):
+        bounds = self.get_card_screen_bounds()
+        is_active = (bounds is not None)
+        top, bottom = bounds if is_active else (0.0, 0.0)
+        self.card_top_changed.emit(top, is_active)
+        self.card_bounds_changed.emit(top, bottom, is_active)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.visibility_changed.emit(True)
+
+    def hideEvent(self, event):
+        # hide() direto (atalho que alterna o mixer) também precisa soltar o Caps Lock empilhado
+        self.card_top_changed.emit(0.0, False)
+        self.card_bounds_changed.emit(0.0, 0.0, False)
+        self.visibility_changed.emit(False)
+        super().hideEvent(event)
 
     def show_osd(self, volume: int | None = None, is_muted: bool | None = None):
         """
@@ -334,6 +445,7 @@ class VolumeMixerFlyout(QWidget):
                 self._expand_start_t = 0.0
                 self._expand_target_t = 0.0
                 self._anim_card_h = float(self.COLLAPSED_H)
+                self._stack_offset = self._stack_offset_target   # já nasce no lugar certo do par
                 self._apply_window_canvas_size(expanded_canvas=False)
                 self._slide_t = 0.0
                 for r in self._rows:
@@ -492,7 +604,18 @@ class VolumeMixerFlyout(QWidget):
         else:
             self._scrollbar_opacity = self._scrollbar_target_opacity
 
-        # Notifica o topo do card para empilhar o Caps Lock cooperativamente em tempo real
+        # 6. Deslocamento do par no meio da tela (Caps Lock chegou/saiu): os dois se afastam/reaproximam do centro
+        diff_off = self._stack_offset_target - self._stack_offset
+        if abs(diff_off) > 0.3:
+            self._stack_offset += diff_off * (1.0 - math.exp(-24.0 * dt))
+            self._place_window()
+            needs_update = True
+        elif self._stack_offset != self._stack_offset_target:
+            self._stack_offset = self._stack_offset_target
+            self._place_window()
+            needs_update = True
+
+        # Notifica os limites do card para empilhar o Caps Lock cooperativamente em tempo real
         self._notify_card_top()
 
         if needs_update:
@@ -501,6 +624,7 @@ class VolumeMixerFlyout(QWidget):
         target_card_h = self._target_expanded_height() if self.is_expanded else float(self.COLLAPSED_H)
         if (
             abs(self._slide_t - self._slide_target_t) <= 0.004
+            and self._stack_offset == self._stack_offset_target
             and abs(self._expand_t - self._expand_target_t) <= 0.004
             and abs(self._anim_card_h - target_card_h) <= 0.15
             and abs(self._scroll_y - self._target_scroll_y) <= 0.15
@@ -509,8 +633,7 @@ class VolumeMixerFlyout(QWidget):
         ):
             self._anim_timer.stop()
             if self._is_hiding and self._slide_t <= 0.01:
-                self.hide()
-                self.card_top_changed.emit(0.0, False)
+                self.hide()   # hideEvent avisa o Caps Lock que o mixer saiu
                 for r in self._rows:
                     r.reset_routing()
                 self._target_scroll_y = 0.0
@@ -670,6 +793,8 @@ class VolumeMixerFlyout(QWidget):
         cx = bx + 13.0
         cy = by + 13.3
         dy = -2.1 + 4.2 * self._expand_t  # -2.1 (topo do ^) -> +2.1 (ponta do v)
+        if self._vertical() == "top":
+            dy = -dy   # ancorado no topo a gaveta abre para baixo: a seta aponta para onde ela vai crescer
 
         ic = self.theme.icon  # a seta é ~4% mais escura que o ícone (padrão: 255 -> 245)
         chev_pen = QPen(QColor(ic.red() * 245 // 255, ic.green() * 245 // 255, ic.blue() * 245 // 255, ic.alpha()), 1.5)

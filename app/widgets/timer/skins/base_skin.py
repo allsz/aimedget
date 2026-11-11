@@ -1,14 +1,14 @@
-import os
 from typing import Optional
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QWidget
+from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QMenu, QWidget
 
 from app.core.config_manager import config_manager
-from app.core.paths import ASSETS_DIR
+from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
 from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.fluent_menu import get_fluent_menu_stylesheet
+from app.widgets.timer import theme as timer_theme
 
 
 class FluentTimerMenu(QMenu):
@@ -108,20 +108,30 @@ class BaseTimerSkin(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
-        self.resize(max(self.MIN_WIDTH, width), max(self.MIN_HEIGHT, height))
+
+        # Tema visual escolhido no Hub (themes/timer/): cores por cima das do app, fundo e figurinhas
+        self.skin_theme: timer_theme.TimerTheme = timer_theme.load_user_theme()
+        self._hub_theme: HubTheme = self._resolve_active_theme()
+        self.theme: HubTheme = self.skin_theme.apply_to(self._hub_theme)   # cores efetivas usadas no desenho
+
+        # O "quadrado" é o cartão com a folga da sombra (o que sempre foi a janela). Figurinhas que passam da borda
+        # pedem uma margem transparente EXTRA em volta dele: a janela fica maior, o quadrado não muda.
+        side = max(self.MIN_WIDTH, width)
+        self.art_margin = self._wanted_art_margin(side)
+        self.resize(side + 2 * self.art_margin, side + 2 * self.art_margin)
 
         # Estado do Timer
         self.current_seconds: float = 300.0
         self.target_duration: float = 300.0
         self.is_running: bool = False
         self.mode: str = config_manager.get_timer_mode("timer")  # 'timer' ou 'stopwatch'
-        self.theme: HubTheme = self._resolve_active_theme()
 
         # Interações de mouse
         self._drag_pos = QPoint()
         self._is_resizing = False
         self._resize_start_pos = QPoint()
         self._resize_start_size = QSize()
+        self._resize_start_side = 0
         self._hovered = False
         self._close_hovered = False
         self._resize_hovered = False
@@ -133,14 +143,61 @@ class BaseTimerSkin(QWidget):
         self._close_anim_timer.setInterval(16)
         self._close_anim_timer.timeout.connect(self._step_close_anim)
 
+    # --- Quadrado x janela (margem transparente para arte que passa da borda) ---
+
+    ART_FREE_PAD = 8.0   # folga que já existe em volta do cartão (a margem da sombra)
+
+    def square_side(self) -> int:
+        """Lado do quadrado (cartão + folga da sombra), sem a margem de arte. É o que o usuário redimensiona e salva."""
+        return self.width() - 2 * self.art_margin
+
+    def square_origin(self) -> QPoint:
+        """Canto superior esquerdo do quadrado na tela: as posições salvas falam dele, não da janela."""
+        return self.pos() + QPoint(self.art_margin, self.art_margin)
+
+    def move_square_to(self, x: int, y: int):
+        self.move(x - self.art_margin, y - self.art_margin)
+
+    def _wanted_art_margin(self, side: int) -> int:
+        """Margem extra (px) que o tema pede para um quadrado de `side` px: o quanto as figurinhas passam da folga."""
+        scale = max(0.8, (side - 2 * self.ART_FREE_PAD) / (self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD))
+        card = self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD   # px lógicos do cartão no tamanho padrão
+        return art_margin_px(self.skin_theme.stickers, card, card, k=scale, free=self.ART_FREE_PAD)
+
+    def set_square_side(self, side: int):
+        """
+        Dá ao quadrado o lado `side` (já dentro de MIN/MAX) e ajusta a margem ao tema e à escala, mantendo o
+        canto do quadrado exatamente onde está (a janela cresce/encolhe em volta dele).
+        """
+        origin = self.square_origin()
+        self.art_margin = self._wanted_art_margin(side)
+        full = side + 2 * self.art_margin
+        self.setGeometry(origin.x() - self.art_margin, origin.y() - self.art_margin, full, full)
+        self.update()
+
     def _resolve_active_theme(self) -> HubTheme:
         hub_pref = config_manager.get_hub_theme("system")
         return resolve_theme(hub_pref)
 
     def update_theme(self, theme: Optional[HubTheme] = None):
-        """Atualiza a paleta de cores para acompanhar o Hub em tempo real."""
-        self.theme = theme if theme is not None else self._resolve_active_theme()
+        """Atualiza a paleta de cores para acompanhar o Hub em tempo real (o tema do Timer continua por cima)."""
+        self._hub_theme = theme if theme is not None else self._resolve_active_theme()
+        self.theme = self.skin_theme.apply_to(self._hub_theme)
         self.update()
+
+    def reload_skin_theme(self):
+        """Relê o tema escolhido (barato se nada mudou). Chamado ao mostrar o widget e quando o Hub aplica um tema."""
+        theme = timer_theme.load_user_theme()
+        if theme is self.skin_theme:
+            return
+        self.skin_theme = theme
+        self.theme = theme.apply_to(self._hub_theme)
+        self.set_square_side(self.square_side())   # figurinhas novas podem pedir (ou dispensar) a margem
+        self.update()
+
+    def showEvent(self, event):
+        self.reload_skin_theme()
+        super().showEvent(event)
 
     def set_time_state(self, current_seconds: float, is_running: bool, mode: str):
         """Atualiza o estado de contagem vindo do TimerController."""
@@ -264,7 +321,8 @@ class BaseTimerSkin(QWidget):
 
     def _toggle_remember_position(self, checked: bool):
         if checked:
-            config_manager.set_timer_position_remembered(True, self.x(), self.y())
+            origin = self.square_origin()
+            config_manager.set_timer_position_remembered(True, origin.x(), origin.y())
         else:
             config_manager.set_timer_position_remembered(False)
 
@@ -275,8 +333,6 @@ class BaseTimerSkin(QWidget):
     def _reset_default_size(self):
         from app.core.screen_metrics import get_auto_timer_size
         auto_w, auto_h = get_auto_timer_size(widget=self)
-        self.resize(auto_w, auto_h)
+        self.set_square_side(max(self.MIN_WIDTH, min(self.MAX_WIDTH, auto_w)))
         config_manager.save_timer_size(auto_w, auto_h)
-        self.update()
-        config_manager.save_timer_size(self.DEFAULT_SIZE, self.DEFAULT_SIZE)
         self.update()

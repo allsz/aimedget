@@ -1,10 +1,10 @@
 """
 Valida um tema e gera o arquivo .aimskin (um zip) pronto para importar ou compartilhar, em um comando.
 
-    python tools/pack_theme.py <pasta> [-o saida.aimskin] [--container keylock|mixer] [--allow-issues]
+    python tools/pack_theme.py <pasta> [-o saida.aimskin] [--container keylock|mixer|music|timer] [--allow-issues]
 
-- <pasta> é a pasta do tema (com theme.json e as imagens) ou a pasta que contém keylock/ e/ou mixer/.
-- O flyout é deduzido pelo nome das pastas (themes/keylock/meu-tema); se não der, use --container.
+- <pasta> é a pasta do tema (com theme.json e as imagens) ou a pasta que contém keylock/, mixer/, music/ e/ou timer/.
+- O destino é deduzido pelo nome das pastas (themes/keylock/meu-tema); se não der, use --container.
 - Se a validação achar erro, nada é gerado. Itens ignorados (valores inválidos) também barram, para o tema sair
   como o designer pensou; use --allow-issues só se quiser empacotar mesmo assim.
 - Só entram theme.json e imagens (png/jpg/jpeg/webp/svg). Arquivos de outros tipos, ocultos ou grandes demais
@@ -79,9 +79,9 @@ def unused_files(folder: str) -> list[str]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Valida um tema e gera o .aimskin.")
-    parser.add_argument("folder", help="pasta do tema (ou do pacote com keylock/ e mixer/)")
+    parser.add_argument("folder", help="pasta do tema (ou do pacote com keylock/, mixer/, music/, timer/)")
     parser.add_argument("-o", "--output", help=f"arquivo de saída (padrão: <nome-do-tema>{PACKAGE_EXT} ao lado da pasta)")
-    parser.add_argument("--container", choices=CONTAINERS, help="flyout do tema (se não der para deduzir)")
+    parser.add_argument("--container", choices=CONTAINERS, help="destino do tema (se não der para deduzir)")
     parser.add_argument("--allow-issues", action="store_true", help="empacota mesmo com itens ignorados")
     args = parser.parse_args(argv)
 

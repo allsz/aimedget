@@ -5,7 +5,7 @@ Permite abrir/ocultar a janela do Hub, alternar widgets e encerrar o aplicativo 
 
 from typing import Callable, Optional
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
 from app.core.i18n import t

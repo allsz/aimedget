@@ -7,7 +7,7 @@ play não funciona sem entender o motivo.
 """
 
 MIN_RUN_SECONDS = 10
-MAX_SECONDS = 86400 * 24
+MAX_SECONDS = 99 * 3600 + 59 * 60 + 59   # 99:59:59: o campo das horas tem dois dígitos
 
 
 def normalize_duration(seconds) -> int:
@@ -18,6 +18,27 @@ def normalize_duration(seconds) -> int:
     if s < MIN_RUN_SECONDS:
         return MIN_RUN_SECONDS
     return min(s, MAX_SECONDS)
+
+
+FIELD_MAX = {"hours": 99, "minutes": 59, "seconds": 59}   # teto de cada campo ao digitar
+
+
+def split_duration(total: int) -> dict[str, int]:
+    """Os três campos do relógio (horas, minutos, segundos) de uma duração em segundos."""
+    total = max(0, int(total))
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return {"hours": hours, "minutes": minutes, "seconds": seconds}
+
+
+def typed_field_accepts(segment: str, digits: str) -> bool:
+    """True se o número digitado cabe no campo (horas até 99, minutos e segundos até 59)."""
+    return int(digits or 0) <= FIELD_MAX[segment]
+
+
+def compose_duration(fields: dict[str, int]) -> int:
+    """Duração dos três campos (0, ou entre 10 s e 99:59:59)."""
+    return normalize_duration(fields["hours"] * 3600 + fields["minutes"] * 60 + fields["seconds"])
 
 
 def step_duration(base: int, change: int) -> int:

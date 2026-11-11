@@ -16,6 +16,7 @@ from winrt.windows.media.control import (
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
 )
 from winrt.windows.storage.streams import DataReader, Buffer, InputStreamOptions
+from app.core.paths import get_app_data_dir
 from app.services.repeat_modes import gsmtc_to_ui, ui_to_gsmtc
 from app.services.session_selection import SessionCandidate, pick_session
 
@@ -72,9 +73,8 @@ NON_MUSIC_PATTERNS = re.compile(
 
 
 def _get_disk_cache_dir() -> str:
-    """Retorna o diretório de cache persistente em disco (%LOCALAPPDATA%/WindowsRedesign/cover_cache)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    cache_dir = os.path.join(base, "WindowsRedesign", "cover_cache")
+    """Retorna o diretório de cache persistente em disco (%LOCALAPPDATA%/Aimedget/cover_cache)."""
+    cache_dir = os.path.join(get_app_data_dir(), "cover_cache")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 

@@ -22,6 +22,17 @@ from app.core.config_manager import config_manager
 from app.core.widget_animator import SLIDE_PX, SlideFadeAnimator
 
 
+def wait_until(condition, timeout_ms: int = 2000) -> bool:
+    """Espera a condição valer (até `timeout_ms`), processando eventos. Mais robusto que esperar um tempo fixo."""
+    waited = 0
+    while not condition():
+        if waited >= timeout_ms:
+            return False
+        QTest.qWait(10)
+        waited += 10
+    return True
+
+
 def make_widget():
     w = QWidget()
     w.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
@@ -51,10 +62,9 @@ class TestAnimator(unittest.TestCase):
         self.assertLess(w.windowOpacity(), 0.2)
         self.assertEqual(w.pos(), QPoint(200, 150 + SLIDE_PX))   # começa abaixo
         self.assertEqual(a.rest_pos(), QPoint(200, 150))          # repouso nunca deslocado
-        QTest.qWait(260)
+        self.assertTrue(wait_until(lambda: not a.is_animating(), 2000))
         self.assertEqual(w.pos(), QPoint(200, 150))
         self.assertAlmostEqual(w.windowOpacity(), 1.0, places=2)
-        self.assertFalse(a.is_animating())
         w.close()
 
     def test_hide_ends_hidden_at_rest_position_and_full_opacity(self):
@@ -64,8 +74,7 @@ class TestAnimator(unittest.TestCase):
         a.hide(100)
         self.assertTrue(w.isVisible())
         self.assertTrue(a.is_hiding())
-        QTest.qWait(220)
-        self.assertFalse(w.isVisible())
+        self.assertTrue(wait_until(lambda: not w.isVisible(), 2000))
         self.assertEqual(w.pos(), QPoint(200, 150))
         self.assertAlmostEqual(w.windowOpacity(), 1.0, places=2)  # pronto para a próxima exibição
         w.close()
@@ -115,8 +124,8 @@ class TestAnimator(unittest.TestCase):
         a = SlideFadeAnimator(w)
         a.show(100)
         self.assertTrue(w.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
-        QTest.qWait(220)
-        self.assertFalse(w.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+        self.assertTrue(wait_until(
+            lambda: not w.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents), 2000))
         w.close()
 
 

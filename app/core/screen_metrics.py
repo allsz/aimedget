@@ -6,7 +6,6 @@ seja proporcional e sem distorções ou "jumpscare".
 """
 
 from typing import Optional, Tuple
-from PySide6.QtCore import QPoint
 from PySide6.QtGui import QScreen
 from PySide6.QtWidgets import QApplication, QWidget
 

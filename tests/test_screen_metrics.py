@@ -132,14 +132,15 @@ class TestScreenMetrics(unittest.TestCase):
             # Reduz para 0.375 (75%)
             skin.set_scale(0.375, save_preference=False)
             self.assertAlmostEqual(skin.scale, 0.375, places=3)
-            self.assertEqual(skin.width(), int(round(skin.canvas_w * 0.375)))
-            self.assertEqual(skin.height(), int(round(skin.canvas_h * 0.375)))
+            # O tamanho do CARTÃO segue a escala (a janela pode ter margem transparente se o tema ativo pedir)
+            self.assertEqual(skin._card_size(), (int(round(skin.canvas_w * 0.375)), int(round(skin.canvas_h * 0.375))))
+            self.assertEqual(skin.width(), skin._card_size()[0] + 2 * skin.art_margin)
 
             # Amplia para 0.75 (150%)
             skin.set_scale(0.75, save_preference=False)
             self.assertAlmostEqual(skin.scale, 0.75, places=3)
-            self.assertEqual(skin.width(), int(round(skin.canvas_w * 0.75)))
-            self.assertEqual(skin.height(), int(round(skin.canvas_h * 0.75)))
+            self.assertEqual(skin._card_size(), (int(round(skin.canvas_w * 0.75)), int(round(skin.canvas_h * 0.75))))
+            self.assertEqual(skin.height(), skin._card_size()[1] + 2 * skin.art_margin)
 
             # Clamping do range seguro (0.35 a 0.80)
             skin.set_scale(0.10, save_preference=False)
@@ -148,7 +149,7 @@ class TestScreenMetrics(unittest.TestCase):
             self.assertAlmostEqual(skin.scale, 0.80, places=3)
 
             # Verificação da alça de redimensionamento no canto inferior direito
-            self.assertTrue(skin.is_in_resize_grip(QPointF(skin.width() - 5, skin.height() - 5)))
+            self.assertTrue(skin.is_in_resize_grip(QPointF(skin.card_rect().right() - 5, skin.card_rect().bottom() - 5)))
             self.assertFalse(skin.is_in_resize_grip(QPointF(10, 10)))
 
             skin.close()

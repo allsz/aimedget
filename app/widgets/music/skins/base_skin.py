@@ -1,10 +1,8 @@
-import os
 import time
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
-from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColor, QPainterPath, QBrush
+from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import QWidget, QMenu
-from app.core.paths import ASSETS_DIR
-from app.core.typography import init_app_font, get_ui_font
+from app.core.typography import init_app_font
 from app.core.config_manager import config_manager
 from app.core.widget_animator import SlideFadeAnimator
 from app.core.i18n import t
@@ -56,6 +54,8 @@ class BaseMusicSkin(QWidget):
         self.canvas_w = base_width
         self.canvas_h = base_height
         self.scale = scale if scale is not None else config_manager.get_effective_music_scale()
+        # Margem transparente (px, nos 4 lados) em volta do cartão: só skins com tema de figurinhas que passam da borda
+        self.art_margin = 0
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -63,7 +63,7 @@ class BaseMusicSkin(QWidget):
             | Qt.WindowType.SubWindow
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(int(round(self.canvas_w * self.scale)), int(round(self.canvas_h * self.scale)))
+        self.setFixedSize(*self._window_size())
         self.setMouseTracking(True)
         self.animator = SlideFadeAnimator(self)
 
@@ -108,6 +108,16 @@ class BaseMusicSkin(QWidget):
                 self.target_palette = get_default_palette()
                 return True
         return False
+
+    def apply_preview_media(self, media):
+        """
+        Põe a mídia de demonstração (`preview_media.PreviewMedia`) nesta skin para a miniatura do Hub: a capa entra
+        como se o player a tivesse enviado, e a paleta do fundo sai do `backdrop` (sem o logo). Serve para qualquer
+        skin nova; só uma skin com estado próprio de capa/paleta precisa sobrescrever.
+        """
+        self._update_and_cache_cover(media.cover_bytes)
+        self.target_palette = extract_palette_from_image(media.backdrop)
+        self.current_palette = self.target_palette
 
     def on_media_updated(
         self,
@@ -204,13 +214,62 @@ class BaseMusicSkin(QWidget):
         p.end()
         return QIcon(pm)
 
+    # --- Cartão x janela (margem transparente para arte que passa da borda) ---
+
+    def _card_size(self) -> tuple[int, int]:
+        """Tamanho do CARTÃO em px de tela."""
+        return int(round(self.canvas_w * self.scale)), int(round(self.canvas_h * self.scale))
+
+    def _window_size(self) -> tuple[int, int]:
+        """Tamanho da JANELA: o cartão mais a margem transparente (0 quando o tema não tem arte para fora)."""
+        w, h = self._card_size()
+        return w + 2 * self.art_margin, h + 2 * self.art_margin
+
+    def card_rect(self) -> QRectF:
+        """O cartão em coordenadas da janela."""
+        w, h = self._card_size()
+        return QRectF(self.art_margin, self.art_margin, w, h)
+
+    def card_origin(self) -> QPoint:
+        """Canto superior esquerdo do cartão na tela, sem o deslocamento da animação de surgir/sumir."""
+        return self.rest_pos() + QPoint(self.art_margin, self.art_margin)
+
+    def move_card_to(self, x: int, y: int):
+        """Põe o CARTÃO em (x, y): as posições salvas e trocas de skin/tema falam do cartão, não da janela."""
+        self.move(x - self.art_margin, y - self.art_margin)
+
+    def _wanted_art_margin(self) -> int:
+        """Margem que o tema atual pede nesta escala. Skins com tema de figurinhas sobrescrevem."""
+        return 0
+
+    def _apply_art_margin(self):
+        """
+        Confere a margem que o tema pede e, se mudou, redimensiona a janela mantendo o cartão exatamente onde está.
+        Devolve True se a janela mudou.
+        """
+        wanted = self._wanted_art_margin()
+        if wanted == self.art_margin:
+            return False
+        delta = wanted - self.art_margin
+        origin = self.pos()
+        self.art_margin = wanted
+        self.setFixedSize(*self._window_size())
+        self.move(origin.x() - delta, origin.y() - delta)   # o cartão fica onde estava
+        self._update_hitboxes()
+        self.update()
+        return True
+
     def set_scale(self, new_scale: float, save_preference: bool = True):
         """Aplica novo fator de escala ao widget e reposiciona os elementos."""
         new_scale = max(self.MIN_SAFE_SCALE, min(self.MAX_SAFE_SCALE, round(float(new_scale), 4)))
         if abs(self.scale - new_scale) < 0.001:
             return
         self.scale = new_scale
-        self.setFixedSize(int(round(self.canvas_w * self.scale)), int(round(self.canvas_h * self.scale)))
+        old_margin = self.art_margin
+        self.art_margin = self._wanted_art_margin()
+        self.setFixedSize(*self._window_size())
+        if self.art_margin != old_margin:   # a margem acompanha a escala: o canto do cartão não pode andar
+            self.move(self.x() - (self.art_margin - old_margin), self.y() - (self.art_margin - old_margin))
         self._update_hitboxes()
         if save_preference:
             config_manager.set_music_scale(new_scale)
@@ -238,7 +297,8 @@ class BaseMusicSkin(QWidget):
         """Retorna a área de clique interativa para redimensionamento no canto inferior direito."""
         margin = self.get_resize_grip_margin()
         grip_size = max(28.0, margin + 10.0)
-        return QRectF(self.width() - grip_size, self.height() - grip_size, grip_size, grip_size)
+        card = self.card_rect()
+        return QRectF(card.right() - grip_size, card.bottom() - grip_size, grip_size, grip_size)
 
     def is_in_resize_grip(self, pos: QPointF | QPoint) -> bool:
         """Verifica se a posição do ponteiro está sobre a área da alça."""
@@ -287,8 +347,9 @@ class BaseMusicSkin(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         margin = self.get_resize_grip_margin()
-        grip_x = self.width() - margin
-        grip_y = self.height() - margin
+        card = self.card_rect()
+        grip_x = card.right() - margin
+        grip_y = card.bottom() - margin
         r = 1.4
         spacing = 4.2
 
@@ -502,20 +563,22 @@ class BaseMusicSkin(QWidget):
             self.update()
 
     def rest_pos(self) -> QPoint:
-        """Posição real do widget, sem o deslocamento da animação de surgir/sumir."""
+        """Posição real da janela, sem o deslocamento da animação de surgir/sumir."""
         return self.animator.rest_pos()
 
     def _toggle_remember_position(self, checked: bool):
-        """Salva a posição atual como favorita ou remove a preferência se desmarcado."""
+        """Salva a posição atual do cartão como favorita ou remove a preferência se desmarcado."""
         if checked:
-            config_manager.set_music_position_remembered(True, self.rest_pos().x(), self.rest_pos().y())
+            origin = self.card_origin()
+            config_manager.set_music_position_remembered(True, origin.x(), origin.y())
         else:
             config_manager.set_music_position_remembered(False)
 
     def _on_window_drag_finished(self):
         """Atualiza a posição memorizada e ajusta escala automática se trocou de tela."""
         if config_manager.is_music_position_remembered():
-            config_manager.save_music_position(self.rest_pos().x(), self.rest_pos().y())
+            origin = self.card_origin()
+            config_manager.save_music_position(origin.x(), origin.y())
         if config_manager.is_music_scale_auto():
             from app.core.screen_metrics import get_auto_music_scale
             target_scale = get_auto_music_scale(widget=self)

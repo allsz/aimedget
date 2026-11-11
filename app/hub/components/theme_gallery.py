@@ -1,5 +1,6 @@
 """
-Card "Tema visual" do Hub: galeria de miniaturas dos temas de um flyout (Padrão + os da pasta de temas),
+Card "Tema visual" do Hub: galeria de miniaturas dos temas de um destino (flyout ou widget: o visual padrão + os
+da pasta de temas),
 no mesmo estilo da seleção de skins da Música/Timer (PreviewCard + ResponsiveCardGrid, selo "EM USO").
 
 Um clique escolhe o tema, mostra o flyout para testar e atualiza o selo. Não há toggle de "ativo no menu":
@@ -10,15 +11,17 @@ import os
 from typing import Callable
 
 from PySide6.QtCore import QStandardPaths, Qt
-from PySide6.QtWidgets import QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from app.core.i18n import t
 from app.core.preview_card import PreviewCard
 from app.core.preview_registry import SkinSpec
 from app.core.theme_loader import DEFAULT_ID, ThemeLoader
+from app.core.theme_validation import CONTAINERS
 from app.core.theme_package import (
     PACKAGE_EXT, PackageError, analyze_package, export_themes, has_theme, install_package, slugify,
 )
+from app.hub.components.message_dialog import show_message
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.theme_import_dialog import TARGET_KEYS, ThemeImportDialog
 from app.hub.theme import HubTheme
@@ -60,26 +63,36 @@ def _file_dialog(parent: QWidget, title: str, save: bool, suggested: str = "") -
 
 
 def _loader_for(container: str) -> ThemeLoader:
-    """Loader do flyout (importado sob demanda: só os módulos de tema, sem criar janelas)."""
+    """Loader do destino (importado sob demanda: só os módulos de tema, sem criar janelas)."""
     if container == "keylock":
         from app.widgets.keylock_osd.theme import loader
-    else:
+    elif container == "mixer":
         from app.widgets.volume_mixer.theme import loader
+    elif container == "music":
+        from app.widgets.music.skins.stack_theme import loader
+    elif container == "timer":
+        from app.widgets.timer.theme import loader
+    else:
+        raise ValueError(f"destino desconhecido: {container!r}")
     return loader
 
 
 class ThemeGalleryCard(QFrame):
     """
-    `loader` descobre os temas e guarda a escolha; `container` ("keylock"/"mixer") diz de qual flyout é a página;
-    `make_spec` cria a miniatura; `on_applied` roda após escolher. Ao importar um pacote com os dois flyouts,
-    `appliers` ({container: função}) mostra cada flyout para testar (por padrão só o desta página).
+    `loader` descobre os temas e guarda a escolha; `container` ("keylock"/"mixer"/"music"/"timer") diz de qual
+    destino é a página; `make_spec` cria a miniatura; `on_applied` roda após escolher. Ao importar um pacote com
+    vários destinos, `appliers` ({container: função}) aplica/mostra cada um (por padrão só o desta página).
+    `subtitle_key` e `default_title_key` (chaves de tradução) trocam o texto de apoio e o nome do visual padrão.
     """
 
     def __init__(self, loader: ThemeLoader, container: str, make_spec: SpecFactory,
                  on_applied: Callable[[], None], theme: HubTheme,
-                 appliers: dict[str, Callable[[], None]] | None = None, parent: QWidget | None = None):
+                 appliers: dict[str, Callable[[], None]] | None = None, parent: QWidget | None = None,
+                 subtitle_key: str = "theme_picker_sub", default_title_key: str = "theme_default"):
         super().__init__(parent)
         self.setProperty("class", "HubCard")
+        self._subtitle_key = subtitle_key
+        self._default_title_key = default_title_key
         self._loader = loader
         self._container = container
         self._make_spec = make_spec
@@ -97,7 +110,7 @@ class ThemeGalleryCard(QFrame):
         header.setSpacing(4)
         self.title = QLabel(t("theme_picker_title"))
         self.title.setStyleSheet("font-size: 14.5px; font-weight: 600;")
-        self.sub = QLabel(t("theme_picker_sub"))
+        self.sub = QLabel(t(self._subtitle_key))
         self.sub.setWordWrap(True)
         header.addWidget(self.title)
         header.addWidget(self.sub)
@@ -126,7 +139,7 @@ class ThemeGalleryCard(QFrame):
     # --- Conteúdo ---
 
     def _title_for(self, theme_id: str, name: str) -> str:
-        return t("theme_default") if theme_id == DEFAULT_ID else (name or t("theme_custom"))
+        return t(self._default_title_key) if theme_id == DEFAULT_ID else (name or t("theme_custom"))
 
     def _current_active(self, ids: set[str]) -> str:
         active = self._loader.active_id()
@@ -185,7 +198,7 @@ class ThemeGalleryCard(QFrame):
         try:
             report = analyze_package(path)
         except PackageError as exc:
-            QMessageBox.warning(self, t("theme_import_title"), t("theme_import_error", why=str(exc)))
+            show_message(self, self._theme, t("theme_import_title"), t("theme_import_error", why=str(exc)), "warning")
             return False
         try:
             dialog = ThemeImportDialog(report, self._theme, self)
@@ -193,7 +206,7 @@ class ThemeGalleryCard(QFrame):
                 return False
             installed = install_package(report, dialog.chosen_containers, dialog.mode)
         except PackageError as exc:
-            QMessageBox.warning(self, t("theme_import_title"), t("theme_import_error", why=str(exc)))
+            show_message(self, self._theme, t("theme_import_title"), t("theme_import_error", why=str(exc)), "warning")
             return False
         finally:
             report.close()
@@ -209,8 +222,10 @@ class ThemeGalleryCard(QFrame):
 
     def _export(self):
         active = self._current_active(set(self._cards))
-        if active == DEFAULT_ID:
-            QMessageBox.information(self, t("theme_export_pick_title"), t("theme_export_default"))
+        if self._loader.is_builtin(active):
+            card = self._cards.get(active)
+            name = card._spec.title if card else t(self._default_title_key)
+            show_message(self, self._theme, t("theme_export_pick_title"), t("theme_export_default", name=name))
             return
         card = self._cards.get(active)
         suggested = f"{slugify(card._spec.title if card else active)}{PACKAGE_EXT}"
@@ -219,21 +234,19 @@ class ThemeGalleryCard(QFrame):
             self.export_to(active, path)
 
     def export_to(self, theme_id: str, path: str) -> bool:
-        """Exporta o tema para `path`. Se o MESMO tema (mesmo id) também existir no outro flyout, vai junto."""
+        """Exporta o tema para `path`. Se o MESMO tema (mesmo id) existir em outros destinos, vai junto
+        (ex.: um pacote com Caps, Mixer, Música e Timer sai inteiro de qualquer uma das páginas)."""
         if not path.lower().endswith(PACKAGE_EXT):
             path += PACKAGE_EXT
         card = self._cards.get(theme_id)
-        items = [(self._container, theme_id)]
-        other = "mixer" if self._container == "keylock" else "keylock"
-        if has_theme(other, theme_id):
-            items.append((other, theme_id))
+        items = [(c, theme_id) for c in CONTAINERS if c == self._container or has_theme(c, theme_id)]
         try:
             count = export_themes(items, path, name=card._spec.title if card else None)
         except (PackageError, OSError) as exc:
-            QMessageBox.warning(self, t("theme_export_pick_title"), t("theme_export_error", why=str(exc)))
+            show_message(self, self._theme, t("theme_export_pick_title"), t("theme_export_error", why=str(exc)), "warning")
             return False
         where = ", ".join(t(TARGET_KEYS[c]) for c, _ in items)
-        QMessageBox.information(self, t("theme_export_pick_title"), t("theme_export_done", n=count, where=where))
+        show_message(self, self._theme, t("theme_export_pick_title"), t("theme_export_done", n=count, where=where))
         return True
 
     def _open_folder(self):
@@ -257,7 +270,7 @@ class ThemeGalleryCard(QFrame):
 
     def retranslate_ui(self):
         self.title.setText(t("theme_picker_title"))
-        self.sub.setText(t("theme_picker_sub"))
+        self.sub.setText(t(self._subtitle_key))
         self.btn_import.setText(t("theme_import_btn"))
         self.btn_export.setText(t("theme_export_btn"))
         self.btn_export.setToolTip(t("theme_export_tip"))

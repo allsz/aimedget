@@ -1,11 +1,13 @@
 import math
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QElapsedTimer, QPoint, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QWheelEvent
-from PySide6.QtWidgets import QToolTip, QApplication
+from PySide6.QtWidgets import QToolTip
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
-from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, step_duration
+from app.widgets.timer.duration_rules import (
+    MAX_SECONDS, MIN_RUN_SECONDS, compose_duration, split_duration, step_duration, typed_field_accepts,
+)
 from app.core.typography import get_ui_font
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
@@ -24,6 +26,8 @@ class WindowsTimerSkin(BaseTimerSkin):
 
     SHADOW_PAD = 8.0
     CORNER_RADIUS = 16.0
+    SWEEP_MS = 650         # duração da volta de luz ao clicar num número
+    TYPING_GAP_MS = 1000   # dígitos separados por mais que isso são números diferentes
 
     def __init__(self, width: int = BaseTimerSkin.DEFAULT_SIZE, height: int = BaseTimerSkin.DEFAULT_SIZE):
         super().__init__(width, height)
@@ -31,12 +35,30 @@ class WindowsTimerSkin(BaseTimerSkin):
         self.hovered_btn: str | None = None
         self.hovered_time_segment: str | None = None
 
+        # Digitação do tempo: só chega tecla quando o usuário clica no widget (foco normal do Qt, sem hook global)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._typed_digits = ""
+        self._typed_segment: str | None = None
+        self._typed_fields: dict[str, int] = {}
+        self._typing_timer = QTimer(self)
+        self._typing_timer.setSingleShot(True)
+        self._typing_timer.setInterval(self.TYPING_GAP_MS)
+        self._typing_timer.timeout.connect(self._reset_typing)
+
+        # Volta de luz na borda do número clicado (uma vez por clique)
+        self._sweep_segment: str | None = None
+        self._sweep_progress = 0.0
+        self._sweep_clock = QElapsedTimer()
+        self._sweep_timer = QTimer(self)
+        self._sweep_timer.setInterval(16)
+        self._sweep_timer.timeout.connect(self._step_sweep)
+
         # Efeito de flash / pulso ao finalizar contagem regressiva
         self.is_alarm_pulsing = False
 
     def get_card_rect(self) -> QRectF:
         """Retorna o retângulo da superfície do card descontando a margem de sombra."""
-        p = self.SHADOW_PAD
+        p = self.SHADOW_PAD + self.art_margin   # folga da sombra + margem para arte que passa da borda
         return QRectF(p, p, self.width() - 2 * p, self.height() - 2 * p)
 
     def get_scale(self) -> float:
@@ -62,7 +84,7 @@ class WindowsTimerSkin(BaseTimerSkin):
 
         total_w = play_diam + gap + reset_diam
         start_x = card.left() + (card.width() - total_w) / 2.0
-        center_y = card.bottom() - 32.0 * scale
+        center_y = card.top() + 104.0 * scale   # a mesma posição em que skin.py desenha os botões
 
         play_rect = QRectF(start_x, center_y - play_diam / 2.0, play_diam, play_diam)
         reset_rect = QRectF(start_x + play_diam + gap, center_y - reset_diam / 2.0, reset_diam, reset_diam)
@@ -202,8 +224,13 @@ class WindowsTimerSkin(BaseTimerSkin):
             is_hovered=self._hovered,
             is_smart_hover_enabled=config_manager.is_timer_smart_hover_enabled(),
             is_play_enabled=self.is_play_enabled(),
+            select_segment=self._sweep_segment,
+            select_progress=self._sweep_progress,
+            select_color=self.skin_theme.select_border,
         )
-        paint_windows_timer(p, QRectF(0, 0, float(self.width()), float(self.height())), state, self.theme)
+        m = float(self.art_margin)
+        paint_windows_timer(p, QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m), state, self.theme,
+                            art=self.skin_theme)
         if self._hovered or self._is_resizing:
             scale = self.get_scale()
             self._paint_resize_grip(p, scale)
@@ -346,11 +373,15 @@ class WindowsTimerSkin(BaseTimerSkin):
             if hit == "resize_grip":
                 self._is_resizing = True
                 self._resize_start_pos = event.globalPosition().toPoint()
-                self._resize_start_size = self.size()
+                self._resize_start_side = self.square_side()
             elif hit in ("close", "play_pause", "reset"):
                 self.pressed_btn = hit
                 self.update()
             else:
+                if hit.startswith("time_"):
+                    self.activateWindow()   # clicar no tempo dá o foco do teclado ao widget para digitar
+                    self.setFocus(Qt.FocusReason.MouseFocusReason)
+                    self._start_sweep(hit.replace("time_", ""))
                 self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, event):
@@ -360,8 +391,9 @@ class WindowsTimerSkin(BaseTimerSkin):
         if self._is_resizing and (event.buttons() & Qt.MouseButton.LeftButton):
             delta = event.globalPosition().toPoint() - self._resize_start_pos
             avg_delta = (delta.x() + delta.y()) // 2
-            new_side = max(self.MIN_WIDTH, min(self.MAX_WIDTH, self._resize_start_size.width() + avg_delta))
-            self.resize(new_side, new_side)
+            new_side = max(self.MIN_WIDTH, min(self.MAX_WIDTH, self._resize_start_side + avg_delta))
+            if new_side != self.square_side():
+                self.set_square_side(new_side)   # a margem acompanha a escala; o canto do quadrado fica parado
             self.update()
             return
 
@@ -402,7 +434,93 @@ class WindowsTimerSkin(BaseTimerSkin):
 
     def leaveEvent(self, event):
         self.hovered_time_segment = None
+        self._reset_typing()
         super().leaveEvent(event)
+
+    # --- Digitação do tempo (só com o widget focado, parado, no modo timer e com o mouse sobre um segmento) ---
+
+    def _start_sweep(self, segment: str):
+        if segment not in ("hours", "minutes", "seconds") or self.is_running or self.mode != "timer":
+            return
+        self._sweep_segment = segment
+        self._sweep_progress = 0.0
+        self._sweep_clock.start()
+        self._sweep_timer.start()
+
+    def _step_sweep(self):
+        self._sweep_progress = self._sweep_clock.elapsed() / self.SWEEP_MS
+        if self._sweep_progress >= 1.0:
+            self._sweep_timer.stop()
+            self._sweep_segment = None
+            self._sweep_progress = 0.0
+        self.update()
+
+    def _reset_typing(self):
+        self._typing_timer.stop()
+        self._typed_digits = ""
+        self._typed_segment = None
+
+    def focusOutEvent(self, event):
+        self._reset_typing()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        key = int(event.key())
+        is_digit = Qt.Key.Key_0.value <= key <= Qt.Key.Key_9.value
+        no_mods = not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+                                            | Qt.KeyboardModifier.MetaModifier))
+        seg = self.hovered_time_segment if config_manager.is_timer_smart_hover_enabled() else None
+        can_type = no_mods and not self.is_running and self.mode == "timer" and seg in ("hours", "minutes", "seconds")
+
+        if key == Qt.Key.Key_Escape.value and self._typed_digits:
+            self._reset_typing()
+            event.accept()
+            return
+        if not can_type or not (is_digit or key in (Qt.Key.Key_Backspace.value, Qt.Key.Key_Return.value, Qt.Key.Key_Enter.value)):
+            super().keyPressEvent(event)
+            return
+
+        if key in (Qt.Key.Key_Return.value, Qt.Key.Key_Enter.value):
+            self._reset_typing()
+            event.accept()
+            return
+
+        # Sequência nova: o campo mudou ou passou o intervalo. Só este campo muda; os outros ficam como estão
+        if self._typed_segment != seg or not self._typing_timer.isActive():
+            self._typed_digits = ""
+            self._typed_segment = seg
+            self._typed_fields = split_duration(int(self.target_duration))
+
+        if key == Qt.Key.Key_Backspace.value:
+            self._typed_digits = self._typed_digits[:-1]
+        else:
+            candidate = self._typed_digits + str(key - Qt.Key.Key_0.value)
+            if typed_field_accepts(seg, candidate):   # 240 nos minutos fica 24: o 0 não cabe e é ignorado
+                self._typed_digits = candidate
+        self._typing_timer.start()
+
+        self._typed_fields[seg] = int(self._typed_digits or 0)
+        new_val = compose_duration(self._typed_fields)
+        self.target_duration = float(new_val)
+        self.current_seconds = float(new_val)
+        self.duration_changed.emit(new_val)
+        self.update()
+        event.accept()
+
+    def focusNextPrevChild(self, next_: bool) -> bool:
+        """Tab / Shift+Tab pulam entre horas, minutos e segundos (em loop) em vez de mudar o foco do Qt."""
+        if self.is_running or self.mode != "timer" or not config_manager.is_timer_smart_hover_enabled():
+            return super().focusNextPrevChild(next_)
+        order = ("hours", "minutes", "seconds")
+        if self.hovered_time_segment in order:
+            idx = (order.index(self.hovered_time_segment) + (1 if next_ else -1)) % len(order)
+        else:
+            idx = 0 if next_ else len(order) - 1
+        self._reset_typing()
+        self.hovered_time_segment = order[idx]
+        self._start_sweep(order[idx])
+        self.update()
+        return True
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -413,11 +531,12 @@ class WindowsTimerSkin(BaseTimerSkin):
             if was_dragging:
                 self._drag_pos = QPoint()
                 if config_manager.is_timer_position_remembered():
-                    config_manager.save_timer_position(self.x(), self.y())
+                    origin = self.square_origin()
+                    config_manager.save_timer_position(origin.x(), origin.y())
 
             if was_resizing:
                 self._is_resizing = False
-                config_manager.save_timer_size(self.width(), self.height())
+                config_manager.save_timer_size(self.square_side(), self.square_side())
 
             if self.pressed_btn == "close" and hit == "close":
                 self.close_requested.emit()
@@ -455,7 +574,7 @@ class WindowsTimerSkin(BaseTimerSkin):
             if self.mode == "timer":
                 new_val = step_duration(int(base_val), change)   # 0 ou >= 10 s (sem valores mortos)
             else:
-                new_val = max(1, min(86400 * 24, int(base_val + change)))
+                new_val = max(1, min(MAX_SECONDS, int(base_val + change)))
 
             if self.mode == "timer":
                 self.target_duration = float(new_val)

@@ -265,8 +265,12 @@ class MusicVolumeOSD(QWidget):
         # Posição de repouso: ignora o deslize da animação de surgir/sumir do widget
         top_left = anchor.rest_pos() if hasattr(anchor, "rest_pos") else anchor.mapToGlobal(QPoint(0, 0))
         anchor_rect = QRect(top_left, anchor.size())
+        if hasattr(anchor, "card_rect"):
+            # Widget com margem transparente (arte do tema que passa da borda): a barra encosta no CARTÃO
+            card = anchor.card_rect().toRect()
+            anchor_rect = QRect(top_left + card.topLeft(), card.size())
 
-        bar_h = bar_height_for(anchor.height())  # acompanha mudanças de escala do widget
+        bar_h = bar_height_for(anchor_rect.height())  # acompanha mudanças de escala do widget
         if bar_h != self._bar_h:
             self._bar_h = bar_h
             self._apply_size()

@@ -16,7 +16,16 @@ from dataclasses import dataclass, field, fields
 from app.core.theme_art import collect_issues
 from app.core.theme_loader import MAX_NAME_LEN
 
-CONTAINERS = ("keylock", "mixer")
+CONTAINERS = ("keylock", "mixer", "music", "timer")
+# Nome de cada destino para mensagens (pt-BR) e a pasta dele dentro de um pacote
+CONTAINER_NAMES = {"keylock": "Caps/Num Lock", "mixer": "Volume e mixer",
+                   "music": "Música (Capa Empilhada)", "timer": "Timer (Aimedget)"}
+
+
+def container_folders_text(sep: str = " e ") -> str:
+    """'keylock/, mixer/, music/ e timer/' (para mensagens)."""
+    names = [f"{c}/" for c in CONTAINERS]
+    return ", ".join(names[:-1]) + sep + names[-1]
 
 
 @dataclass
@@ -49,8 +58,12 @@ def _container_parts(container: str):
         from app.widgets.keylock_osd import theme as module
     elif container == "mixer":
         from app.widgets.volume_mixer import theme as module
+    elif container == "music":
+        from app.widgets.music.skins import stack_theme as module
+    elif container == "timer":
+        from app.widgets.timer import theme as module
     else:
-        raise ValueError(f"container desconhecido: {container!r} (use {' ou '.join(CONTAINERS)})")
+        raise ValueError(f"container desconhecido: {container!r} (use {', '.join(CONTAINERS)})")
     return module.theme_from_dict, module.DEFAULT_THEME
 
 
@@ -110,7 +123,7 @@ def detect_container(folder: str) -> str | None:
 def validate_path(folder: str, container: str | None = None) -> list[ThemeReport]:
     """
     Valida o que houver em `folder`: um tema de um container (informe `container` ou deixe deduzir pelo
-    nome das pastas) ou um pacote multi-alvo com as subpastas `keylock/` e/ou `mixer/`.
+    nome das pastas) ou um pacote multi-alvo com subpastas por destino (keylock/, mixer/, music/, timer/).
     """
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
@@ -122,6 +135,6 @@ def validate_path(folder: str, container: str | None = None) -> list[ThemeReport
             return [validate_theme_folder(os.path.join(folder, c), c) for c in targets]
         container = detect_container(folder)
         if container is None:
-            raise ValueError("não consegui descobrir de qual flyout é este tema: use --container keylock "
-                             "ou --container mixer (ou coloque as pastas keylock/ e mixer/ dentro do pacote)")
+            raise ValueError("não consegui descobrir para onde é este tema: use --container "
+                             f"({', '.join(CONTAINERS)}) ou coloque as pastas {container_folders_text()} dentro do pacote")
     return [validate_theme_folder(folder, container)]

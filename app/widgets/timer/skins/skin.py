@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QConicalGradient,
     QFont,
     QFontMetricsF,
     QPainter,
@@ -17,6 +18,7 @@ from PySide6.QtGui import (
     QPen,
 )
 
+from app.core.theme_art import paint_background, paint_stickers
 from app.core.typography import get_ui_font
 from app.hub.theme import HubTheme, THEME_DARK
 
@@ -35,6 +37,9 @@ class TimerState:
     is_hovered: bool = False
     is_smart_hover_enabled: bool = True
     is_play_enabled: bool = True   # False: duração zerada (00:00:00), nada para contar
+    select_segment: str | None = None   # segmento clicado, com a volta de luz na borda da pílula
+    select_progress: float = 0.0        # 0..1 da volta (1 = completa)
+    select_color: QColor | None = None  # None: branco no tema escuro, escuro no claro
 
 
 SHADOW_PAD = 8.0
@@ -46,12 +51,36 @@ def natural_size(state: TimerState | None = None) -> QSizeF:
     return QSizeF(DEFAULT_SIZE, DEFAULT_SIZE)
 
 
+def _paint_select_sweep(p: QPainter, rect: QRectF, radius: float, scale: float, state: TimerState, theme: HubTheme):
+    """Uma volta de luz ANTI-HORÁRIA só na borda da pílula do segmento clicado (dica visual de que o clique valeu)."""
+    color = QColor(state.select_color) if state.select_color is not None else (
+        QColor(255, 255, 255) if theme.is_dark else QColor(24, 24, 27))
+    t = state.select_progress
+    eased = 1.0 - (1.0 - t) ** 3
+    fade = min(1.0, (1.0 - t) * 4.0)                  # some no final da volta
+    head = 90.0 + 360.0 * eased                       # parte do topo; o ângulo do Qt cresce no sentido anti-horário
+    grad = QConicalGradient(rect.center(), head)
+    clear, solid = QColor(color), QColor(color)
+    clear.setAlpha(0)
+    solid.setAlpha(int(255 * fade))
+    grad.setColorAt(0.0, clear)
+    grad.setColorAt(0.55, clear)
+    grad.setColorAt(1.0, solid)                       # cabeça do cometa; a cauda fica atrás (sentido horário)
+    p.save()
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setPen(QPen(QBrush(grad), max(1.2, 1.6 * scale)))
+    p.drawRoundedRect(rect, radius, radius)
+    p.restore()
+
+
 def paint_windows_timer(
     p: QPainter,
     rect: QRectF,
     state: TimerState | None = None,
     theme: HubTheme | None = None,
+    art=None,
 ):
+    """`art` (TimerTheme, opcional): fundo e figurinhas do tema. As cores do tema já vêm aplicadas em `theme`."""
     if state is None:
         state = TimerState()
     if theme is None:
@@ -80,10 +109,18 @@ def paint_windows_timer(
     # 2. Superfície do Card Fluent (Tons do Hub)
     bg_color = QColor(theme.panel)
     p.setBrush(QBrush(bg_color))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(card, CORNER_RADIUS, CORNER_RADIUS)
+
+    # 2b. Fundo e figurinhas de baixo do tema (dentro do cartão), antes da borda e do conteúdo
+    if art is not None and (art.background is not None or art.stickers):
+        _paint_art(p, card, scale, art, above=False)
+
     border_pen = QPen(QColor(theme.line), 1.0)
     if state.is_alarm_pulsing:
         border_pen = QPen(QColor(theme.accent), 2.0)
     p.setPen(border_pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawRoundedRect(card, CORNER_RADIUS, CORNER_RADIUS)
 
     # 3. Rótulo de Modo / Status no topo
@@ -164,6 +201,9 @@ def paint_windows_timer(
             p.setPen(QColor(theme.text))
 
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+        if state.select_segment == seg_key and 0.0 < state.select_progress < 1.0:
+            _paint_select_sweep(p, r.adjusted(-3.0 * scale, 2.0 * scale, 3.0 * scale, -2.0 * scale), 4.0 * scale,
+                                scale, state, theme)
 
     # 5. Botões de Ação
     play_diam = 40.0 * scale
@@ -263,4 +303,24 @@ def paint_windows_timer(
         p.drawLine(QPointF(c_ctr.x() - arm, c_ctr.y() - arm), QPointF(c_ctr.x() + arm, c_ctr.y() + arm))
         p.drawLine(QPointF(c_ctr.x() - arm, c_ctr.y() + arm), QPointF(c_ctr.x() + arm, c_ctr.y() - arm))
 
+    # 7. Figurinhas de cima do tema (podem passar um pouco da borda, dentro da margem da sombra)
+    if art is not None and art.stickers:
+        _paint_art(p, card, scale, art, above=True)
+
+    p.restore()
+
+
+def _paint_art(p: QPainter, card: QRectF, scale: float, art, above: bool):
+    """Fundo/figurinhas em px do cartão no tamanho padrão (148 x 148), escalados com o cartão."""
+    p.save()
+    if not above:
+        clip = QPainterPath()
+        clip.addRoundedRect(card, CORNER_RADIUS, CORNER_RADIUS)
+        p.setClipPath(clip)
+    p.translate(card.topLeft())
+    p.scale(scale, scale)
+    rect = QRectF(0.0, 0.0, card.width() / scale, card.height() / scale)
+    if not above and art.background is not None:
+        paint_background(p, rect, art.background, CORNER_RADIUS / scale)
+    paint_stickers(p, rect, art.stickers, above=above)
     p.restore()

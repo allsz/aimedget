@@ -6,6 +6,7 @@ com zero timers ativos e sem overhead de CPU.
 
 from PySide6.QtCore import QSizeF, QPoint
 from app.core.preview_registry import SkinSpec, register_skin, get_skins_for_widget
+from app.widgets.music.skins.preview_media import preview_media
 
 
 _cached_instances = {}
@@ -22,6 +23,8 @@ def _get_headless(skin_id: str, skin_class_loader):
         skin.is_playing = True
         skin.current_time = 85.0
         skin.duration = 243.0
+        # A mesma "música" em todas as miniaturas (ver preview_media.py); cada skin sabe aplicá-la
+        skin.apply_preview_media(preview_media())
         _cached_instances[skin_id] = skin
     return _cached_instances[skin_id]
 

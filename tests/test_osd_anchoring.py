@@ -26,6 +26,18 @@ from app.widgets.music.volume_osd import (
     compute_osd_placement,
 )
 
+
+def wait_until(condition, timeout_ms: int = 2000) -> bool:
+    """Espera a condição valer (até `timeout_ms`), processando eventos. Mais robusto que esperar um tempo fixo."""
+    waited = 0
+    while not condition():
+        if waited >= timeout_ms:
+            return False
+        QTest.qWait(10)
+        waited += 10
+    return True
+
+
 SCREEN = QRect(0, 0, 1920, 1040)
 WIDGET = QSize(264, 148)
 OSD = QSize(BAR_W, 90)
@@ -176,8 +188,7 @@ class TestLiveAnchoring(unittest.TestCase):
 
     def test_hiding_the_widget_fades_the_bar_out_too(self):
         self.skin.hide()
-        QTest.qWait(260)
-        self.assertFalse(self.osd.isVisible())
+        self.assertTrue(wait_until(lambda: not self.osd.isVisible(), 2000))
 
     def test_stops_following_after_it_disappears(self):
         self.osd._start_fade_out()

@@ -14,10 +14,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from app.core.typography import init_app_font, get_ui_font
 from app.services.media_worker import WindowsMediaWorker
 from app.widgets.music.skins.vinyl_skin import VinylMusicSkin
-from app.widgets.music.music_controller import MusicWidgetController
 from app.main import main
 
 

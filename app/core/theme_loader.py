@@ -1,7 +1,7 @@
 """
 Carregamento de temas de container (flyout do Caps, Mixer, ...), compartilhado.
 
-Cada container tem uma pasta em  %LOCALAPPDATA%/WindowsRedesign/themes/<container>/  com:
+Cada container tem uma pasta em  %LOCALAPPDATA%/Aimedget/themes/<container>/  com:
 
     <container>/
       theme.json              <- tema solto na raiz (formato inicial; aparece como "Personalizado")
@@ -42,6 +42,8 @@ COMMON_KEYS = ("name", "container", "shadow", "background", "stickers")   # `con
 
 DEFAULT_ID = "default"   # visual original, sem arquivos
 CUSTOM_ID = "custom"     # theme.json solto na raiz da pasta do container
+APP_ID = "app"           # tema embutido "Aimedget": herda a aparência do app (ver app/core/app_theme.py)
+APP_NAME = "Aimedget"    # nome próprio: não é traduzido
 MAX_NAME_LEN = 40
 
 
@@ -143,9 +145,12 @@ class ThemeLoader(Generic[T]):
     """
 
     def __init__(self, container_id: str, default: T, parse: Callable[[dict, str], T], label: str,
-                 context: Callable[[], object] | None = None):
+                 context: Callable[[], object] | None = None, app_theme: Callable[[], T] | None = None):
         # `context` devolve algo que, quando muda, invalida o cache (ex.: a razão de escala da tela)
         self._context = context
+        # `app_theme` calcula o tema embutido "Aimedget" (sem arquivos). Deve devolver o MESMO objeto enquanto a
+        # aparência do app não mudar. Sem ele, o loader não oferece esse tema.
+        self._app_theme = app_theme
         self.container_id = container_id
         self.default = default
         self._parse = parse
@@ -188,8 +193,10 @@ class ThemeLoader(Generic[T]):
         return fallback
 
     def list_themes(self) -> list[ThemeInfo]:
-        """Padrão, o tema solto da raiz (se houver) e cada subpasta com um theme.json."""
-        themes = [ThemeInfo(DEFAULT_ID, "")]  # o nome do padrão é traduzido pela interface
+        """Aimedget, Windows (visual original), o tema solto da raiz (se houver) e cada subpasta com um theme.json."""
+        themes = [ThemeInfo(DEFAULT_ID, "")]  # o visual original do Windows; o nome é traduzido pela interface
+        if self._app_theme is not None:
+            themes.insert(0, ThemeInfo(APP_ID, APP_NAME))   # o Aimedget vem primeiro
         if os.path.isfile(self.path()):
             themes.append(ThemeInfo(CUSTOM_ID, self._display_name(self.path(), "")))
         try:
@@ -197,19 +204,26 @@ class ThemeLoader(Generic[T]):
         except OSError:
             entries = []
         for name in entries:
-            if name.startswith("."):
-                continue
+            if name.startswith(".") or (name == APP_ID and self._app_theme is not None):
+                continue   # uma pasta chamada "app" não pode esconder o tema embutido
             theme_file = os.path.join(self.themes_dir(), name, "theme.json")
             if os.path.isfile(theme_file):
                 themes.append(ThemeInfo(name, self._display_name(theme_file, name)))
         return themes
 
     def active_id(self) -> str:
-        """Escolha salva; sem escolha, o tema solto da raiz (comportamento anterior) ou o padrão."""
+        """Escolha salva; sem escolha, o tema solto da raiz (comportamento anterior), senão o "Aimedget".
+        Quem escolheu o Padrão na galeria tem "default" salvo e continua nele."""
         choice = config_manager.get_theme_choice(self.container_id)
         if choice:
             return choice
-        return CUSTOM_ID if os.path.isfile(self.path()) else DEFAULT_ID
+        if os.path.isfile(self.path()):
+            return CUSTOM_ID
+        return APP_ID if self._app_theme is not None else DEFAULT_ID
+
+    def is_builtin(self, theme_id: str) -> bool:
+        """Temas sem pasta (Padrão e Aimedget): não há arquivos para exportar."""
+        return theme_id == DEFAULT_ID or (theme_id == APP_ID and self._app_theme is not None)
 
     def set_active(self, theme_id: str):
         config_manager.set_theme_choice(self.container_id, theme_id)
@@ -219,6 +233,8 @@ class ThemeLoader(Generic[T]):
 
     def load(self) -> T:
         theme_id = self.active_id()
+        if theme_id == APP_ID and self._app_theme is not None:
+            return self._app_theme()
         located = None if theme_id == DEFAULT_ID else self._theme_file_and_dir(theme_id)
         if located is None or not os.path.isfile(located[0]):
             if theme_id != DEFAULT_ID:
@@ -261,6 +277,8 @@ class ThemeLoader(Generic[T]):
         do Hub. Guarda o resultado por assinatura de arquivos, então chamar de novo é barato e devolve o mesmo
         objeto enquanto nada mudar (o PreviewCard usa a identidade do objeto para saber se deve repintar).
         """
+        if theme_id == APP_ID and self._app_theme is not None:
+            return self._app_theme()
         located = None if theme_id == DEFAULT_ID else self._theme_file_and_dir(theme_id)
         if located is None or not os.path.isfile(located[0]):
             return self.default

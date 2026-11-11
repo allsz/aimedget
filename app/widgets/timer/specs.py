@@ -20,7 +20,7 @@ def init_timer_spec() -> WidgetSpec:
     spec = WidgetSpec(
         id="timer",
         title="Timer & Focus",
-        subtitle="Aimedget Style",
+        subtitle="Aimedget",
         natural_size=natural_size,
         paint=paint_timer,
         mock_state=lambda: TimerState(current_seconds=300.0),

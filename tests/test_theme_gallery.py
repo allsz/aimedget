@@ -60,7 +60,8 @@ class _Isolated(unittest.TestCase):
         self._old = (config_manager.config_dir, config_manager.config_path, config_manager._data.get("themes"))
         config_manager.config_dir = self._tmp.name
         config_manager.config_path = os.path.join(self._tmp.name, "settings.json")
-        config_manager._data.pop("themes", None)
+        # Estes testes cobrem temas de pasta; o Aimedget (padrão de instalação nova) tem testes próprios
+        config_manager._data["themes"] = {"keylock": "default", "mixer": "default"}
         for loader in (kl_theme.loader, mx_theme.loader):
             loader.reset()
             loader._preview_cache.clear()
@@ -185,7 +186,7 @@ class GalleryCardTests(_Isolated):
         self.make_theme(kl_theme.loader, "a", {"name": "Alfa"})
         self.make_theme(kl_theme.loader, "b", {"name": "Beta"})
         card, _ = self.build()
-        self.assertEqual(list(card._cards), ["default", "a", "b"])
+        self.assertEqual(list(card._cards), ["app", "default", "a", "b"])
         for c in card._cards.values():
             self.assertIsNone(c.toggle_switch)
         self.assertEqual(card._cards["a"]._spec.title, "Alfa")
@@ -218,7 +219,7 @@ class GalleryCardTests(_Isolated):
     def test_works_for_the_mixer_too(self):
         self.make_theme(mx_theme.loader, "m", {"name": "Meu"})
         card, _ = self.build(mx_theme.loader, mx_spec, "mixer")
-        self.assertEqual(list(card._cards), ["default", "m"])
+        self.assertEqual(list(card._cards), ["app", "default", "m"])
         card.grab()   # pinta tudo (miniaturas inclusas) sem erro
         self.assertIs(_get_headless_volume_mixer().theme, mx_theme.DEFAULT_THEME)
 
@@ -299,10 +300,10 @@ class ImportExportUiTests(_Isolated):
         from unittest import mock
         card, calls = self.build()
         bad = self.package({"keylock/theme.json": self.KL, "keylock/../fora.png": b"x"})
-        with mock.patch("app.hub.components.theme_gallery.QMessageBox.warning") as warn:
+        with mock.patch("app.hub.components.theme_gallery.show_message") as warn:
             self.assertFalse(card.import_package(bad))
         self.assertEqual(warn.call_count, 1)
-        self.assertIn("..", warn.call_args.args[2])
+        self.assertIn("..", warn.call_args.args[3])
         self.assertEqual(calls, [])
 
     def test_export_roundtrip_through_the_gallery(self):
@@ -310,7 +311,7 @@ class ImportExportUiTests(_Isolated):
         card, _ = self.build()
         self.run_import(card, self.package({"keylock/theme.json": self.KL}))
         out = os.path.join(self._tmp.name, "amigo")
-        with mock.patch("app.hub.components.theme_gallery.QMessageBox.information") as info:
+        with mock.patch("app.hub.components.theme_gallery.show_message") as info:
             self.assertTrue(card.export_to("pacote", out))   # a extensão é completada
         self.assertTrue(os.path.isfile(out + ".aimskin"))
         self.assertEqual(info.call_count, 1)
@@ -322,14 +323,14 @@ class ImportExportUiTests(_Isolated):
         self.run_import(card, self.package({"keylock/theme.json": self.KL, "mixer/theme.json": self.MX}))
         self.make_theme(kl_theme.loader, "so-caps", {"name": "So Caps"})
         out = os.path.join(self._tmp.name, "par.aimskin")
-        with mock.patch("app.hub.components.theme_gallery.QMessageBox.information") as info:
+        with mock.patch("app.hub.components.theme_gallery.show_message") as info:
             card.export_to("pacote", out)
         with zipfile.ZipFile(out) as zf:
             self.assertEqual(sorted(zf.namelist()), ["keylock/theme.json", "mixer/theme.json"])
-        self.assertIn("Volume e mixer", info.call_args.args[2])
+        self.assertIn("Volume e mixer", info.call_args.args[3])
         out2 = os.path.join(self._tmp.name, "um.aimskin")
         card.refresh()
-        with mock.patch("app.hub.components.theme_gallery.QMessageBox.information"):
+        with mock.patch("app.hub.components.theme_gallery.show_message"):
             card.export_to("so-caps", out2)
         with zipfile.ZipFile(out2) as zf:
             self.assertEqual(zf.namelist(), ["keylock/theme.json"])
@@ -337,7 +338,7 @@ class ImportExportUiTests(_Isolated):
     def test_export_default_is_refused_with_a_message(self):
         from unittest import mock
         card, _ = self.build()
-        with mock.patch("app.hub.components.theme_gallery.QMessageBox.information") as info:
+        with mock.patch("app.hub.components.theme_gallery.show_message") as info:
             card._export()
         self.assertEqual(info.call_count, 1)
 
@@ -363,6 +364,40 @@ class ImportExportUiTests(_Isolated):
             self.assertFalse(dlg.btn_ok.isEnabled())                # nada marcado: não instala
         finally:
             report.close()
+
+
+class OverviewFollowsActiveTheme(_Isolated):
+    """O card de cada flyout na Personalização mostra o tema em uso, como o Music Player mostra a skin ativa."""
+
+    def test_flyout_cards_show_the_active_theme_and_follow_changes(self):
+        from app.hub.pages import OverviewPage
+        from app.widgets.keylock_osd import KEYLOCK_SPEC
+        from app.widgets.volume_mixer.specs import init_volume_spec
+
+        page = OverviewPage(theme=THEME_DARK)
+        # Padrão: miniatura e rótulo originais
+        self.assertIs(page.keys_card._spec, KEYLOCK_SPEC)
+        self.assertIs(page.vol_card._spec, init_volume_spec())
+
+        self.make_theme(kl_theme.loader, "neon", {"name": "Neon", "card_bg": "#112233"})
+        self.make_theme(mx_theme.loader, "areia", {"name": "Areia"})
+        kl_theme.loader.set_active("neon")
+        mx_theme.loader.set_active("areia")
+        page._refresh_flyout_cards()   # o que o showEvent faz ao voltar para a página
+        self.assertEqual((page.keys_card._spec.id, page.keys_card.skin_label), ("neon", "Neon"))
+        self.assertEqual((page.vol_card._spec.id, page.vol_card.skin_label), ("areia", "Areia"))
+        self.assertIn("Neon", page.keys_card.lbl_subtitle.text())
+
+        # Nada mudou: a mesma spec (a miniatura não é redesenhada à toa)
+        spec = page.keys_card._spec
+        page._refresh_flyout_cards()
+        self.assertIs(page.keys_card._spec, spec)
+
+        # Tema escolhido que sumiu da pasta: volta ao padrão, como o flyout
+        import shutil
+        shutil.rmtree(os.path.join(kl_theme.loader.themes_dir(), "neon"))
+        page._refresh_flyout_cards()
+        self.assertIs(page.keys_card._spec, KEYLOCK_SPEC)
 
 
 if __name__ == "__main__":

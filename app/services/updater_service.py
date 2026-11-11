@@ -1,11 +1,17 @@
 """
 Serviço de Atualização Automática (Auto-Updater) do Aimedget.
-Utiliza a API pública de Releases do GitHub e CDN oficial para download.
-Implementa o padrão Windows Trampoline para substituição segura de executável em execução.
+
+Consulta a API pública de Releases do GitHub. O app é distribuído como PASTA (PyInstaller onedir), então atualizar
+não é trocar um .exe: é rodar o instalador da versão nova, que substitui a pasta inteira.
+- Cópia instalada (tem o desinstalador do Inno Setup ao lado): baixa o instalador da release, confere o SHA-256 que o
+  GitHub publica para o arquivo, roda em modo silencioso e o instalador reabre o app no fim.
+- Cópia portátil ou desenvolvimento: não se sobrescreve; abre a página da release para o download manual.
 """
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -15,7 +21,12 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from app.core.version import __version__, GITHUB_OWNER, GITHUB_REPO
+from app.core.version import __version__, GITHUB_OWNER, GITHUB_REPO, GITHUB_RELEASES_URL
+
+# O instalador da release (ex.: "Aimedget-Setup-1.0.1.exe"). O portátil é um .zip e nunca é baixado aqui.
+_INSTALLER_ASSET = re.compile(r"setup.*\.exe$", re.IGNORECASE)
+# Desinstalador que o Inno Setup deixa na pasta do app: é como o app sabe que foi instalado (e não é o portátil)
+_UNINSTALLER_NAME = "unins000.exe"
 
 
 @dataclass
@@ -23,9 +34,32 @@ class UpdateInfo:
     latest_version: str
     release_name: str
     body: str
-    download_url: str
+    download_url: str    # instalador da release; "" se a release não tiver um
     asset_name: str
     published_at: str
+    sha256: str = ""     # hash publicado pelo GitHub para o instalador ("" se a API não informar)
+    page_url: str = GITHUB_RELEASES_URL   # página da release (download manual do portátil)
+
+
+def pick_installer_asset(assets: list) -> dict | None:
+    """O instalador entre os arquivos da release (nunca o .zip portátil nem outro .exe qualquer)."""
+    for a in assets or []:
+        if _INSTALLER_ASSET.search(a.get("name", "")):
+            return a
+    return None
+
+
+def asset_sha256(asset: dict) -> str:
+    """O GitHub publica `digest: "sha256:<hex>"` para cada arquivo de release; '' se não houver."""
+    digest = (asset or {}).get("digest") or ""
+    return digest.split(":", 1)[1].lower() if digest.lower().startswith("sha256:") else ""
+
+
+def is_installed_build() -> bool:
+    """True numa cópia instalada pelo instalador (o desinstalador do Inno fica ao lado do executável)."""
+    if not getattr(sys, "frozen", False):
+        return False
+    return os.path.exists(os.path.join(os.path.dirname(sys.executable), _UNINSTALLER_NAME))
 
 
 def parse_semver(v_str: str) -> tuple:
@@ -83,26 +117,17 @@ class UpdateCheckWorker(QThread):
                     self.up_to_date.emit(__version__)
                     return
 
-                # Procurar o executável nos assets da release
-                assets = data.get("assets", [])
-                exe_asset = None
-                for a in assets:
-                    name = a.get("name", "")
-                    if name.lower().endswith(".exe"):
-                        exe_asset = a
-                        break
-
-                if not exe_asset:
-                    self.check_failed.emit("Nova versão encontrada, mas nenhum arquivo .exe anexado.")
-                    return
-
+                # Sem instalador anexado a versão nova ainda é anunciada: o usuário baixa pela página da release
+                installer = pick_installer_asset(data.get("assets", [])) or {}
                 info = UpdateInfo(
                     latest_version=latest_clean,
-                    release_name=data.get("name", f"Versão {tag_name}"),
-                    body=data.get("body", "").strip(),
-                    download_url=exe_asset.get("browser_download_url", ""),
-                    asset_name=exe_asset.get("name", "Aimedget.exe"),
+                    release_name=data.get("name") or f"Versão {tag_name}",
+                    body=(data.get("body") or "").strip(),
+                    download_url=installer.get("browser_download_url", ""),
+                    asset_name=installer.get("name", ""),
                     published_at=data.get("published_at", ""),
+                    sha256=asset_sha256(installer),
+                    page_url=data.get("html_url") or GITHUB_RELEASES_URL,
                 )
                 self.update_found.emit(info)
 
@@ -126,9 +151,10 @@ class DownloadWorker(QThread):
     # falha: (mensagem_erro: str)
     download_failed = Signal(str)
 
-    def __init__(self, download_url: str, parent=None):
+    def __init__(self, download_url: str, expected_sha256: str = "", parent=None):
         super().__init__(parent)
         self.download_url = download_url
+        self.expected_sha256 = (expected_sha256 or "").lower()
         self._is_cancelled = False
 
     def cancel(self):
@@ -136,7 +162,8 @@ class DownloadWorker(QThread):
 
     def run(self):
         temp_dir = os.environ.get("TEMP", os.path.expanduser("~"))
-        target_path = os.path.join(temp_dir, "aimedget_update_download.exe")
+        target_path = os.path.join(temp_dir, "Aimedget-Setup-update.exe")
+        digest = hashlib.sha256()
 
         headers = {
             "User-Agent": f"Aimedget-App/{__version__}",
@@ -166,11 +193,22 @@ class DownloadWorker(QThread):
                             break
 
                         f.write(chunk)
+                        digest.update(chunk)
                         downloaded_bytes += len(chunk)
 
                         if total_bytes > 0:
                             percent = int((downloaded_bytes / total_bytes) * 100)
                             self.progress_changed.emit(min(100, max(0, percent)))
+
+                # Integridade: o arquivo tem que ser exatamente o que o GitHub publicou (download corrompido ou
+                # trocado no caminho nunca é executado)
+                if self.expected_sha256 and digest.hexdigest() != self.expected_sha256:
+                    try:
+                        os.remove(target_path)
+                    except OSError:
+                        pass
+                    self.download_failed.emit("o arquivo baixado não confere com o publicado (SHA-256)")
+                    return
 
                 self.progress_changed.emit(100)
                 self.download_finished.emit(target_path)
@@ -215,12 +253,13 @@ class UpdaterService(QObject):
         on_progress=None,
         on_finished=None,
         on_error=None,
+        expected_sha256: str = "",
     ):
-        """Inicia download da nova versão."""
+        """Inicia download do instalador da nova versão (conferido pelo SHA-256, se informado)."""
         if self._download_worker and self._download_worker.isRunning():
             return
 
-        self._download_worker = DownloadWorker(download_url, self)
+        self._download_worker = DownloadWorker(download_url, expected_sha256, self)
         if on_progress:
             self._download_worker.progress_changed.connect(on_progress)
         if on_finished:
@@ -231,77 +270,31 @@ class UpdaterService(QObject):
         self._download_worker.start()
 
     @staticmethod
-    def apply_update_and_restart(temp_downloaded_exe: str) -> bool:
+    def apply_update_and_restart(downloaded_installer: str) -> bool:
         """
-        Executa a substituição do binário atual via script Trampoline
-        e reinicia o Aimedget.
+        Roda o instalador baixado em modo silencioso e fecha o app para liberar os arquivos. O instalador substitui
+        a pasta do app e, com /UPDATE, reabre o Aimedget no fim (ver installer/Aimedget.iss). Só numa cópia instalada.
         """
-        # Se estiver rodando como script .py (desenvolvimento), apenas avisa
-        if not getattr(sys, "frozen", False):
-            print("[UpdaterService] Atualização automática só é aplicável em modo congelado (.exe).")
+        if not is_installed_build():
             return False
-
-        current_exe = sys.executable
-        current_pid = os.getpid()
-        temp_dir = os.environ.get("TEMP", os.path.expanduser("~"))
-        bat_script_path = os.path.join(temp_dir, "aimedget_updater_trampoline.bat")
-
-        # Script Batch para Windows:
-        # 1. Aguarda o processo atual (PID) encerrar completamente
-        # 2. Sobrescreve o executável antigo com o novo
-        # 3. Inicia o novo executável
-        # 4. Apaga o executável temporário e deleta a si mesmo
-        bat_content = f"""@echo off
-chcp 65001 > nul
-timeout /t 1 /nobreak > nul
-
-:wait_loop
-tasklist /fi "PID eq {current_pid}" 2>nul | find "{current_pid}" >nul
-if %ERRORLEVEL%==0 (
-    timeout /t 1 /nobreak > nul
-    goto wait_loop
-)
-
-copy /y "{temp_downloaded_exe}" "{current_exe}" > nul
-del /f /q "{temp_downloaded_exe}" > nul
-
-start "" "{current_exe}"
-del "%~f0"
-"""
-
         try:
-            with open(bat_script_path, "w", encoding="utf-8") as f:
-                f.write(bat_content)
-
-            # Inicia o batch em segundo plano completamente desanexado
-            creation_flags = 0
-            if sys.platform == "win32":
-                creation_flags = (
-                    subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS
-                    | 0x08000000  # CREATE_NO_WINDOW
-                )
-
             subprocess.Popen(
-                ["cmd.exe", "/c", bat_script_path],
+                [downloaded_installer, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/UPDATE"],
                 shell=False,
-                creationflags=creation_flags,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
                 close_fds=True,
             )
-
-            # Fecha a aplicação atual para liberar o arquivo .exe
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app:
-                app.quit()
-            else:
-                sys.exit(0)
-
-            return True
-
         except Exception as e:
-            print(f"[UpdaterService] Erro ao disparar trampoline: {e}", file=sys.stderr)
+            print(f"[UpdaterService] Falha ao iniciar o instalador: {e}", file=sys.stderr)
             return False
+
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app:
+            app.quit()
+        else:
+            sys.exit(0)
+        return True
 
 
 # Instância global de conveniência

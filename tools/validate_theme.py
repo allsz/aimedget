@@ -1,10 +1,10 @@
 """
 Valida um tema do Aimedget e explica, em português, o que está errado e como corrigir.
 
-    python tools/validate_theme.py <pasta-do-tema> [--container keylock|mixer] [--json]
+    python tools/validate_theme.py <pasta-do-tema> [--container keylock|mixer|music|timer] [--json]
 
-- <pasta-do-tema> tem um theme.json e as imagens ao lado dele. Para um pacote com os dois flyouts, aponte
-  a pasta que contém as subpastas keylock/ e mixer/.
+- <pasta-do-tema> tem um theme.json e as imagens ao lado dele. Para um pacote com vários destinos, aponte
+  a pasta que contém as subpastas keylock/, mixer/, music/ e/ou timer/.
 - O container é deduzido pelo nome das pastas (themes/keylock/meu-tema); se não der, use --container.
 - Código de saída: 0 = tudo certo; 1 = há problemas (valores ignorados ou erro fatal); 2 = uso incorreto.
 - --json imprime o relatório em JSON (útil para uma IA ler e se autocorrigir).
@@ -25,9 +25,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from app.core.theme_validation import CONTAINERS, ThemeReport, validate_path  # noqa: E402
+from app.core.theme_validation import CONTAINER_NAMES, CONTAINERS, ThemeReport, validate_path  # noqa: E402
 
-NOMES = {"keylock": "Caps/Num Lock", "mixer": "Volume e mixer"}
+NOMES = CONTAINER_NAMES
 
 
 def print_report(report: ThemeReport) -> None:
@@ -52,8 +52,8 @@ def print_report(report: ThemeReport) -> None:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Valida um tema do Aimedget.")
-    parser.add_argument("folder", help="pasta do tema (ou do pacote com keylock/ e mixer/)")
-    parser.add_argument("--container", choices=CONTAINERS, help="flyout do tema (se não der para deduzir)")
+    parser.add_argument("folder", help="pasta do tema (ou do pacote com keylock/, mixer/, music/, timer/)")
+    parser.add_argument("--container", choices=CONTAINERS, help="destino do tema (se não der para deduzir)")
     parser.add_argument("--json", action="store_true", help="imprime o relatório em JSON")
     args = parser.parse_args(argv)
 

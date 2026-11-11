@@ -2,7 +2,7 @@ import math
 import os
 import time
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QTimer, Signal
-from PySide6.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QFontMetrics
+from PySide6.QtGui import QPainter, QPainterPath, QColor, QPen, QFont, QFontMetrics, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import get_vinyl_asset, get_provider_icon_path
@@ -41,6 +41,9 @@ class VinylMusicSkin(BaseMusicSkin):
         self.svg_glare = QSvgRenderer(get_vinyl_asset("vinyl-glare.svg"))
         self.svg_arm_base = QSvgRenderer(get_vinyl_asset("tonearm-base.svg"))
         self.svg_arm = QSvgRenderer(get_vinyl_asset("tonearm.svg"))
+        # SVGs PARADOS rasterizados uma vez no tamanho real em pixels (ver _svg_pixmap): redesenhar o brilho vetorial
+        # a 60 FPS custava ~3 ms por quadro. O que gira (disco, agulha, capa) continua vetorial: raster girado borra.
+        self._svg_cache: dict[tuple, QPixmap] = {}
 
         # Visualizador de Onda Sonora Animada (Fallback reativo da imagem do usuário)
         self.soundwave = SoundWaveVisualizer()
@@ -307,6 +310,34 @@ class VinylMusicSkin(BaseMusicSkin):
         if needs_update:
             self.update()
 
+    def _svg_pixmap(self, renderer: QSvgRenderer, w: float, h: float) -> QPixmap:
+        """
+        O SVG rasterizado no tamanho que ele ocupa na tela (canvas x escala do widget x DPI do monitor). Muda a escala
+        ou o monitor, muda o tamanho em pixels e o cache refaz sozinho; o vetor nunca é redesenhado a cada quadro.
+        """
+        dpr = self.devicePixelRatioF() or 1.0
+        pw = max(1, int(round(w * self.scale * dpr)))
+        ph = max(1, int(round(h * self.scale * dpr)))
+        key = (id(renderer), pw, ph)
+        pm = self._svg_cache.get(key)
+        if pm is None:
+            if len(self._svg_cache) > 24:   # trocas de escala/monitor deixam tamanhos velhos para trás
+                self._svg_cache.clear()
+            pm = QPixmap(pw, ph)
+            pm.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            renderer.render(p, QRectF(0, 0, pw, ph))
+            p.end()
+            self._svg_cache[key] = pm
+        return pm
+
+    def _draw_svg(self, painter: QPainter, renderer: QSvgRenderer, rect: QRectF):
+        """Desenha o SVG em `rect` (coordenadas do canvas, mesma semântica de QSvgRenderer.render) usando o cache."""
+        pm = self._svg_pixmap(renderer, rect.width(), rect.height())
+        painter.drawPixmap(rect, pm, QRectF(0, 0, pm.width(), pm.height()))
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -335,7 +366,7 @@ class VinylMusicSkin(BaseMusicSkin):
         if self.provider in self.provider_renderers:
             # Provedor oficial reconhecido: logotipo monocromático branco
             icon_rect = QRectF(logo_x, logo_y, logo_s, logo_s)
-            self.provider_renderers[self.provider].render(painter, icon_rect)
+            self._draw_svg(painter, self.provider_renderers[self.provider], icon_rect)
         else:
             # Player genérico/não reconhecido: onda sonora com 7 barras animadas
             wave_rect = QRectF(logo_x, logo_y, logo_s, logo_s)
@@ -414,7 +445,7 @@ class VinylMusicSkin(BaseMusicSkin):
         )
 
         # --- 5. Base Estática da Agulha (Alinhada com o disco mais à direita) ---
-        self.svg_arm_base.render(painter, QRectF(821.5, 74.9, 99.5, 148.8))
+        self._draw_svg(painter, self.svg_arm_base, QRectF(821.5, 74.9, 99.5, 148.8))
 
         # --- 6. O Disco de Vinil (Deslocado mais à direita: disc_x=480.0) ---
         disc_x, disc_y, disc_s = 480.0, 60.0, 420.0
@@ -446,10 +477,11 @@ class VinylMusicSkin(BaseMusicSkin):
             self.svg_cover.render(painter, cover_rect)
         painter.restore()
 
+        # O disco GIRA: fica vetorial (girar um raster borra os sulcos finos). Só o que fica parado usa o cache.
         self.svg_vinyl.render(painter, QRectF(-disc_s / 2.0, -disc_s / 2.0, disc_s, disc_s))
         painter.restore()
 
-        self.svg_glare.render(painter, QRectF(disc_x, disc_y, disc_s, disc_s))
+        self._draw_svg(painter, self.svg_glare, QRectF(disc_x, disc_y, disc_s, disc_s))
 
         # --- 7. A Agulha Reduzida em 8% (Pivô alinhado com a base) ---
         arm_left, arm_top, arm_w, arm_h = 800.2, 70.0, 158.6, 399.3
@@ -458,7 +490,7 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.save()
         painter.translate(arm_left + origin_x, arm_top + origin_y)
         painter.rotate(self.arm_current_angle)
-        self.svg_arm.render(painter, QRectF(-origin_x, -origin_y, arm_w, arm_h))
+        self.svg_arm.render(painter, QRectF(-origin_x, -origin_y, arm_w, arm_h))   # gira: vetorial (é barato)
         painter.restore()
 
         self.paint_resize_grip(painter)

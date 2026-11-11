@@ -4,7 +4,7 @@ Tema (tokens visuais) do flyout de Caps/Num Lock.
 Um tema é só dados: cores e raio. O container (formato, tamanho, animação do cadeado) continua
 definido em código; o tema só muda a aparência. O arquivo do usuário fica em:
 
-    %LOCALAPPDATA%/WindowsRedesign/themes/keylock/theme.json
+    %LOCALAPPDATA%/Aimedget/themes/keylock/theme.json
 
 e é relido a cada vez que o flyout aparece (edite, aperte Caps Lock e veja). Exemplo:
 
@@ -161,7 +161,13 @@ def effective_scale(theme: KeyLockTheme) -> float:
 
 
 # O cache também depende da tela: se a resolução muda, as figurinhas são preparadas de novo
-_loader = ThemeLoader("keylock", DEFAULT_THEME, theme_from_dict, "keylock", context=lambda: round(screen_ratio(), 2))
+def _app_theme() -> KeyLockTheme:
+    from app.core.app_theme import app_keylock_theme   # tardio: app_theme importa este módulo
+    return app_keylock_theme()
+
+
+_loader = ThemeLoader("keylock", DEFAULT_THEME, theme_from_dict, "keylock", context=lambda: round(screen_ratio(), 2),
+                      app_theme=_app_theme)
 
 theme_path = _loader.path
 load_user_theme = _loader.load

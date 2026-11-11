@@ -12,15 +12,18 @@ ajustes ficam em "Ver detalhes", fechado por padrão.
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout,
+    QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout,
     QWidget,
 )
 
 from app.core.i18n import t
 from app.core.theme_package import COPY, REPLACE, PackageReport, TargetReport
+from app.hub.components.message_dialog import confirm
+from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.theme import HubTheme
 
-TARGET_KEYS = {"keylock": "theme_import_target_keylock", "mixer": "theme_import_target_mixer"}
+TARGET_KEYS = {"keylock": "theme_import_target_keylock", "mixer": "theme_import_target_mixer",
+               "music": "theme_import_target_music", "timer": "theme_import_target_timer"}
 
 CONTENT_WIDTH = 500
 DETAILS_MAX_HEIGHT = 200
@@ -235,6 +238,10 @@ class ThemeImportDialog(QDialog):
                             f"{' font-weight: 600;' if bold else ''}")
         return label
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        apply_windows_dwm_titlebar(int(self.winId()), self._theme.bg, self._theme.text, self._theme.is_dark)
+
     def _fit(self):
         """Largura fixa; a altura acompanha o conteúdo (sem espaço morto, e encolhe ao fechar os detalhes)."""
         self.setFixedSize(CONTENT_WIDTH, self.layout().totalHeightForWidth(CONTENT_WIDTH))
@@ -262,9 +269,8 @@ class ThemeImportDialog(QDialog):
         self.accept()
 
     def _on_copy(self):
-        answer = QMessageBox.question(
-            self, t("theme_import_title"), t("theme_import_copy_confirm", name=self._report.name),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if answer == QMessageBox.StandardButton.Yes:
+        if confirm(self, self._theme, t("theme_import_title"),
+                   t("theme_import_copy_confirm", name=self._report.name),
+                   yes=t("theme_import_copy"), no=t("theme_import_cancel")):
             self.mode = COPY
             self.accept()

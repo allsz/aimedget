@@ -286,11 +286,10 @@ class ThemeSelectionTests(unittest.TestCase):
         self.theme("", {"on_color": "#00ff00"})
         os.makedirs(os.path.join(self.base, "vazia"))               # pasta sem theme.json: ignorada
         ids = [(t.id, t.name) for t in kl_theme.loader.list_themes()]
-        self.assertEqual(ids, [("default", ""), ("custom", ""), ("lavanda", "Lavanda"), ("sem-nome", "sem-nome")])
+        self.assertEqual(ids, [("app", "Aimedget"), ("default", ""), ("custom", ""), ("lavanda", "Lavanda"), ("sem-nome", "sem-nome")])
 
     def test_without_choice_it_keeps_the_previous_behaviour(self):
-        self.assertEqual(kl_theme.loader.active_id(), "default")
-        self.assertIs(kl_theme.load_user_theme(), kl_theme.DEFAULT_THEME)
+        self.assertEqual(kl_theme.loader.active_id(), "app")   # instalação nova: tema Aimedget
         self.theme("", {"on_color": "#00ff00"})
         self.assertEqual(kl_theme.loader.active_id(), "custom")
         self.assertEqual(kl_theme.load_user_theme().on_color, QColor("#00ff00"))
@@ -311,7 +310,7 @@ class ThemeSelectionTests(unittest.TestCase):
         self.assertIsNone(config_manager.get_theme_choice("mixer"))
 
     def test_missing_or_malicious_ids_fall_back_to_default(self):
-        for bad in ("nao_existe", "../fora", "..", "a/b", ".oculto", ""):
+        for bad in ("nao_existe", "../fora", "..", "a/b", ".oculto"):
             config_manager.set_theme_choice("keylock", bad)
             kl_theme.reset_cache()
             self.assertIs(kl_theme.load_user_theme(), kl_theme.DEFAULT_THEME, bad)

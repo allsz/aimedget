@@ -3,6 +3,7 @@ from typing import Optional, Type
 from PySide6.QtCore import QObject, QRect, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
+from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
@@ -68,7 +69,7 @@ class TimerWidgetController(QObject):
         saved_size = config_manager.get_timer_saved_size()
 
         if self.skin is not None:
-            old_pos = self.skin.pos()
+            old_pos = self.skin.square_origin()   # o quadrado não muda de lugar ao trocar de skin ou de tema
             was_visible = self.skin.isVisible()
             try:
                 self.skin.play_pause_clicked.disconnect(self.toggle_play_pause)
@@ -93,7 +94,7 @@ class TimerWidgetController(QObject):
         self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
 
         if old_pos is not None:
-            self.skin.move(old_pos)
+            self.skin.move_square_to(old_pos.x(), old_pos.y())
             if config_manager.is_timer_position_remembered():
                 config_manager.save_timer_position(old_pos.x(), old_pos.y())
         else:
@@ -115,8 +116,9 @@ class TimerWidgetController(QObject):
 
         if config_manager.is_timer_position_remembered():
             pos = config_manager.get_timer_saved_position()
-            if pos is not None and self._is_position_on_screen(pos[0], pos[1], self.skin.width(), self.skin.height()):
-                self.skin.move(pos[0], pos[1])
+            side = self.skin.square_side()
+            if pos is not None and self._is_position_on_screen(pos[0], pos[1], side, side):
+                self.skin.move_square_to(pos[0], pos[1])
                 return
 
         self.place_at_screen_top()
@@ -126,9 +128,9 @@ class TimerWidgetController(QObject):
         app = QApplication.instance()
         if app and app.primaryScreen() and self.skin:
             geo = app.primaryScreen().availableGeometry()
-            x = geo.x() + (geo.width() - self.skin.width()) // 2
+            x = geo.x() + (geo.width() - self.skin.square_side()) // 2
             y = geo.y() + 28
-            self.skin.move(x, y)
+            self.skin.move_square_to(x, y)
 
     def _is_position_on_screen(self, x: int, y: int, w: int, h: int) -> bool:
         app = QApplication.instance()
@@ -179,11 +181,13 @@ class TimerWidgetController(QObject):
         self.pause()
         self._stop_alarm_pulse()
         if self.mode == "timer":
-            self.current_seconds = self.target_duration
-        else:
-            self.current_seconds = 0.0
+            # Reiniciar zera o relógio (00:00:00); a duração antiga não volta
+            self.target_duration = 0.0
+            config_manager.set_timer_duration(0)
+        self.current_seconds = 0.0
 
         if self.skin:
+            self.skin.target_duration = self.target_duration
             self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
@@ -236,12 +240,9 @@ class TimerWidgetController(QObject):
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def _trigger_alarm_finish(self):
-        """Ao zerar a contagem regressiva, emite alerta sonoro e inicia pulso luminoso."""
-        try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
-        except Exception:
-            pass
+        """Ao zerar a contagem regressiva, toca o som (se ligado no Hub) e inicia o pulso luminoso."""
+        if config_manager.is_timer_alarm_sound_enabled():
+            play_alarm()
 
         self._alarm_pulse_count = 8
         self._pulse_timer.start()
@@ -261,6 +262,7 @@ class TimerWidgetController(QObject):
 
     def _stop_alarm_pulse(self):
         self._pulse_timer.stop()
+        stop_alarm()   # iniciar ou reiniciar o Timer também silencia o som que ainda estiver tocando
         if self.skin and hasattr(self.skin, "is_alarm_pulsing"):
             self.skin.is_alarm_pulsing = False
             self.skin.update()
@@ -268,8 +270,7 @@ class TimerWidgetController(QObject):
     # --- Ciclo de Vida ---
 
     def start(self):
-        if config_manager.is_timer_enabled():
-            self.show()
+        self.show()
 
     def show(self):
         if self.skin:

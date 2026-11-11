@@ -1,9 +1,13 @@
 # Temas do Aimedget — guia completo
 
-Este guia ensina a criar **temas visuais** para os flyouts do Aimedget:
+Este guia ensina a criar **temas visuais** para quatro partes do Aimedget (os **destinos** do tema):
 
 - **Caps/Num Lock** (o indicador que aparece ao apertar Caps Lock ou Num Lock) — chamado de `keylock` nos arquivos;
-- **Volume e mixer** (o painel de volume com os aplicativos) — chamado de `mixer` nos arquivos.
+- **Volume e mixer** (o painel de volume com os aplicativos) — chamado de `mixer` nos arquivos;
+- **Música**, skin **Capa Empilhada** do widget de música — chamado de `music` nos arquivos;
+- **Timer**, skin **Aimedget** do widget de timer — chamado de `timer` nos arquivos.
+
+Os dois primeiros são **flyouts** (aparecem e somem); os dois últimos são **widgets** (ficam na área de trabalho).
 
 Um tema **não é programa, é só dados**: um arquivo de texto (`theme.json`) e algumas imagens. Nada é executado.
 
@@ -18,8 +22,9 @@ Como ler este guia:
 ## 1. Resumo em um minuto
 
 1. Crie uma pasta com um arquivo `theme.json` e as imagens ao lado dele.
-2. Teste: `python tools/validate_theme.py <sua-pasta> --container keylock` (ou `mixer`). Ele diz o que está errado.
-3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar tema** na página do flyout.
+2. Teste: `python tools/validate_theme.py <sua-pasta> --container keylock` (ou `mixer`, `music`, `timer`). Ele diz o que
+   está errado.
+3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar tema** na página daquela parte do app.
 4. Para compartilhar: use **Exportar tema** (gera o `.aimskin`) e envie o arquivo.
 
 Exemplo mínimo (muda só as cores do Caps/Num Lock):
@@ -44,7 +49,7 @@ Tudo é opcional. O que você não escrever fica como o visual Padrão.
 Cada tema é uma **pasta** dentro da pasta de temas do usuário:
 
 ```
-%LOCALAPPDATA%\WindowsRedesign\themes\
+%LOCALAPPDATA%\Aimedget\themes\
   keylock\
     roxo-suave\            <- um tema do Caps/Num Lock
       theme.json
@@ -54,11 +59,16 @@ Cada tema é uma **pasta** dentro da pasta de temas do usuário:
     roxo-suave\            <- um tema do Volume e mixer
       theme.json
       fundo.png
+  music\
+    roxo-suave\            <- um tema da Capa Empilhada (Música)
+  timer\
+    roxo-suave\            <- um tema do Timer (skin Aimedget)
 ```
 
-- No Hub, em **Lock keys** e em **Volume & mixer**, cada tema vira um cartão com miniatura. Clique para usar.
+- No Hub, em **Lock keys**, **Volume & mixer**, **Música** e **Timer**, cada tema vira um cartão com miniatura. Clique para usar.
 - O botão **Abrir pasta de temas** abre essa pasta no Explorer.
-- Um `theme.json` solto na raiz de `keylock\` ou `mixer\` aparece como "Personalizado" (formato antigo, ainda aceito).
+- Um `theme.json` solto na raiz de `keylock\`, `mixer\`, `music\` ou `timer\` aparece como "Personalizado" (formato antigo,
+  ainda aceito).
 - O nome mostrado no cartão é o campo `"name"` do `theme.json` (aceita espaços e acentos, até 40 letras). Sem `name`,
   aparece o nome da pasta.
 
@@ -231,7 +241,11 @@ bottom-left  bottom  bottom-right
 ```
 
 A âncora acompanha o tamanho do cartão (largura variável no Caps; altura variável no mixer). A figurinha **pode passar da borda**
-do cartão: o app aumenta a janela transparente sozinho para não cortar.
+do cartão: o app aumenta a janela transparente sozinho para não cortar. Isso vale também nos **widgets** (Música e Timer): se o tema
+tem figurinhas que passam da borda, o widget ganha uma margem transparente em volta do cartão (até **48 px**; o que passar disso é
+cortado). Sem figurinhas para fora, a janela continua do tamanho do cartão. No Timer, os primeiros 8 px já existem (a folga da
+sombra). Nos widgets não existe `behind`: vira `below`, com aviso. A margem é só uma área transparente em volta do cartão;
+o cartão não muda de tamanho nem de lugar.
 
 **Camadas:**
 
@@ -260,9 +274,111 @@ Desenhe o LED apagado no fundo e um LED aceso (com brilho) como figurinha `on`, 
 - **Fonte própria**: a letra é sempre a do app (só tamanho, cor e caixa mudam).
 - **Animações novas** ou sons.
 - **Mixer**: não tem `scale`, `size`, nem figurinhas por estado.
+- **Widgets (Música e Timer)**: só cores, fundo e figurinhas (que podem passar da borda). Não têm `shadow`, `radius`, `scale` nem
+  `size` (o formato e o tamanho são os da skin, e o usuário redimensiona o widget). O tema de Música vale **só para a skin Capa Empilhada**; o de
+  Timer, **só para a skin Aimedget**. As capas "vinil" que a Capa Empilhada desenha quando ainda não há capa de álbum não mudam
+  com o tema.
 
 Se o desenho do designer pede algo desta lista, **avise** o que não dá para fazer e entregue a melhor aproximação, em vez de
 entregar um tema "válido" que não se parece com o desenho.
+
+### 3.8 Chaves da Música — skin Capa Empilhada (`music`)
+
+Sem tema, a Capa Empilhada tira a paleta da **capa do álbum** que está tocando (cores que mudam a cada música). Com **qualquer**
+cor da paleta abaixo, a paleta fica **fixa** (as cores que você não definir vêm da paleta coral original). Para manter as cores
+da capa e só acrescentar fundo, figurinhas e barra, use `"adaptive": true`.
+
+| Chave | Tipo | Padrão | O que muda |
+|---|---|---|---|
+| `name` | texto | — | Nome mostrado no Hub |
+| `card_bg` | cor | `#fde9e5` | Fundo do cartão (paleta) |
+| `title` | cor | `#140908` | Nome da música (paleta) |
+| `subtitle` | cor | `#c86464` | "Artista · Álbum" (paleta) |
+| `button_top` | cor | `#f8d1c5` | Degradê do botão play: canto de cima (paleta) |
+| `button_bottom` | cor | `#fff4f0` | Degradê do botão play: canto de baixo (paleta) |
+| `button_shadow` | cor | `#34da9184` | Sombra suave do botão play (paleta) |
+| `accent` | cor | `#eb5757` | Ícone play/pause e repetir/aleatório ligados (paleta) |
+| `accent_muted` | cor | `#e48885` | Ícones repetir/aleatório desligados (paleta) |
+| `progress_track` | cor | `#7db9afaf` | Trilho da barra de progresso (sobre a capa) |
+| `progress_fill` | cor | `#ffffff` | Parte já tocada da barra |
+| `adaptive` | `true`/`false` | `true` sem cores, `false` com cores | `true` = paleta da capa do álbum; `false` = paleta fixa do tema |
+| `background` | ver 3.5 | nenhum | Imagem de fundo do cartão (fica atrás da pilha de capas e dos botões) |
+| `stickers` | lista, ver 3.6 | nenhuma | Figurinhas (até 12; `behind` vira `below`) |
+| `shadow` | — | — | **Não existe nos widgets**: é ignorada, com aviso |
+| `container` | texto | — | Só em pacote com `theme.json` solto (seção 5) |
+
+Medidas (px do widget no tamanho padrão): cartão **490 × 240**, cantos de 44. A pilha de capas ocupa a esquerda (até x ≈ 237);
+o título, os botões e o espaço livre ficam à direita. Figurinhas e fundo crescem junto quando o usuário redimensiona o widget.
+Arte de fundo sugerida: **980 × 480 px**. Figurinhas **espiando pela borda** (como nos flyouts) funcionam: use `y` negativo nas
+âncoras de cima, `y` positivo nas de baixo, e assim por diante. Dentro do cartão, evite cobrir a pilha de capas (x ≈ 26–237), o
+título (à direita, y ≈ 55–110) e os botões (y ≈ 138–198).
+
+Ao escolher (ou importar) um tema de Música, o app passa a usar a skin Capa Empilhada, para o resultado aparecer.
+
+<!-- validar: music -->
+```json
+{
+  "name": "Lavanda",
+  "card_bg": "#f3ecff",
+  "title": "#2a1640",
+  "subtitle": "#8a5cc7",
+  "button_top": "#e4d4ff",
+  "button_bottom": "#faf6ff",
+  "accent": "#9b5de5",
+  "accent_muted": "#b892ea",
+  "progress_fill": "#e9dcff",
+  "background": {"image": "fundo.png", "fit": "cover"},
+  "stickers": [
+    {"image": "estrela.svg", "anchor": "top-right", "x": -28, "y": 26, "width": 26, "rotation": 12}
+  ]
+}
+```
+
+### 3.9 Chaves do Timer — skin Aimedget (`timer`)
+
+O Timer segue o **modo claro/escuro** e a **cor de destaque** do app. O tema troca **só as cores que definir**: um tema só com
+`accent` continua claro ou escuro conforme o app; um tema com todas as cores tem visual fixo. O padrão de cada cor é "a do app".
+
+| Chave | Tipo | Padrão | O que muda |
+|---|---|---|---|
+| `name` | texto | — | Nome mostrado no Hub |
+| `card_bg` | cor | do app | Fundo do cartão |
+| `border` | cor | do app | Borda do cartão (no alarme ela fica na cor `accent`) |
+| `text` | cor | do app | Dígitos (00:05:00) |
+| `muted_text` | cor | do app | Rótulo "TEMPORIZADOR", dois-pontos e o X de fechar |
+| `accent` | cor | do app | Botão play, dígitos piscando no alarme, dígito sob o mouse |
+| `accent_hover` | cor | `accent` um pouco mais escuro | Botão play com o mouse em cima |
+| `on_accent` | cor | do app | Ícone play/pause sobre o botão |
+| `button_bg` | cor | do app | Botão de reiniciar |
+| `icon` | cor | do app | Seta do botão de reiniciar |
+| `select_border` | cor | branca no tema escuro, escura no claro | Volta de luz ao clicar num número (horas, minutos ou segundos) |
+| `background` | ver 3.5 | nenhum | Imagem de fundo do cartão |
+| `stickers` | lista, ver 3.6 | nenhuma | Figurinhas (até 12; `behind` vira `below`) |
+| `shadow` | — | — | **Não existe nos widgets**: é ignorada, com aviso |
+| `container` | texto | — | Só em pacote com `theme.json` solto (seção 5) |
+
+Medidas (px do cartão no tamanho padrão): **148 × 148**, cantos de 16. Rótulo no topo, dígitos no meio, botões embaixo. Arte de
+fundo sugerida: **444 × 444 px** (quadrada). Figurinhas pequenas (18–24 px) **espiando pelos cantos e laterais** funcionam bem
+(o widget ganha a margem transparente necessária).
+
+<!-- validar: timer -->
+```json
+{
+  "name": "Lavanda",
+  "card_bg": "#f3ecff",
+  "border": "#d9c6f7",
+  "text": "#2a1640",
+  "muted_text": "#8a74a8",
+  "accent": "#9b5de5",
+  "on_accent": "#ffffff",
+  "button_bg": "#e8dcfb",
+  "icon": "#4a2d6e",
+  "background": {"image": "fundo.png", "fit": "cover"},
+  "stickers": [
+    {"image": "estrela.svg", "anchor": "top-right", "x": -16, "y": 16, "width": 20, "rotation": 12}
+  ]
+}
+```
 
 ---
 
@@ -295,17 +411,19 @@ filtros e desfoque podem não aparecer: teste.
 
 Um `.aimskin` é um **zip** com outra extensão. Três formatos aceitos:
 
-**A. Pacote para os dois flyouts** — duas pastas na raiz do zip:
+**A. Pacote com vários destinos** — uma pasta por destino na raiz do zip (use as que quiser):
 
 ```
 meu-tema.aimskin
   keylock/theme.json  (+ imagens)
   mixer/theme.json    (+ imagens)
+  music/theme.json    (+ imagens)
+  timer/theme.json    (+ imagens)
 ```
 
-**B. Só um flyout** — apenas a pasta dele: `keylock/...` **ou** `mixer/...`.
+**B. Um destino só** — apenas a pasta dele: `keylock/...`, `mixer/...`, `music/...` **ou** `timer/...`.
 
-**C. `theme.json` solto**, dizendo o flyout com `"container"`:
+**C. `theme.json` solto**, dizendo o destino com `"container"` (`"keylock"`, `"mixer"`, `"music"` ou `"timer"`):
 
 <!-- validar: mixer -->
 ```json
@@ -318,26 +436,27 @@ meu-tema.aimskin
 ```
 
 Uma única pasta de embrulho em volta de tudo (`MeuTema/keylock/...`) também é aceita. **[REGRA]** Não misture o formato C com
-as pastas `keylock/` e `mixer/` no mesmo pacote.
+as pastas de destino no mesmo pacote.
 
 ### Como criar o `.aimskin`
 
 - **Recomendado, em um comando** (valida, empacota e confere que o pacote importa):
 
 ```
-python tools/pack_theme.py <pasta> [-o meu-tema.aimskin] [--container keylock|mixer]
+python tools/pack_theme.py <pasta> [-o meu-tema.aimskin] [--container keylock|mixer|music|timer]
 ```
 
-  `<pasta>` é a pasta do tema, ou a que contém `keylock/` e/ou `mixer/`. Se a validação achar erro **ou item ignorado**, nada
+  `<pasta>` é a pasta do tema, ou a que contém as pastas de destino (`keylock/`, `mixer/`, `music/`, `timer/`). Se a validação achar erro **ou item ignorado**, nada
   é gerado (use `--allow-issues` só para empacotar assim mesmo). Ele avisa de imagens que o `theme.json` não usa e lista o que
   ficou de fora do pacote (tipos não permitidos, arquivos ocultos).
-- **Manual, no Windows:** entre nas pastas, selecione **`keylock`** e/ou **`mixer`** (não a pasta de fora), clique com o botão direito →
+- **Manual, no Windows:** entre nas pastas, selecione as pastas de destino (**`keylock`**, **`mixer`**, **`music`**, **`timer`**; não a
+  pasta de fora), clique com o botão direito →
   *Compactar para arquivo ZIP*, e renomeie de `.zip` para `.aimskin`.
 - **Manual, em Python** (qualquer sistema):
 
 ```python
 import zipfile, pathlib
-raiz = pathlib.Path("meu-tema")          # contém as pastas keylock/ e/ou mixer/
+raiz = pathlib.Path("meu-tema")          # contém as pastas keylock/, mixer/, music/ e/ou timer/
 with zipfile.ZipFile("meu-tema.aimskin", "w", zipfile.ZIP_DEFLATED) as z:
     for arq in raiz.rglob("*"):
         if arq.is_file():
@@ -348,10 +467,11 @@ with zipfile.ZipFile("meu-tema.aimskin", "w", zipfile.ZIP_DEFLATED) as z:
 
 1. O app **analisa o pacote** sem instalar nada e mostra: o nome, o que será **aplicado**, o que será **ignorado e por quê**,
    e os arquivos que não serão instalados.
-2. Você marca **um ou os dois** flyouts.
+2. Você marca em quais destinos instalar (os que o pacote tiver).
 3. Se já existir um tema com o mesmo nome, o padrão é **Substituir e aplicar**. **Instalar como cópia** só vale depois de
    uma confirmação (o novo ganha o nome "Nome (2)").
-4. O tema é instalado, selecionado e o flyout aparece para você testar.
+4. O tema é instalado e selecionado. Os flyouts aparecem para você testar; os widgets mudam na hora (o de Música passa a
+   usar a skin Capa Empilhada, para o tema aparecer).
 
 O **id** do tema (nome da pasta) vem do `name`, sem acento e em minúsculas (`"Pôr do Sol"` → `por-do-sol`). Ele não aparece
 para o usuário; mudar o `name` e importar de novo cria outro tema em vez de substituir.
@@ -361,19 +481,20 @@ demais, tamanho demais ou zip corrompido.
 
 ### Exportar
 
-**Exportar tema** (na página do flyout) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema de mesmo
-id no outro flyout, ele vai junto no mesmo pacote. O visual Padrão não se exporta.
+**Exportar tema** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
+de mesmo id em outros destinos, ele vai junto no mesmo pacote: exportar a "Lavanda" de qualquer página leva a Lavanda de todos
+os destinos que a tiverem. Os visuais que já vêm com o app (Aimedget, Windows, Cores da capa) não se exportam.
 
 ---
 
 ## 6. O validador (linha de comando)
 
 ```
-python tools/validate_theme.py <pasta> [--container keylock|mixer] [--json]
+python tools/validate_theme.py <pasta> [--container keylock|mixer|music|timer] [--json]
 ```
 
-- `<pasta>`: a pasta do tema, ou a pasta que contém `keylock/` e `mixer/`.
-- O flyout é deduzido pelo nome da pasta (`themes\keylock\meu-tema`); senão use `--container`.
+- `<pasta>`: a pasta do tema, ou a pasta que contém as pastas de destino (`keylock/`, `mixer/`, `music/`, `timer/`).
+- O destino é deduzido pelo nome da pasta (`themes\keylock\meu-tema`); senão use `--container`.
 - **Código de saída:** `0` tudo certo · `1` há problemas · `2` uso incorreto.
 - `--json` imprime o relatório para máquinas (seção 8).
 
@@ -403,7 +524,7 @@ Saída de exemplo:
 | `cor inválida em 'X'` | Faltou `#`, nome de cor, tamanho errado | Use `#rrggbb` ou `#aarrggbb` |
 | `'X' precisa ser um número` | Número entre aspas (`"14"`) | Escreva `14`, sem aspas |
 | `'X' fora do limite … usando N` | Valor acima/abaixo do permitido | Use um valor dentro do limite da tabela |
-| `chave desconhecida 'X'` | Erro de digitação, ou chave de outro flyout (ex.: `scale` no mixer) | Confira o nome na seção 3 |
+| `chave desconhecida 'X'` | Erro de digitação, ou chave de outro destino (ex.: `scale` no mixer, `on_color` no timer) | Confira o nome na seção 3 |
 | `imagem não encontrada: 'X'` | Nome diferente do arquivo (maiúsculas, extensão), arquivo fora da pasta | Confira o nome exato e se o arquivo está na pasta do tema |
 | `formato não suportado em fundo` | SVG usado como fundo, ou extensão não permitida | Fundo só aceita png/jpg/jpeg/webp |
 | `a imagem precisa ficar dentro da pasta do tema` | Caminho com `..` | Copie a imagem para a pasta do tema |
@@ -420,8 +541,11 @@ Saída de exemplo:
 | `no máximo 12 figurinhas` | Mais de 12 | Remova ou junte figurinhas |
 | `'fit' inválido` | Valor diferente de `cover`/`stretch` | Use um dos dois |
 | `'name' passa de 40 letras` | Nome comprido | Encurte |
-| (importar) `o theme.json solto precisa dizer o flyout` | Formato C sem `container` | Adicione `"container": "keylock"` ou `"mixer"` |
-| (importar) `não achei nenhum tema no pacote` | Faltam as pastas `keylock/` ou `mixer/` | Confira a estrutura da seção 5 |
+| `'shadow' não existe nos widgets` | `shadow` num tema de Música ou Timer | Tire o `shadow` (widgets não têm sombra de tema) |
+| `'layer': 'behind' não existe nos widgets` | Figurinha `behind` em Música ou Timer | Use `below` (atrás do conteúdo) ou `above` |
+| `'adaptive' precisa ser true ou false` | `"adaptive": "sim"` ou entre aspas | Escreva `true` ou `false`, sem aspas |
+| (importar) `o theme.json solto precisa dizer o destino` | Formato C sem `container` | Adicione `"container": "keylock"`, `"mixer"`, `"music"` ou `"timer"` |
+| (importar) `não achei nenhum tema no pacote` | Falta uma pasta de destino (`keylock/`, `mixer/`, `music/`, `timer/`) com `theme.json` | Confira a estrutura da seção 5 |
 
 ---
 
@@ -432,24 +556,25 @@ ignorar nada. Você **não vê o app**, então use o validador para as regras e 
 
 ### 8.1 Antes de começar, pergunte (se não estiver claro)
 
-1. Para qual flyout: **Caps/Num Lock**, **Volume e mixer**, ou os **dois**?
+1. Para quais destinos: **Caps/Num Lock**, **Volume e mixer**, **Música (Capa Empilhada)**, **Timer (Aimedget)**? (Um ou vários.)
 2. Quais imagens são o **fundo** e quais são **figurinhas**? Onde cada figurinha deve ficar (cantos, topo, base)?
 3. O clima: claro ou escuro? Cor principal? O nome do tema?
 4. Se houver SVG: ele tem bitmap embutido? (Se sim, peça PNG.)
 
 ### 8.2 Passo a passo
 
-1. Crie `keylock/` e/ou `mixer/`, cada uma com `theme.json`. Copie as imagens para dentro delas (nomes simples, minúsculos, sem
+1. Crie uma pasta por destino (`keylock/`, `mixer/`, `music/`, `timer/`), cada uma com `theme.json`. Copie as imagens para dentro delas (nomes simples, minúsculos, sem
    espaços: `fundo.png`, `estrela.svg`).
-2. Escreva o `theme.json` com **somente chaves da seção 3** (as do flyout certo).
-3. Rode: `python tools/validate_theme.py <pasta> --container <keylock|mixer> --json` (ou aponte a pasta do pacote com as duas).
+2. Escreva o `theme.json` com **somente chaves da seção 3** (as do destino certo).
+3. Rode: `python tools/validate_theme.py <pasta> --container <keylock|mixer|music|timer> --json` (ou aponte a pasta do pacote
+   com todas).
 4. **Laço de autocorreção:** leia o JSON. Se `errors` ou `issues` não estiverem vazios, corrija **cada mensagem** usando a
    tabela da seção 7 e rode de novo. Repita até `"ok": true` em todos os alvos. Não entregue com `issues` pendentes.
 5. Gere o `.aimskin` com `python tools/pack_theme.py <pasta> -o <saida>.aimskin` (ele valida de novo, recusa se sobrar
-   qualquer `issue` e confere que o pacote importa). Se precisar montar o zip à mão, `keylock/` e `mixer/` ficam **na raiz do zip**.
+   qualquer `issue` e confere que o pacote importa). Se precisar montar o zip à mão, as pastas de destino ficam **na raiz do zip**.
 6. Entregue e peça ao humano: *Importar tema → conferir a aparência → dizer o que ajustar*.
 
-Saída do `--json` (uma lista, um item por flyout):
+Saída do `--json` (uma lista, um item por destino):
 
 ```json
 [{"container": "keylock", "folder": "...", "name": "Roxo Suave", "ok": false,
@@ -469,6 +594,7 @@ igual ao padrão: algo está errado).
 - **[REGRA]** Fundo: png/jpg/jpeg/webp (nunca SVG). Figurinha: também aceita SVG.
 - **[REGRA]** Se o SVG do designer tiver bitmap embutido, script ou referência externa, **não o use**: peça PNG.
 - **[REGRA]** O mixer **não** tem `scale`/`auto_scale`/`size`, e `state` em figurinha só vale no Caps/Num Lock.
+- **[REGRA]** Música e Timer **não** têm `shadow`, `radius`, `scale` nem `size`, nem figurinhas `behind`.
 - **[REGRA]** Se o desenho pedir algo da seção 3.7, avise em vez de inventar chave.
 - **[REGRA]** Não coloque no pacote nada além de `theme.json` e as imagens usadas. Não inclua arte que você não recebeu.
 - **[REGRA]** Sempre inclua `"name"` (o nome que o usuário verá).
@@ -562,5 +688,5 @@ igual ao padrão: algo está errado).
 - [ ] Validador com `"ok": true` em todos os alvos.
 - [ ] `"name"` presente, com até 40 letras.
 - [ ] Só `theme.json` + imagens usadas em cada pasta; nenhum arquivo extra, nenhum SVG com bitmap embutido.
-- [ ] `.aimskin` com `keylock/` e/ou `mixer/` na **raiz** do zip.
+- [ ] `.aimskin` com as pastas de destino (`keylock/`, `mixer/`, `music/`, `timer/`) na **raiz** do zip.
 - [ ] Você avisou que a aparência (contraste, figurinha cobrindo o conteúdo) precisa ser conferida no app.

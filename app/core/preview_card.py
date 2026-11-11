@@ -61,7 +61,8 @@ class PreviewCard(QWidget):
         self._cached_pixmap: QPixmap | None = None
         self._cache_key: tuple | None = None
 
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._available = getattr(spec, "available", True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._available else Qt.CursorShape.ArrowCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumSize(130, 155)
 
@@ -173,7 +174,7 @@ class PreviewCard(QWidget):
         self._cache_key = None
 
     def enterEvent(self, event):
-        self._is_hovered = True
+        self._is_hovered = self._available
         self.update()
         super().enterEvent(event)
 
@@ -183,7 +184,7 @@ class PreviewCard(QWidget):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if self._available and event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._spec.id)
         super().mousePressEvent(event)
 
@@ -330,7 +331,7 @@ class PreviewCard(QWidget):
         right_reserved = 48.0 if self._show_active_toggle else 24.0
         text_rect = QRectF(text_x, foot_y, w - text_x - right_reserved, label_area_h)
 
-        is_disabled = self._show_active_toggle and not self._is_active_in_menu
+        is_disabled = (self._show_active_toggle and not self._is_active_in_menu) or not self._available
         text_color = (
             self._theme.mute
             if is_disabled

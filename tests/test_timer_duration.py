@@ -160,5 +160,31 @@ class TestControllerAndSkin(unittest.TestCase):
         self.c.pause()
 
 
+class TypedDurationTests(unittest.TestCase):
+    def test_fields_are_independent(self):
+        from app.widgets.timer.duration_rules import compose_duration, split_duration
+        fields = split_duration(0)
+        fields["minutes"] = 20
+        fields["seconds"] = 55
+        self.assertEqual(compose_duration(fields), 20 * 60 + 55)      # 00:20:55
+        fields["hours"] = 1
+        self.assertEqual(compose_duration(fields), 3600 + 20 * 60 + 55)
+        self.assertEqual(split_duration(3600 + 20 * 60 + 55), {"hours": 1, "minutes": 20, "seconds": 55})
+
+    def test_field_limits(self):
+        from app.widgets.timer.duration_rules import typed_field_accepts
+        self.assertTrue(typed_field_accepts("minutes", "24"))
+        self.assertFalse(typed_field_accepts("minutes", "240"))       # 240 fica 24
+        self.assertFalse(typed_field_accepts("seconds", "60"))
+        self.assertTrue(typed_field_accepts("hours", "99"))
+        self.assertFalse(typed_field_accepts("hours", "100"))
+
+    def test_total_limits_and_minimum(self):
+        from app.widgets.timer.duration_rules import MAX_SECONDS, compose_duration
+        self.assertEqual(MAX_SECONDS, 99 * 3600 + 59 * 60 + 59)
+        self.assertEqual(compose_duration({"hours": 0, "minutes": 0, "seconds": 5}), 10)
+        self.assertEqual(compose_duration({"hours": 0, "minutes": 0, "seconds": 0}), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

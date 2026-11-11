@@ -74,7 +74,7 @@ class ThemeFileTests(unittest.TestCase):
         self._old_cfg_path = config_manager.config_path
         self._old_themes = config_manager._data.get("themes")
         config_manager.config_path = os.path.join(self._tmp.name, "settings.json")  # nunca lê/grava a config real
-        config_manager._data.pop("themes", None)                                    # sem tema escolhido
+        config_manager._data["themes"] = {"keylock": "custom"}                          # foco: o arquivo solto
         theme_mod.reset_cache()
         self.path = theme_mod.theme_path()
 

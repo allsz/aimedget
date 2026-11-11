@@ -1,5 +1,5 @@
 """
-Mantém docs/temas.md honesto: os exemplos marcados com <!-- validar: keylock|mixer --> passam no validador,
+Mantém docs/temas.md honesto: os exemplos marcados com <!-- validar: keylock|mixer|music|timer --> passam no validador,
 toda chave de tema aparece nas tabelas e os limites citados batem com o código.
   python tests/test_docs_temas.py
 """
@@ -23,6 +23,9 @@ from app.core.theme_loader import COMMON_KEYS
 from app.core.theme_validation import validate_theme_folder
 from app.widgets.keylock_osd import theme as kl_theme
 from app.widgets.volume_mixer import theme as mx_theme
+from app.widgets.music.skins import stack_theme as mu_theme
+from app.widgets.music.skins.stack_palette import get_default_pastel_theme
+from app.widgets.timer import theme as tm_theme
 
 _app = QApplication.instance() or QApplication([])
 
@@ -32,7 +35,7 @@ SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" h
 
 
 def doc_examples():
-    pattern = re.compile(r"<!-- validar: (keylock|mixer) -->\s*```json\n(.*?)```", re.S)
+    pattern = re.compile(r"<!-- validar: (keylock|mixer|music|timer) -->\s*```json\n(.*?)```", re.S)
     return [(m.group(1), m.group(2)) for m in pattern.finditer(DOC)]
 
 
@@ -44,10 +47,12 @@ def section(title_start: str) -> str:
 
 
 class DocExamplesTests(unittest.TestCase):
-    def test_there_are_examples_for_both_flyouts(self):
+    def test_there_are_examples_for_every_destination(self):
         kinds = [k for k, _ in doc_examples()]
         self.assertGreaterEqual(kinds.count("keylock"), 2)
         self.assertGreaterEqual(kinds.count("mixer"), 2)
+        self.assertGreaterEqual(kinds.count("music"), 1)
+        self.assertGreaterEqual(kinds.count("timer"), 1)
 
     def test_every_example_passes_the_validator_with_no_issues(self):
         for container, text in doc_examples():
@@ -85,6 +90,28 @@ class DocCoverageTests(unittest.TestCase):
         documented = self.keys_in(section("### 3.3"))
         self.assertEqual(expected - documented, set(), "chave sem linha na tabela 3.3")
         self.assertEqual(documented - expected, set(), "a tabela 3.3 cita chave que não existe")
+
+    def test_every_music_key_is_documented(self):
+        expected = set(mu_theme._PALETTE_KEYS) | set(mu_theme._OTHER_COLORS) | {"adaptive"} | set(COMMON_KEYS)
+        documented = self.keys_in(section("### 3.8"))
+        self.assertEqual(expected - documented, set(), "chave sem linha na tabela 3.8")
+        self.assertEqual(documented - expected, set(), "a tabela 3.8 cita chave que não existe")
+
+    def test_every_timer_key_is_documented(self):
+        expected = set(tm_theme._COLOR_TO_HUB) | set(tm_theme.EXTRA_COLOR_KEYS) | set(COMMON_KEYS)
+        documented = self.keys_in(section("### 3.9"))
+        self.assertEqual(expected - documented, set(), "chave sem linha na tabela 3.9")
+        self.assertEqual(documented - expected, set(), "a tabela 3.9 cita chave que não existe")
+
+    def test_music_palette_defaults_match_the_code(self):
+        palette = get_default_pastel_theme()
+        table = section("### 3.8")
+        for key, field in mu_theme._PALETTE_KEYS.items():
+            c = getattr(palette, field)
+            hexed = (f"#{c.red():02x}{c.green():02x}{c.blue():02x}" if c.alpha() == 255
+                     else f"#{c.alpha():02x}{c.red():02x}{c.green():02x}{c.blue():02x}")
+            row = re.search(rf"^\| `{key}` \|.*$", table, re.M).group(0)
+            self.assertIn(hexed, row, f"{key}: o padrão da doc difere do código")
 
     def test_sticker_fields_are_documented(self):
         text = section("### 3.6")

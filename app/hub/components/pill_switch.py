@@ -3,7 +3,7 @@ PillSwitch (Toggle Switch no formato pílula estilo iOS/Fluent/Mockup Hub).
 Componente tátil com animação suave (QVariantAnimation) do thumb deslizando de um lado para o outro.
 """
 
-from PySide6.QtCore import Property, QEasingCurve, QPointF, QRectF, QSize, Qt, QVariantAnimation, Signal
+from PySide6.QtCore import QEasingCurve, QRectF, QSize, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QAbstractButton
 

@@ -424,6 +424,11 @@ def create_system_sounds_icon(size: int = 64) -> QImage:
     return img
 
 
+def is_glyph_icon(img: QImage) -> bool:
+    """True se `img` é o glifo monocromático de Sons do Sistema (também usado quando um app não tem ícone)."""
+    return not img.isNull() and img.cacheKey() == create_system_sounds_icon().cacheKey()
+
+
 def get_app_icon(exe_path: str, is_system_sounds: bool = False) -> QImage:
     """
     Pipeline completo de extração de ícone em alta resolução (64x64 ARGB):

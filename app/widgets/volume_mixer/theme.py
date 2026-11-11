@@ -2,7 +2,7 @@
 Tema (tokens visuais) do flyout de Volume / Mixer. Mesmo esquema do Caps Lock: o container (tamanho, gaveta,
 animações) é definido em código; o tema só muda a aparência. O arquivo do usuário fica em:
 
-    %LOCALAPPDATA%/WindowsRedesign/themes/mixer/theme.json
+    %LOCALAPPDATA%/Aimedget/themes/mixer/theme.json
 
 e é relido sempre que o flyout aparece. Exemplo (todas as chaves são opcionais):
 
@@ -96,7 +96,12 @@ def theme_from_dict(data: dict, base_dir: str | None = None) -> MixerTheme:
     return replace(DEFAULT_THEME, **changes)
 
 
-_loader = ThemeLoader("mixer", DEFAULT_THEME, theme_from_dict, "mixer")
+def _app_theme() -> MixerTheme:
+    from app.core.app_theme import app_mixer_theme   # tardio: app_theme importa este módulo
+    return app_mixer_theme()
+
+
+_loader = ThemeLoader("mixer", DEFAULT_THEME, theme_from_dict, "mixer", app_theme=_app_theme)
 
 theme_path = _loader.path
 load_user_theme = _loader.load

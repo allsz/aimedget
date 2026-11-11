@@ -1,5 +1,60 @@
+import logging
 import os
+import shutil
 import sys
+
+logger = logging.getLogger(__name__)
+
+APP_DATA_NAME = "Aimedget"
+LEGACY_APP_DATA_NAME = "WindowsRedesign"   # nome antigo do projeto; migrado para APP_DATA_NAME na primeira abertura
+_migration_done = False
+
+
+def _local_appdata() -> str:
+    return os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+
+
+def migrate_legacy_data_dir(base: str | None = None) -> str:
+    """
+    Traz os dados da pasta antiga (%LOCALAPPDATA%/WindowsRedesign) para a nova (%LOCALAPPDATA%/Aimedget) e devolve
+    a pasta que o app deve usar. Nunca sobrescreve nada: se a nova não existe, a antiga é renomeada; se as duas
+    existem, só passam os itens que a nova ainda não tem. Se algo falhar (arquivo em uso, permissão), o app segue
+    usando a pasta antiga em vez de perder as configurações do usuário.
+    """
+    base = base or _local_appdata()
+    new_dir = os.path.join(base, APP_DATA_NAME)
+    old_dir = os.path.join(base, LEGACY_APP_DATA_NAME)
+    if not os.path.isdir(old_dir):
+        return new_dir
+    try:
+        if not os.path.exists(new_dir):
+            os.rename(old_dir, new_dir)
+            return new_dir
+        for entry in os.listdir(old_dir):
+            target = os.path.join(new_dir, entry)
+            if not os.path.exists(target):
+                shutil.move(os.path.join(old_dir, entry), target)
+        try:
+            os.rmdir(old_dir)   # só remove se ficou vazia
+        except OSError:
+            pass
+        return new_dir
+    except OSError as exc:
+        logger.warning("Não foi possível migrar %s para %s (%s); continuando com a pasta antiga", old_dir, new_dir, exc)
+        return old_dir
+
+
+def get_app_data_dir() -> str:
+    """Pasta de dados do usuário (configurações, temas, cache). Migra a pasta antiga uma vez por execução."""
+    global _migration_done
+    base = _local_appdata()
+    if not _migration_done:
+        _migration_done = True
+        return migrate_legacy_data_dir(base)
+    new_dir = os.path.join(base, APP_DATA_NAME)
+    old_dir = os.path.join(base, LEGACY_APP_DATA_NAME)
+    # Migração que falhou antes: continua na antiga enquanto a nova não existir
+    return old_dir if (os.path.isdir(old_dir) and not os.path.exists(new_dir)) else new_dir
 
 
 def get_base_dir() -> str:

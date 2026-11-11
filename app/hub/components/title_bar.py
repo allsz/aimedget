@@ -5,8 +5,8 @@ WindowControlBar - Barra de título integrada estilo 1Password / macOS / Windows
 - Permite arrastar a janela livremente e maximizar com duplo-clique.
 """
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPaintEvent
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QHBoxLayout,

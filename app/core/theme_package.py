@@ -3,8 +3,10 @@ Pacote de tema (.aimskin = zip): análise segura, instalação e exportação. S
 
 Formato do pacote (o designer escolhe um):
     keylock/theme.json + imagens        (tema do Caps/Num Lock)
-    mixer/theme.json   + imagens        (tema do Volume e mixer)      <- as duas pastas juntas = pacote multi-alvo
-    theme.json (com "container": "keylock" ou "mixer") + imagens    <- tema de um flyout só, sem subpasta
+    mixer/theme.json   + imagens        (tema do Volume e mixer)
+    music/theme.json   + imagens        (tema da Capa Empilhada, widget de Música)
+    timer/theme.json   + imagens        (tema do Timer Aimedget)       <- várias pastas juntas = pacote multi-alvo
+    theme.json (com "container": "keylock", "mixer", "music" ou "timer") + imagens   <- um destino só, sem subpasta
 Uma única pasta de embrulho em volta de tudo (Lavanda/keylock/...) também é aceita.
 
 Fluxo: `analyze_package` extrai para uma pasta temporária com TODAS as defesas e valida cada alvo com o mesmo
@@ -31,8 +33,8 @@ import zlib
 from dataclasses import dataclass, field
 
 from app.core.theme_art import MAX_FILE_BYTES, MAX_SVG_BYTES
-from app.core.theme_loader import CUSTOM_ID, DEFAULT_ID, MAX_NAME_LEN
-from app.core.theme_validation import CONTAINERS, ThemeReport, validate_theme_folder
+from app.core.theme_loader import APP_ID, CUSTOM_ID, DEFAULT_ID, MAX_NAME_LEN
+from app.core.theme_validation import CONTAINERS, ThemeReport, container_folders_text, validate_theme_folder
 
 PACKAGE_EXT = ".aimskin"
 ALLOWED_EXTENSIONS = (".json", ".png", ".jpg", ".jpeg", ".webp", ".svg")
@@ -251,13 +253,15 @@ def _analyze(path: str, workdir: tempfile.TemporaryDirectory) -> PackageReport:
         # Decide o destino (container, caminho relativo) de cada arquivo
         routing: dict[str, str] = {}   # caminho no zip -> container
         if root_theme is not None and has_folders:
-            raise PackageError("o pacote mistura theme.json solto com as pastas keylock/ e mixer/; use só um dos formatos")
+            raise PackageError(f"o pacote mistura theme.json solto com as pastas {container_folders_text()}; "
+                               "use só um dos formatos")
         if root_theme is not None:
             with zf.open(root_theme[0]) as f:
                 container = _root_container(f.read(MAX_JSON_BYTES + 1))
             if container is None:
-                raise PackageError('o theme.json solto precisa dizer o flyout: "container": "keylock" ou "mixer" '
-                                   "(ou coloque os arquivos dentro de uma pasta keylock/ ou mixer/)")
+                raise PackageError('o theme.json solto precisa dizer o destino: "container": '
+                                   + ", ".join(f'"{c}"' for c in CONTAINERS)
+                                   + f" (ou coloque os arquivos dentro de uma das pastas {container_folders_text(' ou ')})")
             for _i, c in members:
                 routing[c] = container
         else:
@@ -266,14 +270,15 @@ def _analyze(path: str, workdir: tempfile.TemporaryDirectory) -> PackageReport:
                 if "/" in c and top in CONTAINERS:
                     routing[c] = top
         if not routing:
-            raise PackageError("não achei nenhum tema no pacote: faltam as pastas keylock/ ou mixer/ com um theme.json")
+            raise PackageError(f"não achei nenhum tema no pacote: falta uma das pastas {container_folders_text(' ou ')} "
+                               "com um theme.json")
 
         budget = [0]
         staged: dict[str, str] = {}   # container -> pasta temporária
         for info, clean in members:
             container = routing.get(clean)
             if container is None:
-                ignored.append((clean, "fora das pastas keylock/ e mixer/"))
+                ignored.append((clean, f"fora das pastas {container_folders_text()}"))
                 continue
             rel = clean if root_theme is not None else clean.split("/", 1)[1]
             ext = os.path.splitext(rel)[1].lower()
@@ -308,8 +313,8 @@ def _analyze(path: str, workdir: tempfile.TemporaryDirectory) -> PackageReport:
 
 
 def _free_base_id(slug: str) -> str:
-    """O id não pode ser um dos reservados (padrão / personalizado)."""
-    return f"{slug}-tema" if slug in (DEFAULT_ID, CUSTOM_ID) else slug
+    """O id não pode ser um dos reservados (padrão / personalizado / Aimedget)."""
+    return f"{slug}-tema" if slug in (DEFAULT_ID, CUSTOM_ID, APP_ID) else slug
 
 
 # --- Instalação ------------------------------------------------------------------------------
@@ -412,8 +417,8 @@ def _collect_files(container: str, theme_id: str) -> list[tuple[str, str]]:
     """Arquivos de UM tema instalado (themes/<container>/<id>/)."""
     if container not in CONTAINERS:
         raise ValueError(f"container desconhecido: {container!r}")
-    if theme_id == DEFAULT_ID:
-        raise PackageError("o visual Padrão não pode ser exportado (ele já vem com o app)")
+    if theme_id in (DEFAULT_ID, APP_ID):
+        raise PackageError("o visual Windows não pode ser exportado (ele já vem com o app)")
     base = themes_dir(container)
     folder = base if theme_id == CUSTOM_ID else os.path.join(base, theme_id)
     if os.path.basename(theme_id) != theme_id or theme_id.startswith(".") or not os.path.isfile(os.path.join(folder, "theme.json")):
@@ -477,7 +482,7 @@ def export_theme(container: str, theme_id: str, dest_path: str, name: str | None
 
 
 def has_theme(container: str, theme_id: str) -> bool:
-    """Existe uma pasta de tema com este id neste flyout? (para exportar o par Caps + Mixer juntos)"""
-    if theme_id in (DEFAULT_ID, CUSTOM_ID) or os.path.basename(theme_id) != theme_id or theme_id.startswith("."):
+    """Existe uma pasta de tema com este id neste destino? (para exportar junto o mesmo tema dos outros destinos)"""
+    if theme_id in (DEFAULT_ID, CUSTOM_ID, APP_ID) or os.path.basename(theme_id) != theme_id or theme_id.startswith("."):
         return False
     return os.path.isfile(os.path.join(themes_dir(container), theme_id, "theme.json"))

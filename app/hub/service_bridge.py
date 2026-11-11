@@ -4,10 +4,11 @@ Gerencia instâncias únicas de MusicController, KeyLockService/Flyout e AudioMi
 """
 
 from typing import Optional
-from PySide6.QtCore import QObject, QRect, Qt, Signal
+from PySide6.QtCore import QObject, QRect, Signal
 from PySide6.QtWidgets import QApplication
 
 from app.core.config_manager import config_manager
+from app.core.osd_anchor import link_flyouts
 from app.services.audio_endpoint_service import AudioEndpointService
 from app.services.audio_mixer_service import AudioMixerService
 from app.services.hotkey_service import get_hotkey_service
@@ -36,6 +37,7 @@ class HubServiceBridge(QObject):
     music_scale_changed = Signal(object)  # float or None
     active_skins_changed = Signal(list)  # list of active skin ids
     timer_skin_changed = Signal(str)  # skin_name
+    osd_anchor_changed = Signal(str, str)  # (flyout 'keylock'/'mixer', âncora)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,9 +68,11 @@ class HubServiceBridge(QObject):
         self.volume_flyout.app_volume_dragged.connect(self.audio_service.set_app_volume)
         self.volume_flyout.app_mute_toggled.connect(self.audio_service.toggle_app_mute)
         self.volume_flyout.refresh_requested.connect(self.audio_service.refresh_sessions)
+        # A lista de apps só é varrida periodicamente enquanto o mixer está na tela
+        self.volume_flyout.visibility_changed.connect(self.audio_service.set_live_sessions)
 
-        # Empilhamento cooperativo (Volume empurra Caps Lock para cima)
-        self.volume_flyout.card_top_changed.connect(self.keylock_flyout.on_mixer_geometry_changed)
+        # Empilhamento cooperativo nos dois sentidos + âncora salva (compartilhada pelos dois flyouts)
+        self.osd_stack = link_flyouts(self.keylock_flyout, self.volume_flyout)
 
         # Roteamento de áudio por aplicativo (Opção B - Gaveta Inline)
         self.endpoint_service = AudioEndpointService(mixer_service=self.audio_service)
@@ -108,7 +112,7 @@ class HubServiceBridge(QObject):
             "music_vinyl": config_manager.is_music_enabled(),
             "keys_osd": True,
             "vol_mixer": True,
-            "timer": config_manager.is_timer_enabled(),
+            "timer": config_manager.is_timer_show_on_startup(),
         }
 
     def start_all(self):
@@ -117,8 +121,9 @@ class HubServiceBridge(QObject):
         if self._states.get("music_vinyl", True):
             self.music_controller.start()
 
-        # Se o widget de timer estiver ativado, exibe no topo da tela
-        if self._states.get("timer", True):
+        # O timer só aparece ao iniciar se o usuário optou; caso contrário, fica
+        # disponível pelo atalho global (Win+Alt+T)
+        if config_manager.is_timer_show_on_startup():
             self.timer_controller.start()
 
     # --- Atalhos Globais e Ações de Toggle ---
@@ -214,7 +219,8 @@ class HubServiceBridge(QObject):
         worker = getattr(self.music_controller, "media_worker", None)
         aumid = getattr(worker, "current_source_app_id", "")
         provider = getattr(worker, "_last_provider", "")
-        return find_session_for_player(aumid, provider, self.audio_service.get_cached_sessions())
+        # Com o mixer fechado a lista não é varrida sozinha: pede uma recente (no máx. 2 s; a roda gira em rajadas)
+        return find_session_for_player(aumid, provider, self.audio_service.get_fresh_sessions())
 
     def _on_music_volume_wheel(self, notches: float):
         """
@@ -246,6 +252,40 @@ class HubServiceBridge(QObject):
             muted = mixer.get_master_mute()
         self.music_volume_osd.show_for(anchor, target, muted)
 
+    def apply_music_theme(self):
+        """
+        Aplica o tema da Capa Empilhada escolhido no Hub ao widget vivo. Um tema que não seja o padrão ("cores da
+        capa") torna a Capa Empilhada a skin em uso: o tema só existe nela, e escolher um tema sem ver o resultado
+        confundiria (ex.: quem recebe um pacote e importa).
+        """
+        from app.core.theme_loader import DEFAULT_ID
+        from app.widgets.music.skins import stack_theme
+
+        stacked = "capa_empilhada"
+        if stack_theme.loader.active_id() != DEFAULT_ID and self.music_controller.active_skin_name != stacked:
+            if stacked not in config_manager.get_active_widget_skins():
+                self.set_music_skin_active(stacked, True)
+            self.set_music_skin(stacked)   # a skin nova já nasce com o tema escolhido
+        skin = self.music_controller.skin
+        if skin is not None and hasattr(skin, "reload_skin_theme"):
+            skin.reload_skin_theme()
+
+    def apply_timer_theme(self):
+        """Aplica o tema do Timer escolhido no Hub ao widget vivo."""
+        skin = self.timer_controller.skin
+        if skin is not None and hasattr(skin, "reload_skin_theme"):
+            skin.reload_skin_theme()
+
+    def theme_appliers(self) -> dict:
+        """O que fazer em cada destino depois de escolher/importar um tema: flyouts aparecem para teste,
+        widgets aplicam ao vivo."""
+        return {
+            "keylock": lambda: self.trigger_test_keylock("Caps Lock", True),
+            "mixer": self.trigger_test_volume,
+            "music": self.apply_music_theme,
+            "timer": self.apply_timer_theme,
+        }
+
     def set_music_skin_active(self, skin_name: str, active: bool) -> bool:
         """Ativa/desativa uma skin no menu de troca rápida. Retorna False se violar o mínimo de 1."""
         if not config_manager.set_skin_active(skin_name, active):
@@ -271,14 +311,24 @@ class HubServiceBridge(QObject):
             return
 
         screen_geo = app.primaryScreen().availableGeometry()
-        w = self.music_controller.skin.width()
-        h = self.music_controller.skin.height()
+        w, h = self.music_controller.skin._card_size()   # o CARTÃO encosta na margem da tela, não a janela
         margin = 24
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
         self.music_controller.settle()
-        self.music_controller.skin.move(x, y)
+        self.music_controller.skin.move_card_to(x, y)
         config_manager.set_music_position_remembered(True, x, y)
+
+    # --- Âncora de cada flyout de sistema (Caps/Num Lock e Mixer; na mesma âncora eles se empilham) ---
+
+    def get_osd_anchor(self, flyout: str) -> str:
+        return config_manager.get_osd_anchor(flyout)
+
+    def set_osd_anchor(self, flyout: str, anchor: str):
+        """Salva e aplica na hora a posição de um flyout ('keylock' ou 'mixer')."""
+        config_manager.set_osd_anchor(flyout, anchor)
+        self.osd_stack.set_anchors(config_manager.get_osd_anchor("keylock"), config_manager.get_osd_anchor("mixer"))
+        self.osd_anchor_changed.emit(flyout, config_manager.get_osd_anchor(flyout))
 
     # --- Controles de Lock Keys OSD ---
 
@@ -357,12 +407,11 @@ class HubServiceBridge(QObject):
             return
 
         screen_geo = app.primaryScreen().availableGeometry()
-        w = self.timer_controller.skin.width()
-        h = self.timer_controller.skin.height()
+        w = h = self.timer_controller.skin.square_side()   # o quadrado encosta na margem da tela
         margin = 24
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
-        self.timer_controller.skin.move(x, y)
+        self.timer_controller.skin.move_square_to(x, y)
         config_manager.set_timer_position_remembered(True, x, y)
 
     def on_theme_changed(self, theme=None):

@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen
 from app.core.i18n import t
 from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
+from app.services.win_app_icon_extractor import is_glyph_icon
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme
 from app.ui_components.pill_switch import PillSwitch
@@ -53,6 +54,8 @@ class AppVolumeRow:
         self.theme: MixerTheme = DEFAULT_THEME
 
         self._scaled_icon = self._prepare_icon(icon)
+        self._is_glyph = is_glyph_icon(icon)           # ícone monocromático do app (Sons do Sistema): segue a cor do tema
+        self._tinted: tuple[int, QImage] | None = None
 
         # Estado da gaveta de roteamento inline (Opção B)
         self.is_routing_open = False
@@ -88,6 +91,11 @@ class AppVolumeRow:
         self._hovered_dev_id: str | None = None
         self._tab_switch_t = 1.0
 
+    def _hover_tint(self) -> QColor:
+        c = QColor(self.theme.icon)   # claro no tema escuro, escuro no claro: o realce sempre aparece
+        c.setAlpha(22)
+        return c
+
     @classmethod
     def _prepare_icon(cls, icon: QImage) -> QImage:
         if icon.isNull():
@@ -108,6 +116,22 @@ class AppVolumeRow:
         self.slider.is_muted = is_muted
         if self._scaled_icon.isNull() and not icon.isNull():
             self._scaled_icon = self._prepare_icon(icon)
+            self._is_glyph = is_glyph_icon(icon)
+
+    def _icon_for_theme(self) -> QImage:
+        """O ícone a desenhar: apps usam o ícone deles; o glifo de Sons do Sistema é pintado com a cor `icon` do tema
+        (branco no escuro, escuro no claro), como o ícone do alto-falante do cabeçalho."""
+        if not self._is_glyph or self._scaled_icon.isNull():
+            return self._scaled_icon
+        key = self.theme.icon.rgba()
+        if self._tinted is None or self._tinted[0] != key:
+            img = QImage(self._scaled_icon)
+            tp = QPainter(img)
+            tp.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            tp.fillRect(img.rect(), self.theme.icon)
+            tp.end()
+            self._tinted = (key, img)
+        return self._tinted[1]
 
     def set_endpoints(
         self,
@@ -409,15 +433,16 @@ class AppVolumeRow:
         # Efeito de hover ou gaveta aberta no ícone
         if self.icon_hovered or self.is_routing_open:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(self._accent_with_alpha(45) if self.is_routing_open else QColor(255, 255, 255, 22))
+            p.setBrush(self._accent_with_alpha(45) if self.is_routing_open else self._hover_tint())
             p.drawRoundedRect(icon_rect.adjusted(-4.0, -4.0, 4.0, 4.0), 4.0, 4.0)
 
         # Desenha ícone nativo
-        if not self._scaled_icon.isNull():
+        icon_img = self._icon_for_theme()
+        if not icon_img.isNull():
             prev_op = p.opacity()
             if self.is_muted:
                 p.setOpacity(prev_op * 0.42)
-            p.drawImage(icon_rect, self._scaled_icon)
+            p.drawImage(icon_rect, icon_img)
             p.setOpacity(prev_op)
 
         # Traço vermelho de mudo

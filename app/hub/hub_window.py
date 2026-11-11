@@ -8,7 +8,7 @@ Design refinado com integração nativa ao Windows 11 DWM:
 """
 
 import sys
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -22,10 +22,10 @@ from PySide6.QtWidgets import (
 from app.core.config_manager import config_manager
 from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
-from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon
+from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
 from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
 from app.hub.service_bridge import get_service_bridge
-from app.hub.theme import THEME_DARK, THEME_LIGHT, HubTheme, get_hub_stylesheet, resolve_theme
+from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
 from app.hub.tray_manager import AimedgetTrayIcon
 
 
@@ -34,7 +34,7 @@ class AimedgetHubWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(" ")   # título em branco: o Qt só acrescenta o nome do app a títulos não vazios
+        self.setWindowTitle(" ")   # título "invisível": vazio ("") faz o Qt cair no nome do executável ("python"); sem display name do app, nada é acrescentado
         # Ícone sem fundo (transparente) para o cabeçalho e barra da janela do app
         self.setWindowIcon(create_aimedget_clean_icon(64))
         # Restaurar geometria salva ou aplicar tamanho padrão
@@ -49,6 +49,13 @@ class AimedgetHubWindow(QMainWindow):
         # Carregar preferência salva
         self._theme_preference = config_manager.get_hub_theme("system")
         self._current_theme: HubTheme = resolve_theme(self._theme_preference)
+
+        self._pending_accent = config_manager.get_hub_accent()
+        self._icons_pending = False
+        self._accent_timer = QTimer(self)
+        self._accent_timer.setSingleShot(True)
+        self._accent_timer.setInterval(30)
+        self._accent_timer.timeout.connect(self._flush_accent)
 
         # Inicializar Tray Icon
         self.tray_icon = AimedgetTrayIcon(on_open_hub=self.show_and_activate, parent=self)
@@ -172,6 +179,7 @@ class AimedgetHubWindow(QMainWindow):
         self.page_gen = GeneralPage(
             on_theme_change=self._change_theme_mode,
             on_language_change=self._change_language,
+            on_accent_change=self._change_accent,
             current_pref=self._theme_preference,
             current_lang=config_manager.get_language("pt"),
             theme=self._current_theme,
@@ -247,6 +255,41 @@ class AimedgetHubWindow(QMainWindow):
         resolved = resolve_theme(mode)
         self._apply_theme(resolved)
         get_service_bridge().on_theme_changed(resolved)
+
+    def _change_accent(self, accent, committed: bool):
+        """Cor de destaque (matiz, '#RRGGBB' ou None = laranja padrão). Ao vivo enquanto arrasta; salva e atualiza
+        os ícones ao soltar ou ao confirmar uma cor digitada."""
+        self._pending_accent = accent
+        if committed:
+            config_manager.set_hub_accent(accent)
+            self._accent_timer.stop()
+            self._flush_accent(refresh_icons=True)
+        elif not self._accent_timer.isActive():
+            self._accent_timer.start()   # agrupa os eventos do arrasto (~33 por segundo)
+
+    def _flush_accent(self, refresh_icons: bool = False):
+        # Reaplicar o estilo do Hub inteiro leva ~70 ms; no meio da animação do campo de cor isso congelaria
+        # alguns quadros. Espera o movimento terminar (o pedido mais recente vence).
+        self._icons_pending = self._icons_pending or refresh_icons
+        entry = self.page_gen.accent_entry
+        if entry.is_animating():
+            entry.when_idle(self._flush_accent)
+            return
+        refresh_icons, self._icons_pending = self._icons_pending, False
+        resolved = resolve_theme(self._theme_preference, self._pending_accent)
+        self._apply_theme(resolved)
+        get_service_bridge().on_theme_changed(resolved)
+        if refresh_icons:
+            self._refresh_icons()
+
+    def _refresh_icons(self):
+        """Recolore o ícone da janela, da bandeja e do app com o matiz atual."""
+        set_icon_accent(self._pending_accent)
+        icon = create_aimedget_clean_icon(64)
+        self.setWindowIcon(icon)
+        QApplication.instance().setWindowIcon(icon)
+        self.tray_icon.setIcon(create_aimedget_icon(32))
+        self._apply_asymmetric_windows_icons()
 
     def _apply_theme(self, theme: HubTheme):
         self._current_theme = theme

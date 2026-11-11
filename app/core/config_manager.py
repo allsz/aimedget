@@ -3,9 +3,8 @@ import logging
 import os
 from typing import Any, Optional, Tuple
 
+from app.core.paths import get_app_data_dir
 from app.core.screen_metrics import (
-    BASELINE_MUSIC_SCALE,
-    BASELINE_TIMER_SIZE,
     get_auto_music_scale,
     get_auto_timer_size,
 )
@@ -16,13 +15,12 @@ logger = logging.getLogger(__name__)
 class ConfigManager:
     """
     Gerenciador centralizado de preferências e configurações persistentes (JSON).
-    Salva preferências do usuário em %LOCALAPPDATA%/WindowsRedesign/settings.json.
+    Salva preferências do usuário em %LOCALAPPDATA%/Aimedget/settings.json.
     Compatível com empacotamento PyInstaller e execução direta.
     """
 
     def __init__(self, filename: str = "settings.json"):
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        self.config_dir = os.path.join(base, "WindowsRedesign")
+        self.config_dir = get_app_data_dir()
         self.config_path = os.path.join(self.config_dir, filename)
         self._data: dict[str, Any] = self._load()
 
@@ -67,7 +65,9 @@ class ConfigManager:
                 "mode": "timer",  # 'timer' ou 'stopwatch'
                 "duration": 300,  # 5 minutos padrão
                 "theme_mode": "hub",  # 'hub', 'dark', 'light'
-                "smart_hover": True,  # hover inteligente em dígitos digitais (HH:MM:SS)
+                "alarm_sound": True,  # toca o som ao zerar a contagem regressiva
+                "smart_hover": True,  # scroll nos dígitos digitais (HH:MM:SS)
+                "show_on_startup": False,  # exibir o widget ao iniciar o app (senão, só pelo atalho)
                 "hotkey": "Win+Alt+T",
             },
             "hub": {
@@ -299,6 +299,15 @@ class ConfigManager:
         timer_cfg["enabled"] = bool(enabled)
         self._save()
 
+    def is_timer_show_on_startup(self) -> bool:
+        timer_cfg = self._data.get("timer_widget", {})
+        return bool(timer_cfg.get("show_on_startup", False))
+
+    def set_timer_show_on_startup(self, enabled: bool):
+        timer_cfg = self._data.setdefault("timer_widget", {})
+        timer_cfg["show_on_startup"] = bool(enabled)
+        self._save()
+
     def is_timer_position_remembered(self) -> bool:
         timer_cfg = self._data.setdefault("timer_widget", {})
         return bool(timer_cfg.get("remember_position", False))
@@ -381,6 +390,15 @@ class ConfigManager:
         timer_cfg["active_skin"] = str(skin_name)
         self._save()
 
+    def is_timer_alarm_sound_enabled(self) -> bool:
+        timer_cfg = self._data.get("timer_widget", {})
+        return bool(timer_cfg.get("alarm_sound", True))
+
+    def set_timer_alarm_sound_enabled(self, enabled: bool):
+        timer_cfg = self._data.setdefault("timer_widget", {})
+        timer_cfg["alarm_sound"] = bool(enabled)
+        self._save()
+
     def is_timer_smart_hover_enabled(self) -> bool:
         timer_cfg = self._data.get("timer_widget", {})
         return bool(timer_cfg.get("smart_hover", True))
@@ -399,6 +417,29 @@ class ConfigManager:
     def set_hub_theme(self, theme_name: str):
         hub_cfg = self._data.setdefault("hub", {})
         hub_cfg["theme"] = str(theme_name)
+        self._save()
+
+    def get_hub_accent(self):
+        """Cor de destaque escolhida: '#RRGGBB' (cor exata), int 0-359 (matiz) ou None (âmbar padrão do app)."""
+        hub_cfg = self._data.get("hub", {})
+        color = hub_cfg.get("accent_color")
+        if isinstance(color, str):
+            import re
+            if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+                return color.upper()
+        value = hub_cfg.get("accent_hue")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return int(value) % 360
+
+    def set_hub_accent(self, accent):
+        hub_cfg = self._data.setdefault("hub", {})
+        hub_cfg.pop("accent_hue", None)
+        hub_cfg.pop("accent_color", None)
+        if isinstance(accent, str):
+            hub_cfg["accent_color"] = accent.upper()
+        elif accent is not None:
+            hub_cfg["accent_hue"] = int(accent) % 360
         self._save()
 
     def get_language(self, default: str = "pt") -> str:
@@ -531,6 +572,21 @@ class ConfigManager:
     def set_keylock_hotkey(self, hotkey: str):
         cfg = self._data.setdefault("keylock_osd", {})
         cfg["hotkey"] = str(hotkey)
+        self._save()
+
+    def get_osd_anchor(self, flyout: str) -> str:
+        """
+        Âncora na tela de um flyout ('keylock' ou 'mixer'); 'bc' = acima da barra de tarefas.
+        A chave antiga "anchor" (quando a posição era compartilhada) vale para os dois até cada um ser escolhido.
+        """
+        from app.core.osd_anchor import normalize
+        cfg = self._data.get("osd", {})
+        return normalize(cfg.get(f"{flyout}_anchor", cfg.get("anchor")))
+
+    def set_osd_anchor(self, flyout: str, anchor: str):
+        from app.core.osd_anchor import normalize
+        cfg = self._data.setdefault("osd", {})
+        cfg[f"{flyout}_anchor"] = normalize(anchor)
         self._save()
 
     def is_keylock_key_enabled(self, key_name: str) -> bool:

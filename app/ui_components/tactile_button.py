@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import (
     QPainter,
     QPainterPath,

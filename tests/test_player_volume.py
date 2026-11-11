@@ -92,6 +92,9 @@ class _Mixer:
     def get_cached_sessions(self):
         return list(self.sessions)
 
+    def get_fresh_sessions(self, max_age_s: float = 2.0):   # o bridge pede uma lista recente (mixer fechado)
+        return list(self.sessions)
+
     def set_app_volume(self, app_id, v):
         self.app_sets.append((app_id, v))
         for s in self.sessions:

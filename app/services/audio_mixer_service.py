@@ -161,17 +161,20 @@ class AudioMixerService(QObject):
         self._install_volume_key_hook()
         self._suppress_native_osd_window()
 
-        # Timer rápido (20ms) para processar teclas interceptadas e sincronizar Master Volume
+        # Sincroniza o Master Volume alterado por fora (outro app, mixer do Windows). As teclas de volume NÃO dependem
+        # deste timer: o hook agenda o processamento na hora (ver _ll_proc), então 100 ms basta e o app acorda 10x/s
+        # em vez de 50x/s parado na bandeja.
         self._fast_timer = QTimer(self)
-        self._fast_timer.setInterval(20)
+        self._fast_timer.setInterval(100)
         self._fast_timer.timeout.connect(self._poll_master_and_keys)
         self._fast_timer.start()
 
-        # Timer moderado (450ms) para sincronizar sessões de aplicativos no mixer
+        # Sessões de aplicativos (~12 ms por varredura): só com o mixer na tela (set_live_sessions). Fechado, ninguém
+        # vê a lista; quem precisa dela nessa hora (roda do mouse no Music Widget) pede get_fresh_sessions().
         self._session_timer = QTimer(self)
         self._session_timer.setInterval(450)
         self._session_timer.timeout.connect(self.refresh_sessions)
-        self._session_timer.start()
+        self._sessions_at = 0.0
 
         self.refresh_sessions()
 
@@ -199,6 +202,9 @@ class AudioMixerService(QObject):
                     if vk in (self.VK_VOLUME_UP, self.VK_VOLUME_DOWN, self.VK_VOLUME_MUTE):
                         if w_param in (WM_KEYDOWN, WM_SYSKEYDOWN):
                             self._pending_vk_actions.append(int(vk))
+                            # Processa já no próximo giro do loop de eventos (o hook precisa voltar rápido, então
+                            # só agenda; o trabalho acontece fora dele)
+                            QTimer.singleShot(0, self._poll_master_and_keys)
                         # Retorna 1 para engolir o evento e suprimir 100% o OSD nativo do Windows!
                         return 1
             except Exception:
@@ -292,6 +298,9 @@ class AudioMixerService(QObject):
         current = self._current_default_device_id()
         if current and current != self._default_dev_id:
             self._init_com_interfaces()
+            # Trocar de dispositivo muda o volume lido, mas não é o usuário mexendo no volume: o OSD não deve aparecer
+            # (o passo 3 de _poll_master_and_keys, logo em seguida, só atualiza o valor mostrado)
+            self._last_internal_set_time = now
 
     def _release_device_managers(self):
         for _dev_id, mgr in self._dev_mgrs:
@@ -687,10 +696,25 @@ class AudioMixerService(QObject):
 
         ordered = [found_by_id[aid] for aid in self._app_order]
         self._cached_sessions = ordered
+        self._sessions_at = time.perf_counter()
         self.sessions_updated.emit(ordered)
 
+    def set_live_sessions(self, live: bool):
+        """Liga (mixer na tela) ou desliga (mixer fechado) a varredura periódica das sessões de aplicativos."""
+        if live and not self._session_timer.isActive():
+            self.refresh_sessions()
+            self._session_timer.start()
+        elif not live:
+            self._session_timer.stop()
+
     def get_cached_sessions(self) -> list[AppAudioSession]:
-        """Sessões de aplicativos conhecidas (atualizadas a cada ~450 ms)."""
+        """Sessões de aplicativos conhecidas na última varredura (pode estar velha com o mixer fechado)."""
+        return list(self._cached_sessions)
+
+    def get_fresh_sessions(self, max_age_s: float = 2.0) -> list[AppAudioSession]:
+        """Sessões com no máximo `max_age_s` segundos; varre de novo se a lista for mais velha que isso."""
+        if time.perf_counter() - self._sessions_at > max_age_s:
+            self.refresh_sessions()
         return list(self._cached_sessions)
 
     def get_app_pids(self, app_id: str) -> list[int]:

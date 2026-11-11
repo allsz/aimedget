@@ -91,7 +91,7 @@ class MusicWidgetController(QObject):
         last_state = None
 
         if self.skin is not None:
-            old_pos = self.skin.rest_pos()
+            old_pos = self.skin.card_origin()   # posição do CARTÃO: a skin nova pode ter margem diferente
             was_visible = self._is_shown()
             last_state = (
                 self.skin.title_text,
@@ -133,7 +133,7 @@ class MusicWidgetController(QObject):
             self.skin.on_media_updated(*last_state)
 
         if old_pos is not None:
-            self.skin.move(old_pos)
+            self.skin.move_card_to(old_pos.x(), old_pos.y())
             if config_manager.is_music_position_remembered():
                 config_manager.save_music_position(old_pos.x(), old_pos.y())
         else:
@@ -162,8 +162,9 @@ class MusicWidgetController(QObject):
         self.settle()
         if config_manager.is_music_position_remembered():
             pos = config_manager.get_music_saved_position()
-            if pos is not None and self._is_position_on_screen(pos[0], pos[1], self.skin.width(), self.skin.height()):
-                self.skin.move(pos[0], pos[1])
+            card_w, card_h = self.skin._card_size()
+            if pos is not None and self._is_position_on_screen(pos[0], pos[1], card_w, card_h):
+                self.skin.move_card_to(pos[0], pos[1])
                 return
         self.center_on_screen()
 
@@ -183,10 +184,12 @@ class MusicWidgetController(QObject):
         app = QApplication.instance()
         if app and app.primaryScreen() and self.skin:
             self.settle()
+            # Coordenadas virtuais: com o monitor primário fora da origem (ex.: à direita de outro), x/y não são 0
             screen = app.primaryScreen().geometry()
-            x = (screen.width() - self.skin.width()) // 2
-            y = (screen.height() - self.skin.height()) // 2
-            self.skin.move(x, y)
+            card_w, card_h = self.skin._card_size()
+            x = screen.x() + (screen.width() - card_w) // 2
+            y = screen.y() + (screen.height() - card_h) // 2
+            self.skin.move_card_to(x, y)
 
     def set_enabled(self, enabled: bool):
         """Ativa ou desativa o módulo do Music Widget pelo Hub."""

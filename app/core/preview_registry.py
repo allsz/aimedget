@@ -34,6 +34,7 @@ class SkinSpec:
     natural_size: Callable[[Any], QSizeF] | QSizeF
     paint: Callable[[QPainter, QRectF, Any, Any], None]
     mock_state: Callable[[], Any]
+    available: bool = True   # False = vaga "TBA": não é selecionável nem reage ao mouse
 
 
 WIDGET_REGISTRY: dict[str, WidgetSpec] = {}

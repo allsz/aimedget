@@ -3,7 +3,6 @@ import os
 import random
 import threading
 import time
-from dataclasses import dataclass
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QPainter,
@@ -22,41 +21,18 @@ from PySide6.QtWidgets import QMenu
 
 from app.core.config_manager import config_manager
 from app.core.paths import APP_ICON_SVG
+from app.core.theme_art import paint_background, paint_stickers
+from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font
 from app.services.media_worker import fetch_stack_extras
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.widgets.music.skins.stack_palette import PastelStackTheme, get_default_pastel_theme
+from app.widgets.music.skins import stack_theme
 
 # Proporção fiel à referência capaEmpilhada.png (615 x 301 -> razão ~2.042:1)
 # Canvas 2x Ultra-HD: 980 x 480
 CANVAS_W = 980
 CANVAS_H = 480
-
-
-@dataclass
-class PastelStackTheme:
-    """Paleta pastel adaptativa inspirada na referência capaEmpilhada.png."""
-    card_bg: QColor          # Fundo pastel suave do card (#FDE9E5 na referência)
-    title_color: QColor      # Título escuro profundo (#140908)
-    subtitle_color: QColor   # Subtítulo "Artista | Álbum" em tom acento suave (#C66363)
-    btn_grad_tl: QColor      # Topo-esquerdo do botão squircle neumórfico (#F8D2C6)
-    btn_grad_br: QColor      # Base-direita do botão squircle neumórfico (#FFF3EF)
-    btn_shadow: QColor       # Sombra suave sob o botão squircle
-    accent_main: QColor      # Ícone Play/Pause vibrante (#EB5757)
-    accent_muted: QColor     # Ícones Repeat e Shuffle em repouso (#E58885)
-
-
-def get_default_pastel_theme() -> PastelStackTheme:
-    """Retorna a paleta coral/creme idêntica à referência capaEmpilhada.png."""
-    return PastelStackTheme(
-        card_bg=QColor("#FDE9E5"),
-        title_color=QColor("#140908"),
-        subtitle_color=QColor("#C86464"),
-        btn_grad_tl=QColor("#F8D1C5"),
-        btn_grad_br=QColor("#FFF4F0"),
-        btn_shadow=QColor(218, 145, 132, 52),
-        accent_main=QColor("#EB5757"),
-        accent_muted=QColor("#E48885"),
-    )
 
 
 def _lerp_val(a: float, b: float, t: float) -> float:
@@ -238,9 +214,14 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         self._last_track_key = ""
         self._has_received_initial_sync = False
 
-        # Tema pastel adaptativo com interpolação a 60 FPS
-        self.pastel_theme: PastelStackTheme = get_default_pastel_theme()
-        self.target_pastel_theme: PastelStackTheme = get_default_pastel_theme()
+        # Tema visual escolhido no Hub (themes/music/): paleta fixa ou adaptativa, fundo, figurinhas, barra
+        self.skin_theme: stack_theme.StackTheme = stack_theme.load_user_theme()
+        # Figurinhas que passam da borda pedem uma margem transparente em volta do cartão (janela maior)
+        self.art_margin = self._wanted_art_margin()
+        self.setFixedSize(*self._window_size())
+        # Paleta pastel (adaptativa à capa ou fixa pelo tema) com interpolação a 60 FPS
+        self.pastel_theme: PastelStackTheme = self._palette_for(None)
+        self.target_pastel_theme: PastelStackTheme = self._palette_for(None)
 
         # Capas pré-filtradas em alta definição (Principal + fila procedural V2 de capas com vinil central)
         self._proc_seed_counter: int = 1
@@ -312,23 +293,80 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._on_tick)  # iniciado/pausado pela base (show/hide)
 
+    # --- Tema visual ---
+
+    def _palette_for(self, img: QImage | None) -> PastelStackTheme:
+        """Paleta fixa do tema; sem ela, a paleta tirada da capa (ou a coral original, sem capa)."""
+        if self.skin_theme.palette is not None:
+            return lerp_pastel_theme(self.skin_theme.palette, self.skin_theme.palette, 0.0)   # cópia
+        return extract_pastel_theme_from_image(img)
+
+    def apply_preview_media(self, media):
+        """
+        Miniatura do Hub: visual ORIGINAL da skin (os temas têm a própria galeria, em stack_theme_specs) com a capa
+        direto na frente da pilha, sem a animação de revelação do player.
+        """
+        self.skin_theme = stack_theme.DEFAULT_THEME
+        # A margem transparente nasceu do tema do usuário; com o tema padrão ela some. Sem recalcular, a janela
+        # continua maior que o natural_size (490x240) e o cartão sai descentralizado no palco do Hub.
+        self._apply_art_margin()
+        self.album_pixmap = QPixmap.fromImage(media.cover)
+        self._main_cover_pm = self._prepare_square_cover(media.cover, 380)
+        self.pastel_theme = self.target_pastel_theme = self._palette_for(media.backdrop)
+
+    def reload_skin_theme(self):
+        """Relê o tema escolhido (barato se nada mudou). Chamado ao mostrar o widget e quando o Hub aplica um tema."""
+        theme = stack_theme.load_user_theme()
+        if theme is self.skin_theme:
+            return
+        self.skin_theme = theme
+        img = self.album_pixmap.toImage() if self.album_pixmap is not None else None
+        self.target_pastel_theme = self._palette_for(img)
+        self._apply_art_margin()   # figurinhas novas podem pedir (ou dispensar) a margem em volta do cartão
+        self.update()
+
+    def showEvent(self, event):
+        self.reload_skin_theme()
+        super().showEvent(event)
+
+    def _paint_theme_art(self, painter: QPainter, above: bool):
+        """Fundo (só na camada de baixo) e figurinhas do tema, em px do widget no tamanho padrão (490 x 240)."""
+        art = self.skin_theme
+        if not art.stickers and (above or art.background is None):
+            return
+        painter.save()
+        painter.scale(CANVAS_W / stack_theme.CARD_SIZE[0], CANVAS_H / stack_theme.CARD_SIZE[1])
+        rect = QRectF(0.0, 0.0, *stack_theme.CARD_SIZE)
+        if not above and art.background is not None:
+            paint_background(painter, rect, art.background, self.CARD_RADIUS * stack_theme.CARD_SIZE[0] / CANVAS_W)
+        if not above:
+            painter.setClipping(False)   # figurinhas "below" podem passar da borda do cartão (o restore() religa o recorte)
+        paint_stickers(painter, rect, art.stickers, above=above)
+        painter.restore()
+
+    def _wanted_art_margin(self) -> int:
+        """Margem transparente (px de tela) para as figurinhas do tema que passam da borda do cartão."""
+        card_w, card_h = stack_theme.CARD_SIZE
+        return art_margin_px(self.skin_theme.stickers, card_w, card_h, k=self.canvas_w * self.scale / card_w)
+
     def _update_hitboxes(self):
         s = self.scale
-        self.rect_bar_hit = QRectF((self.BAR_X - 10) * s, (self.BAR_Y - 16) * s, (self.BAR_W + 20) * s, 46 * s)
+        m = float(self.art_margin)   # as coordenadas do cartão começam depois da margem transparente
+        self.rect_bar_hit = QRectF(m + (self.BAR_X - 10) * s, m + (self.BAR_Y - 16) * s, (self.BAR_W + 20) * s, 46 * s)
         self.rect_cover_drag = QRectF(
-            self.COVER1_RECT.x() * s,
-            self.COVER1_RECT.y() * s,
+            m + self.COVER1_RECT.x() * s,
+            m + self.COVER1_RECT.y() * s,
             (self.COVER3_RECT.right() - self.COVER1_RECT.x()) * s,
             self.COVER1_RECT.height() * s,
         )
         self.rect_main = QRectF(
-            self.PLAY_BTN_RECT.x() * s,
-            self.PLAY_BTN_RECT.y() * s,
+            m + self.PLAY_BTN_RECT.x() * s,
+            m + self.PLAY_BTN_RECT.y() * s,
             self.PLAY_BTN_RECT.width() * s,
             self.PLAY_BTN_RECT.height() * s,
         )
-        self.rect_repeat = QRectF((self.REPEAT_CENTER.x() - 32) * s, (self.REPEAT_CENTER.y() - 32) * s, 64 * s, 64 * s)
-        self.rect_shuffle = QRectF((self.SHUFFLE_CENTER.x() - 32) * s, (self.SHUFFLE_CENTER.y() - 32) * s, 64 * s, 64 * s)
+        self.rect_repeat = QRectF(m + (self.REPEAT_CENTER.x() - 32) * s, m + (self.REPEAT_CENTER.y() - 32) * s, 64 * s, 64 * s)
+        self.rect_shuffle = QRectF(m + (self.SHUFFLE_CENTER.x() - 32) * s, m + (self.SHUFFLE_CENTER.y() - 32) * s, 64 * s, 64 * s)
 
     @staticmethod
     def _prepare_square_cover(img: QImage, size: int = 380) -> QPixmap:
@@ -614,7 +652,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
                 self.album_pixmap = QPixmap.fromImage(img)
                 new_real_pm = self._prepare_square_cover(img, 380)
-                self.target_pastel_theme = extract_pastel_theme_from_image(img)
+                self.target_pastel_theme = self._palette_for(img)
 
                 if self._pending_external_anim:
                     # Troca externa aguardando a capa: inicia o avanço da pilha e agenda a revelação ao pousar
@@ -646,7 +684,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
                 self._reveal_active = False
                 self._locked_stack2_pm = None
                 self._locked_stack3_pm = None
-                self.target_pastel_theme = get_default_pastel_theme()
+                self.target_pastel_theme = self._palette_for(None)
                 return True
         return False
 
@@ -881,6 +919,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
+        painter.translate(self.art_margin, self.art_margin)   # o cartão começa depois da margem transparente
         painter.scale(self.scale, self.scale)
 
         # --- 1. Card Principal com Proporção 2.04:1 (980x480) e Curva de Borda Acentuada (radius=88) ---
@@ -890,6 +929,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         painter.setClipPath(card_clip)
 
         painter.fillRect(card_rect, self.pastel_theme.card_bg)
+        self._paint_theme_art(painter, above=False)
 
         # --- 2. Pilha de 3 Capas de Álbum à Esquerda (com suporte a Swipe e Animação Zoom/Stack) ---
         self._draw_cover_stack_layer(painter)
@@ -901,6 +941,8 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         self._draw_squircle_play_button(painter)
         self._draw_repeat_icon(painter, self.REPEAT_CENTER, hovered=(self.hovered_btn == "repeat"), mode=self.repeat_mode)
         self._draw_shuffle_icon(painter, self.SHUFFLE_CENTER, hovered=(self.hovered_btn == "shuffle"), active=self.is_shuffle)
+        painter.setClipping(False)                   # as figurinhas de cima podem sair da borda do cartão
+        self._paint_theme_art(painter, above=True)
 
         self.paint_resize_grip(painter)
 
@@ -1172,13 +1214,15 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
             # Trilho translúcido da barra (idêntico à referência)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(185, 175, 175, 125))
+            track = self.skin_theme.progress_track
+            painter.setBrush(track if track is not None else QColor(185, 175, 175, 125))
             painter.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, base_h), bar_r, bar_r)
 
             # Preenchimento branco em cápsula
             if progress > 0.0:
                 fill_w = max(base_h, bar_w * progress)
-                painter.setBrush(QColor("#FFFFFF"))
+                fill = self.skin_theme.progress_fill
+                painter.setBrush(fill if fill is not None else QColor("#FFFFFF"))
                 painter.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, base_h), bar_r, bar_r)
 
         painter.restore()
@@ -1600,7 +1644,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
                 self._on_window_drag_finished()
 
     def _seek_to_x(self, x_widget: float):
-        bar_start = self.BAR_X * self.scale
+        bar_start = self.art_margin + self.BAR_X * self.scale
         bar_width = self.BAR_W * self.scale
         ratio = max(0.0, min(1.0, (x_widget - bar_start) / bar_width))
         self.current_time = ratio * self.duration

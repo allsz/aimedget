@@ -8,7 +8,7 @@ Menu de contexto com design system unificado (Fluent / Notion / Linear):
 import os
 from typing import Optional
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu
 
 from app.core.config_manager import config_manager

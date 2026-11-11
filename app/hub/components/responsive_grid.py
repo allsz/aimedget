@@ -7,7 +7,7 @@ Evita sobreposição e quebra horizontal indesejada:
 """
 
 from typing import List
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 
 

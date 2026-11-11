@@ -6,7 +6,8 @@ Páginas de conteúdo do Aimedget Hub revisadas com a skill Impeccable:
 """
 
 from typing import List, Optional
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +25,10 @@ from PySide6.QtWidgets import (
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.version import __version__
-from app.services.updater_service import UpdateInfo, updater_service
+from app.services.updater_service import UpdateInfo, is_installed_build, updater_service
+from app.hub.components.accent_entry import AccentEntryRow
+from app.hub.components.hue_slider import MARGIN as SLIDER_MARGIN, HueSlider
+from app.hub.components.theme_import_dialog import warning_color
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.responsive_grid import ResponsiveCardGrid
@@ -33,12 +38,18 @@ from app.widgets.keylock_osd.theme_specs import make_theme_spec as make_keylock_
 from app.widgets.volume_mixer.theme_specs import make_theme_spec as make_mixer_theme_spec
 from app.hub.components.widget_card import WidgetCard
 from app.hub.service_bridge import get_service_bridge
-from app.hub.theme import HubTheme, THEME_LIGHT
+from app.hub.theme import (
+    DEFAULT_ACCENT_HUE, HubTheme, THEME_DARK, THEME_LIGHT, derive_accent, fit_accent, hue_of, parse_color,
+)
 from app.core.preview_card import PreviewCard
 from app.widgets.music.skins import init_music_skin_specs
 from app.widgets.keylock_osd import KEYLOCK_SPEC
 from app.widgets.keylock_osd.theme import loader as keylock_theme_loader
 from app.widgets.volume_mixer.theme import loader as mixer_theme_loader
+from app.widgets.music.skins.stack_theme import loader as music_theme_loader
+from app.widgets.music.skins.stack_theme_specs import make_theme_spec as make_music_theme_spec
+from app.widgets.timer.theme import loader as timer_theme_loader
+from app.widgets.timer.theme_specs import make_theme_spec as make_timer_theme_spec
 from app.widgets.timer import init_timer_spec, init_timer_skin_specs
 from app.widgets.volume_mixer import init_volume_spec
 
@@ -88,6 +99,20 @@ class BaseHubPage(QWidget):
         self.scroll.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._lock_card_heights()
+
+    def _lock_card_heights(self):
+        """
+        Nenhum card cresce além da própria altura quando a janela é alta (tela em pé ou tela cheia): sem isso, um
+        espaçador expansivo dentro do card (addStretch) o faz disputar a altura sobrando e engordar. A sobra fica
+        no fim da página. Idempotente; vale para cards de qualquer página, inclusive os de páginas futuras.
+        """
+        for frame in self.content_widget.findChildren(QFrame):
+            if frame.property("class") == "HubCard":
+                frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+
     def set_header(self, title: str, subtitle: str):
         self.lbl_title.setText(title)
         self.lbl_sub.setText(subtitle)
@@ -97,6 +122,59 @@ class BaseHubPage(QWidget):
 
     def set_theme(self, theme: HubTheme):
         self._theme = theme
+        self._set_osd_position_theme(theme)
+
+    def _add_osd_position_card(self, flyout: str, sub_key: str, show_preview) -> None:
+        """
+        Card "Posição na tela" de um flyout de sistema ('keylock' ou 'mixer'), com 8 âncoras. Cada flyout tem a
+        sua posição; se os dois escolherem a mesma, eles se empilham.
+        """
+        bridge = get_service_bridge()
+        card = QFrame()
+        card.setProperty("class", "HubCard")
+        row = QHBoxLayout(card)
+        row.setContentsMargins(18, 14, 18, 14)
+        row.setSpacing(16)
+
+        info = QVBoxLayout()
+        info.setSpacing(3)
+        self.t_osd_pos = QLabel(t("osd_pos_title"))
+        self.t_osd_pos.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self.s_osd_pos = QLabel(t(sub_key))
+        self.s_osd_pos.setWordWrap(True)
+        self.s_osd_pos.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self._osd_pos_sub_key = sub_key
+        info.addWidget(self.t_osd_pos)
+        info.addWidget(self.s_osd_pos)
+        row.addLayout(info, stretch=1)
+        row.setAlignment(info, Qt.AlignmentFlag.AlignVCenter)   # título e descrição centralizados ao lado do seletor
+
+        self.osd_pos_picker = PositionPicker(
+            current_pos=bridge.get_osd_anchor(flyout), theme=self._theme, parent=card, with_middle_row=True
+        )
+
+        def on_picked(anchor: str):
+            bridge.set_osd_anchor(flyout, anchor)
+            show_preview()   # mostra o flyout já no lugar novo
+
+        def on_external_change(changed: str, anchor: str):
+            if changed == flyout:
+                self.osd_pos_picker.select(anchor)
+
+        self.osd_pos_picker.position_changed.connect(on_picked)
+        bridge.osd_anchor_changed.connect(on_external_change)
+        row.addWidget(self.osd_pos_picker)
+        self.content_layout.addWidget(card)
+
+    def _retranslate_osd_position_card(self):
+        if hasattr(self, "t_osd_pos"):
+            self.t_osd_pos.setText(t("osd_pos_title"))
+            self.s_osd_pos.setText(t(self._osd_pos_sub_key))
+
+    def _set_osd_position_theme(self, theme: HubTheme):
+        if hasattr(self, "osd_pos_picker"):
+            self.osd_pos_picker.set_theme(theme)
+            self.s_osd_pos.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
 
 
 class OverviewPage(BaseHubPage):
@@ -146,6 +224,8 @@ class OverviewPage(BaseHubPage):
 
     def _build_gallery(self):
         self.grid_container = QWidget()
+        # Sem isso a grade recebe a altura sobrando da janela e distribui entre as linhas: cards gigantes em tela em pé
+        self.grid_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self.grid_layout = QGridLayout(self.grid_container)
         self.grid_layout.setContentsMargins(0, 4, 0, 0)
         self.grid_layout.setSpacing(14)
@@ -175,13 +255,15 @@ class OverviewPage(BaseHubPage):
         self.music_card.customize.connect(self.customize_requested.emit)
         self._cards.append(self.music_card)
 
-        # 2. Caps / Lock Keys OSD Card (Sistema Flyout temporário)
+        # 2. Caps / Lock Keys OSD Card (Sistema Flyout temporário) - miniatura do tema ativo
+        self._flyout_specs: dict[str, tuple] = {}   # container -> (chave do tema ativo, spec, rótulo)
+        keys_spec, keys_label = self._active_flyout_spec("keylock")
         self.keys_card = WidgetCard(
             widget_id="keys_osd",
             name=t("overview_card_keys"),
             category="Flyout",
-            skin_label=t("overview_card_keys_skin"),
-            spec=KEYLOCK_SPEC,
+            skin_label=keys_label,
+            spec=keys_spec,
             is_active=self.bridge.is_keylock_enabled(),
             theme=self._theme,
         )
@@ -189,13 +271,13 @@ class OverviewPage(BaseHubPage):
         self.keys_card.customize.connect(self.customize_requested.emit)
         self._cards.append(self.keys_card)
 
-        # 3. Volume Mixer Card (Sistema Flyout temporário / retrátil)
-        vol_spec = init_volume_spec()
+        # 3. Volume Mixer Card (Sistema Flyout temporário / retrátil) - miniatura do tema ativo
+        vol_spec, vol_label = self._active_flyout_spec("mixer")
         self.vol_card = WidgetCard(
             widget_id="vol_mixer",
             name=t("overview_card_volume"),
             category="Flyout",
-            skin_label=t("overview_card_volume_skin"),
+            skin_label=vol_label,
             spec=vol_spec,
             is_active=self.bridge.is_volume_mixer_enabled(),
             theme=self._theme,
@@ -208,7 +290,7 @@ class OverviewPage(BaseHubPage):
         active_timer_skin = self.bridge.timer_controller.active_skin_name
         timer_specs = init_timer_skin_specs()
         timer_spec = next((s for s in timer_specs if s.id == active_timer_skin), timer_specs[0] if timer_specs else init_timer_spec())
-        skin_label = timer_spec.title if timer_spec else "Aimedget Style"
+        skin_label = timer_spec.title if timer_spec else "Aimedget"
 
         self.timer_card = WidgetCard(
             widget_id="timer",
@@ -302,9 +384,9 @@ class OverviewPage(BaseHubPage):
             skin_label = skin_titles.get(active_skin, "Music Player")
             self.music_card.retranslate_ui(name=t("overview_card_music"), skin_label=skin_label)
         if hasattr(self, "keys_card"):
-            self.keys_card.retranslate_ui(name=t("overview_card_keys"), skin_label=t("overview_card_keys_skin"))
+            self.keys_card.retranslate_ui(name=t("overview_card_keys"), skin_label=self._active_flyout_spec("keylock")[1])
         if hasattr(self, "vol_card"):
-            self.vol_card.retranslate_ui(name=t("overview_card_volume"), skin_label=t("overview_card_volume_skin"))
+            self.vol_card.retranslate_ui(name=t("overview_card_volume"), skin_label=self._active_flyout_spec("mixer")[1])
         if hasattr(self, "timer_card"):
             self.timer_card.retranslate_ui(name=t("overview_card_timer"))
         self._refresh_grid()
@@ -326,8 +408,57 @@ class OverviewPage(BaseHubPage):
         if spec and hasattr(self, "timer_card"):
             self.timer_card.set_spec(spec, spec.title)
 
+    def _active_flyout_spec(self, container: str) -> tuple:
+        """(spec, rótulo) do tema em uso no flyout ("keylock"/"mixer"). O Padrão usa a miniatura original do
+        flyout; um tema da pasta usa a mesma miniatura da galeria de temas. A spec só é recriada quando o tema
+        ativo (ou o arquivo dele) muda, para a miniatura não ser redesenhada à toa."""
+        from app.core.theme_loader import DEFAULT_ID
+        from app.hub.components.theme_gallery import _loader_for
+
+        loader = _loader_for(container)
+        names = {th.id: th.name for th in loader.list_themes()}
+        active = loader.active_id()
+        if active not in names:   # escolha salva que sumiu: o flyout usa o padrão
+            active = DEFAULT_ID
+        if active == DEFAULT_ID:
+            key = (DEFAULT_ID,)
+        else:
+            theme_obj = loader.theme_for(active)
+            key = (active, id(theme_obj), names[active])
+
+        cached = self._flyout_specs.get(container)
+        if cached is None or cached[0] != key:
+            if active == DEFAULT_ID:
+                spec = KEYLOCK_SPEC if container == "keylock" else init_volume_spec()
+                label_key = "overview_card_keys_skin" if container == "keylock" else "overview_card_volume_skin"
+                cached = (key, spec, label_key)
+            else:
+                if container == "keylock":
+                    from app.widgets.keylock_osd.theme_specs import make_theme_spec
+                else:
+                    from app.widgets.volume_mixer.theme_specs import make_theme_spec
+                title = names[active] or t("theme_custom")
+                cached = (key, make_theme_spec(active, title, theme_obj), title)
+            self._flyout_specs[container] = cached
+        _key, spec, label = cached
+        if active == DEFAULT_ID:
+            label = t(label)   # rótulo traduzido na hora (muda com o idioma)
+        return spec, label
+
+    def _refresh_flyout_cards(self):
+        for container, card in (("keylock", getattr(self, "keys_card", None)),
+                                ("mixer", getattr(self, "vol_card", None))):
+            if card is None:
+                continue
+            spec, label = self._active_flyout_spec(container)
+            if card._spec is not spec:
+                card.set_spec(spec, label)
+            elif card.skin_label != label:
+                card.retranslate_ui(skin_label=label)
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._refresh_flyout_cards()
         if hasattr(self, "music_card"):
             active_skin = self.bridge.music_controller.active_skin_name
             music_specs = init_music_skin_specs()
@@ -344,6 +475,7 @@ class OverviewPage(BaseHubPage):
 
 
 _SCALE_UNSET = object()
+ACCENT_BOX_W = 272   # largura do bloco da cor de destaque (barra + campo + restaurar)
 
 
 class MusicPage(BaseHubPage):
@@ -469,6 +601,20 @@ class MusicPage(BaseHubPage):
 
         sk_layout.addWidget(self._skin_grid)
         self.content_layout.addWidget(skin_card)
+
+        # 3b. Card de Tema visual da Capa Empilhada (escolher aplica no widget e torna a Capa Empilhada a skin em uso)
+        self.theme_picker = ThemeGalleryCard(
+            music_theme_loader,
+            "music",
+            make_music_theme_spec,
+            self.bridge.apply_music_theme,
+            self._theme,
+            appliers=self.bridge.theme_appliers(),
+            parent=self,
+            subtitle_key="theme_picker_sub_music",
+            default_title_key="theme_default_music",
+        )
+        self.content_layout.addWidget(self.theme_picker)
 
         # 3. Card de Comportamento
         behav_card = QFrame()
@@ -700,6 +846,8 @@ class MusicPage(BaseHubPage):
             self.hk_desc.setText(t("music_hotkey_sub"))
         if hasattr(self, "hk_picker"):
             self.hk_picker.retranslate_ui()
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.retranslate_ui()
         skin_translations = {
             "vinyl": (t("skin_vinyl_title"), t("skin_vinyl_sub")),
             "fullcover": (t("skin_fullcover_title"), t("skin_fullcover_sub")),
@@ -728,6 +876,8 @@ class MusicPage(BaseHubPage):
             self.sw_wheel_volume.set_theme(theme)
         if hasattr(self, "hk_picker"):
             self.hk_picker.set_theme(theme)
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.set_theme(theme)
         if hasattr(self, "_skin_cards"):
             for card in self._skin_cards.values():
                 card.set_theme(theme)
@@ -772,6 +922,9 @@ class LockKeysPage(BaseHubPage):
 
         self.content_layout.addWidget(test_card)
 
+        # Card de Posição na tela (compartilhada com o Mixer de Volume)
+        self._add_osd_position_card("keylock", "keys_pos_sub",lambda: self.bridge.trigger_test_keylock("Caps Lock", True))
+
         # Card de Tema visual (mostra o flyout ao escolher, para ver o resultado)
         self.theme_picker = ThemeGalleryCard(
             keylock_theme_loader,
@@ -779,10 +932,7 @@ class LockKeysPage(BaseHubPage):
             make_keylock_theme_spec,
             lambda: self.bridge.trigger_test_keylock("Caps Lock", True),
             self._theme,
-            appliers={
-                "keylock": lambda: self.bridge.trigger_test_keylock("Caps Lock", True),
-                "mixer": self.bridge.trigger_test_volume,
-            },
+            appliers=self.bridge.theme_appliers(),
             parent=self,
         )
         self.content_layout.addWidget(self.theme_picker)
@@ -865,6 +1015,7 @@ class LockKeysPage(BaseHubPage):
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         self.set_header(t("keys_title"), t("keys_subtitle"))
+        self._retranslate_osd_position_card()
         if hasattr(self, "t_title"):
             self.t_title.setText(t("keys_test_title"))
         if hasattr(self, "t_desc"):
@@ -929,6 +1080,9 @@ class VolumePage(BaseHubPage):
 
         self.content_layout.addWidget(test_card)
 
+        # Card de Posição na tela (compartilhada com o Caps/Num Lock)
+        self._add_osd_position_card("mixer", "volume_pos_sub",self.bridge.trigger_test_volume)
+
         # Card de Tema visual (mostra o flyout ao escolher, para ver o resultado)
         self.theme_picker = ThemeGalleryCard(
             mixer_theme_loader,
@@ -936,10 +1090,7 @@ class VolumePage(BaseHubPage):
             make_mixer_theme_spec,
             self.bridge.trigger_test_volume,
             self._theme,
-            appliers={
-                "keylock": lambda: self.bridge.trigger_test_keylock("Caps Lock", True),
-                "mixer": self.bridge.trigger_test_volume,
-            },
+            appliers=self.bridge.theme_appliers(),
             parent=self,
         )
         self.content_layout.addWidget(self.theme_picker)
@@ -1005,6 +1156,7 @@ class VolumePage(BaseHubPage):
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         self.set_header(t("volume_title"), t("volume_subtitle"))
+        self._retranslate_osd_position_card()
         if hasattr(self, "t_title"):
             self.t_title.setText(t("volume_test_title"))
         if hasattr(self, "t_desc"):
@@ -1108,6 +1260,20 @@ class TimerPage(BaseHubPage):
 
         self.content_layout.addWidget(skin_card)
 
+        # 3. Card de Tema visual da skin Aimedget (aplica ao vivo no Timer)
+        self.theme_picker = ThemeGalleryCard(
+            timer_theme_loader,
+            "timer",
+            make_timer_theme_spec,
+            self.bridge.apply_timer_theme,
+            self._theme,
+            appliers=self.bridge.theme_appliers(),
+            parent=self,
+            subtitle_key="theme_picker_sub_timer",
+            default_title_key="theme_default_timer",
+        )
+        self.content_layout.addWidget(self.theme_picker)
+
         # 4. Card de Comportamento & Ações
         behav_card = QFrame()
         behav_card.setProperty("class", "HubCard")
@@ -1140,7 +1306,32 @@ class TimerPage(BaseHubPage):
         sep1.setProperty("class", "HubDivider")
         b_layout.addWidget(sep1)
 
-        # Linha 2: Hover Inteligente de Tempo
+        # Linha 2a: Exibir ao iniciar
+        row_start = QHBoxLayout()
+        info_start = QVBoxLayout()
+        info_start.setSpacing(2)
+        self.lst_title = QLabel(t("timer_opt_startup_title"))
+        self.lst_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.lst_sub = QLabel(t("timer_opt_startup_sub"))
+        self.lst_sub.setWordWrap(True)
+        self.lst_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_start.addWidget(self.lst_title)
+        info_start.addWidget(self.lst_sub)
+        self.sw_startup = PillSwitch(
+            checked=config_manager.is_timer_show_on_startup(),
+            theme=self._theme,
+        )
+        self.sw_startup.toggled.connect(config_manager.set_timer_show_on_startup)
+        row_start.addLayout(info_start, stretch=1)
+        row_start.addWidget(self.sw_startup)
+        b_layout.addLayout(row_start)
+
+        sep_start = QFrame()
+        sep_start.setFrameShape(QFrame.Shape.HLine)
+        sep_start.setProperty("class", "HubDivider")
+        b_layout.addWidget(sep_start)
+
+        # Linha 2b: Scroll nos dígitos
         row_smart = QHBoxLayout()
         info_smart = QVBoxLayout()
         info_smart.setSpacing(2)
@@ -1159,6 +1350,31 @@ class TimerPage(BaseHubPage):
         row_smart.addLayout(info_smart, stretch=1)
         row_smart.addWidget(self.sw_smart_hover)
         b_layout.addLayout(row_smart)
+
+        sep_alarm = QFrame()
+        sep_alarm.setFrameShape(QFrame.Shape.HLine)
+        sep_alarm.setProperty("class", "HubDivider")
+        b_layout.addWidget(sep_alarm)
+
+        # Linha 2c: Som ao terminar
+        row_alarm = QHBoxLayout()
+        info_alarm = QVBoxLayout()
+        info_alarm.setSpacing(2)
+        self.la_title = QLabel(t("timer_opt_alarm_title"))
+        self.la_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.la_sub = QLabel(t("timer_opt_alarm_sub"))
+        self.la_sub.setWordWrap(True)
+        self.la_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_alarm.addWidget(self.la_title)
+        info_alarm.addWidget(self.la_sub)
+        self.sw_alarm = PillSwitch(
+            checked=config_manager.is_timer_alarm_sound_enabled(),
+            theme=self._theme,
+        )
+        self.sw_alarm.toggled.connect(config_manager.set_timer_alarm_sound_enabled)
+        row_alarm.addLayout(info_alarm, stretch=1)
+        row_alarm.addWidget(self.sw_alarm)
+        b_layout.addLayout(row_alarm)
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
@@ -1269,6 +1485,14 @@ class TimerPage(BaseHubPage):
             self.l1_title.setText(t("timer_opt_remember_title"))
         if hasattr(self, "l1_sub"):
             self.l1_sub.setText(t("timer_opt_remember_sub"))
+        if hasattr(self, "lst_title"):
+            self.lst_title.setText(t("timer_opt_startup_title"))
+        if hasattr(self, "lst_sub"):
+            self.lst_sub.setText(t("timer_opt_startup_sub"))
+        if hasattr(self, "la_title"):
+            self.la_title.setText(t("timer_opt_alarm_title"))
+        if hasattr(self, "la_sub"):
+            self.la_sub.setText(t("timer_opt_alarm_sub"))
         if hasattr(self, "ls_title"):
             self.ls_title.setText(t("timer_opt_smart_hover_title"))
         if hasattr(self, "ls_sub"):
@@ -1285,11 +1509,10 @@ class TimerPage(BaseHubPage):
             self.hk_desc.setText(t("timer_hotkey_sub"))
         if hasattr(self, "hk_picker"):
             self.hk_picker.retranslate_ui()
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.retranslate_ui()
         timer_skin_subs = {
             "windows": t("skin_windows_sub"),
-            "notion": t("skin_coming_soon"),
-            "focus_wheel": t("skin_coming_soon"),
-            "pomodoro_bars": t("skin_coming_soon"),
         }
         if hasattr(self, "_skin_cards"):
             for s_id, card in self._skin_cards.items():
@@ -1303,8 +1526,12 @@ class TimerPage(BaseHubPage):
         self.pos_picker.set_theme(theme)
         self.sw_remember.set_theme(theme)
         self.sw_smart_hover.set_theme(theme)
+        self.sw_alarm.set_theme(theme)
+        self.sw_startup.set_theme(theme)
         if hasattr(self, "hk_picker"):
             self.hk_picker.set_theme(theme)
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.set_theme(theme)
         if hasattr(self, "_skin_cards"):
             for card in self._skin_cards.values():
                 card.set_theme(theme)
@@ -1317,6 +1544,7 @@ class GeneralPage(BaseHubPage):
         self,
         on_theme_change=None,
         on_language_change=None,
+        on_accent_change=None,
         current_pref: str = "system",
         current_lang: str | None = None,
         theme: HubTheme = THEME_LIGHT,
@@ -1330,6 +1558,7 @@ class GeneralPage(BaseHubPage):
         )
         self._on_theme_change = on_theme_change
         self._on_language_change = on_language_change
+        self._on_accent_change = on_accent_change
         self._current_pref = current_pref
         self._current_lang = current_lang or config_manager.get_language("pt")
         self._build_settings()
@@ -1448,6 +1677,68 @@ class GeneralPage(BaseHubPage):
         sep3.setProperty("class", "HubDivider")
         c_layout.addWidget(sep3)
 
+        # Cor de destaque (matiz): ao vivo ao arrastar, salva ao soltar
+        row_acc = QHBoxLayout()
+        row_acc.setSpacing(16)
+        info_acc = QVBoxLayout()
+        info_acc.setSpacing(2)
+        self.t_acc = QLabel(t("gen_accent_title"))
+        self.t_acc.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.d_acc = QLabel(t("gen_accent_sub"))
+        self.d_acc.setWordWrap(True)
+        self.d_acc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_acc.addWidget(self.t_acc)
+        info_acc.addWidget(self.d_acc)
+        row_acc.addLayout(info_acc, stretch=1)
+        # Bloco de texto centralizado na altura da coluna do seletor. Alinhamento, não addStretch: espaçador
+        # expansivo faz o card inteiro crescer quando a janela é alta (tela em pé)
+        row_acc.setAlignment(info_acc, Qt.AlignmentFlag.AlignVCenter)
+
+        self._accent_spec = config_manager.get_hub_accent()   # None | matiz | "#RRGGBB"
+        # Um só controle: a barra ocupa a largura do bloco; o campo e o "Restaurar" se alinham às pontas
+        # visíveis da trilha (a barra reserva SLIDER_MARGIN de cada lado para o botão e o anel de foco).
+        accent_box = QWidget()
+        accent_box.setFixedWidth(ACCENT_BOX_W)
+        right = QVBoxLayout(accent_box)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(6)
+        spec = self._accent_spec
+        start_hue = DEFAULT_ACCENT_HUE if spec is None else (hue_of(spec) if isinstance(spec, str) else spec)
+        self.hue_slider = HueSlider(hue=start_hue, theme=self._theme)
+        self.hue_slider.setAccessibleName(t("gen_accent_title"))
+        self.hue_slider.hueChanged.connect(lambda h: self._accent_moved(h, False))
+        self.hue_slider.hueCommitted.connect(lambda h: self._accent_moved(h, True))
+        right.addWidget(self.hue_slider)
+
+        self.accent_edit = QLineEdit()
+        self.accent_edit.setObjectName("AccentField")
+        self.accent_edit.setFixedWidth(112)
+        self.accent_edit.setMaxLength(40)
+        self.accent_edit.setPlaceholderText("#RRGGBB")
+        self.accent_edit.setAccessibleName(t("gen_accent_title"))
+        self.accent_edit.textEdited.connect(self._accent_text_edited)
+        self.accent_edit.editingFinished.connect(self._accent_text_committed)
+        # Amostra da cor APLICADA dentro do campo (mostra o ajuste de legibilidade, se houver)
+        self._accent_swatch = self.accent_edit.addAction(QIcon(), QLineEdit.ActionPosition.LeadingPosition)
+        self.btn_accent_reset = QPushButton(t("gen_accent_reset"))
+        self.btn_accent_reset.setProperty("class", "Chip")
+        self.btn_accent_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_accent_reset.clicked.connect(self._reset_accent)
+        # Campo sozinho à direita; com cor personalizada, desliza para a esquerda e o "Restaurar" aparece
+        self.accent_entry = AccentEntryRow(self.accent_edit, self.btn_accent_reset, inset=int(SLIDER_MARGIN),
+                                           shown=spec is not None)
+        right.addWidget(self.accent_entry)
+        row_acc.addWidget(accent_box)
+        self._accent_invalid = False
+        self._style_accent_field()
+        self._sync_accent_field()
+        c_layout.addLayout(row_acc)
+
+        sep_acc = QFrame()
+        sep_acc.setFrameShape(QFrame.Shape.HLine)
+        sep_acc.setProperty("class", "HubDivider")
+        c_layout.addWidget(sep_acc)
+
         # Seletor de Idioma
         row4 = QHBoxLayout()
         info4 = QVBoxLayout()
@@ -1531,7 +1822,7 @@ class GeneralPage(BaseHubPage):
                 border: none;
             }}
             QProgressBar::chunk {{
-                background-color: #FFA13D;
+                background-color: {self._theme.accent};
                 border-radius: 3px;
             }}
         """)
@@ -1576,7 +1867,13 @@ class GeneralPage(BaseHubPage):
         self.lbl_update_status.setText(f"{t('gen_updates_err')} ({err_msg})")
 
     def _apply_update(self):
-        if not self._pending_update_info:
+        info = self._pending_update_info
+        if not info:
+            return
+        # Portátil (ou release sem instalador): o app não se sobrescreve; o download é pela página da release
+        if not info.download_url or not is_installed_build():
+            QDesktopServices.openUrl(QUrl(info.page_url))
+            self.lbl_update_status.setText(t("gen_updates_manual"))
             return
         self.btn_apply_update.setEnabled(False)
         self.update_progress.setVisible(True)
@@ -1584,10 +1881,11 @@ class GeneralPage(BaseHubPage):
         self.lbl_update_status.setText(t("gen_updates_downloading").format(percent=0))
 
         updater_service.start_download(
-            download_url=self._pending_update_info.download_url,
+            download_url=info.download_url,
             on_progress=self._on_download_progress,
             on_finished=self._on_download_finished,
             on_error=self._on_download_error,
+            expected_sha256=info.sha256,
         )
 
     def _on_download_progress(self, percent: int):
@@ -1601,7 +1899,7 @@ class GeneralPage(BaseHubPage):
     def _on_download_error(self, err_msg: str):
         self.update_progress.setVisible(False)
         self.btn_apply_update.setEnabled(True)
-        self.lbl_update_status.setText(f"Falha no download: {err_msg}")
+        self.lbl_update_status.setText(f"{t('gen_updates_download_err')}: {err_msg}")
 
     def _set_theme_mode(self, mode: str):
         self._current_pref = mode
@@ -1611,6 +1909,104 @@ class GeneralPage(BaseHubPage):
             btn.style().polish(btn)
         if self._on_theme_change:
             self._on_theme_change(mode)
+
+    # --- Cor de destaque ---
+
+    def _shown_accent(self) -> str:
+        """A cor de destaque em uso, como o campo de texto a mostra."""
+        spec = self._accent_spec
+        if spec is None:
+            return (THEME_DARK if self._theme.is_dark else THEME_LIGHT).accent
+        if isinstance(spec, str):
+            return spec
+        return derive_accent(spec, self._theme.is_dark)[0]
+
+    def _applied_accent(self) -> str:
+        """A cor que o app realmente usa no modo atual (uma cor colada pode ter sido ajustada para legibilidade)."""
+        spec = self._accent_spec
+        if isinstance(spec, str):
+            return fit_accent(spec, self._theme.is_dark)[0]
+        return self._shown_accent()
+
+    def _update_accent_swatch(self):
+        dpr = max(1.0, self.devicePixelRatioF())
+        size = 14
+        pm = QPixmap(int(size * dpr), int(size * dpr))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QColor(self._theme.line))
+        p.setBrush(QColor(self._applied_accent()))
+        p.drawEllipse(1, 1, size - 2, size - 2)
+        p.end()
+        self._accent_swatch.setIcon(QIcon(pm))
+
+    def _sync_accent_field(self):
+        self._update_accent_swatch()
+        if not self.accent_edit.hasFocus():
+            self.accent_edit.setText(self._shown_accent())
+            self._set_accent_invalid(False)
+
+    def _style_accent_field(self):
+        th = self._theme
+        border = warning_color(th) if self._accent_invalid else th.line
+        self.accent_edit.setStyleSheet(
+            f"QLineEdit#AccentField {{ background: {th.panel}; color: {th.text}; border: 1px solid {border};"
+            f" border-radius: 6px; padding: 5px 8px; font-size: 12.5px; selection-background-color: {th.accent};"
+            f" selection-color: {th.ink}; }}"
+            f"QLineEdit#AccentField:focus {{ border: 1px solid {border if self._accent_invalid else th.accent}; }}")
+
+    def _set_accent_invalid(self, invalid: bool):
+        if invalid == self._accent_invalid:
+            return
+        self._accent_invalid = invalid
+        self._style_accent_field()
+        if invalid:
+            self.d_acc.setText(t("gen_accent_invalid"))
+            self.d_acc.setStyleSheet(f"color: {warning_color(self._theme)}; font-size: 12.5px;")
+        else:
+            self.d_acc.setText(t("gen_accent_sub"))
+            self.d_acc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+
+    def _emit_accent(self, accent, committed: bool):
+        self._accent_spec = accent
+        self.accent_entry.set_reset_shown(accent is not None)
+        if self._on_accent_change:
+            self._on_accent_change(accent, committed)
+
+    def _accent_moved(self, hue: int, committed: bool):
+        self._emit_accent(hue, committed)
+        self.accent_edit.clearFocus()
+        self._sync_accent_field()
+
+    def _accent_text_edited(self, _text: str):
+        self._set_accent_invalid(False)
+
+    def _accent_text_committed(self):
+        text = self.accent_edit.text().strip()
+        if not text or text.upper() == self._shown_accent().upper():
+            self._set_accent_invalid(False)
+            if not self.accent_edit.hasFocus():
+                self._sync_accent_field()
+            return
+        color = parse_color(text)
+        if color is None:
+            self._set_accent_invalid(True)
+            if not self.accent_edit.hasFocus():   # saiu do campo sem corrigir: volta para a cor em uso
+                self._sync_accent_field()
+            return
+        self._set_accent_invalid(False)
+        self.hue_slider.set_hue(hue_of(color))
+        self._emit_accent(color, True)
+        self.accent_edit.setText(color)
+        self._update_accent_swatch()
+
+    def _reset_accent(self):
+        self.hue_slider.set_hue(DEFAULT_ACCENT_HUE)
+        self._emit_accent(None, True)
+        self.accent_edit.clearFocus()
+        self._sync_accent_field()
 
     def _set_language(self, lang_code: str):
         if lang_code == self._current_lang:
@@ -1643,6 +2039,13 @@ class GeneralPage(BaseHubPage):
             self.t3.setText(t("gen_theme_title"))
         if hasattr(self, "d3"):
             self.d3.setText(t("gen_theme_sub"))
+        if hasattr(self, "t_acc"):
+            self.t_acc.setText(t("gen_accent_title"))
+            self.d_acc.setText(t("gen_accent_invalid") if self._accent_invalid else t("gen_accent_sub"))
+            self.accent_edit.setAccessibleName(t("gen_accent_title"))
+            self.btn_accent_reset.setText(t("gen_accent_reset"))
+            self.accent_entry.relayout()   # largura do botão muda com o idioma
+            self.hue_slider.setAccessibleName(t("gen_accent_title"))
         if hasattr(self, "t4"):
             self.t4.setText(t("gen_language_title"))
         if hasattr(self, "d4"):
@@ -1677,6 +2080,17 @@ class GeneralPage(BaseHubPage):
             self.s2.set_theme(theme)
         if hasattr(self, "d_min"):
             self.d_min.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+        if hasattr(self, "d_acc"):
+            tone = warning_color(theme) if self._accent_invalid else theme.mute
+            self.d_acc.setStyleSheet(f"color: {tone}; font-size: 12.5px;")
+        if hasattr(self, "hue_slider"):
+            self.hue_slider.set_theme(theme)
+        if hasattr(self, "accent_edit"):
+            self._style_accent_field()
+            self._sync_accent_field()
+        if hasattr(self, "btn_accent_reset"):
+            self.btn_accent_reset.style().unpolish(self.btn_accent_reset)
+            self.btn_accent_reset.style().polish(self.btn_accent_reset)
         if hasattr(self, "d_update"):
             self.d_update.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
         if hasattr(self, "lbl_update_status"):
@@ -1689,7 +2103,7 @@ class GeneralPage(BaseHubPage):
                     border: none;
                 }}
                 QProgressBar::chunk {{
-                    background-color: #FFA13D;
+                    background-color: {theme.accent};
                     border-radius: 3px;
                 }}
             """)
