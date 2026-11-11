@@ -27,6 +27,7 @@ from app.core.i18n import t
 from app.core.version import __version__
 from app.services.updater_service import UpdateInfo, is_installed_build, updater_service
 from app.hub.components.accent_entry import AccentEntryRow
+from app.hub.components.help_badge import HelpBadge
 from app.hub.components.hue_slider import MARGIN as SLIDER_MARGIN, HueSlider
 from app.hub.components.theme_import_dialog import warning_color
 from app.hub.components.pill_switch import PillSwitch
@@ -494,6 +495,17 @@ class MusicPage(BaseHubPage):
         self.bridge.music_skin_changed.connect(self._sync_selected_skin)
 
     def _build_ui(self):
+        # "?" discreto ao lado do título: aviso sobre YouTube Music no Firefox (estado e progresso atrasados)
+        idx = self.content_layout.indexOf(self.lbl_title)
+        self.content_layout.removeWidget(self.lbl_title)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(self.lbl_title)
+        self.web_help = HelpBadge(t("music_web_compat_help"), theme=self._theme)
+        title_row.addWidget(self.web_help, alignment=Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch()
+        self.content_layout.insertLayout(idx, title_row)
+
         # 1. Card de Posição na Tela
         pos_card = QFrame()
         pos_card.setProperty("class", "HubCard")
@@ -814,6 +826,8 @@ class MusicPage(BaseHubPage):
 
     def retranslate_ui(self):
         self.set_header(t("music_title"), t("music_subtitle"))
+        if hasattr(self, "web_help"):
+            self.web_help.set_text(t("music_web_compat_help"))
         if hasattr(self, "t_pos"):
             self.t_pos.setText(t("music_pos_title"))
         if hasattr(self, "s_pos"):
@@ -866,6 +880,8 @@ class MusicPage(BaseHubPage):
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
         self.pos_picker.set_theme(theme)
+        if hasattr(self, "web_help"):
+            self.web_help.set_theme(theme)
         if hasattr(self, "s_scale"):
             self.s_scale.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
         if hasattr(self, "sw_auto_launch"):
@@ -910,7 +926,14 @@ class LockKeysPage(BaseHubPage):
         self.t_desc = QLabel(t("keys_test_sub"))
         self.t_desc.setWordWrap(True)
         self.t_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        t_info.addWidget(self.t_title)
+        # "?" discreto: aviso sobre indicadores de fabricantes que aparecem junto (ex.: Lenovo)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        title_row.addWidget(self.t_title)
+        self.oem_help = HelpBadge(t("keys_oem_osd_help"), theme=self._theme)
+        title_row.addWidget(self.oem_help, alignment=Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch()
+        t_info.addLayout(title_row)
         t_info.addWidget(self.t_desc)
         t_layout.addLayout(t_info, stretch=1)
 
@@ -1020,6 +1043,8 @@ class LockKeysPage(BaseHubPage):
             self.t_title.setText(t("keys_test_title"))
         if hasattr(self, "t_desc"):
             self.t_desc.setText(t("keys_test_sub"))
+        if hasattr(self, "oem_help"):
+            self.oem_help.set_text(t("keys_oem_osd_help"))
         if hasattr(self, "btn_test"):
             self.btn_test.setText(t("keys_test_btn"))
         if hasattr(self, "_opt_labels"):
@@ -1039,6 +1064,8 @@ class LockKeysPage(BaseHubPage):
             self.hk_picker.set_theme(theme)
         if hasattr(self, "theme_picker"):
             self.theme_picker.set_theme(theme)
+        if hasattr(self, "oem_help"):
+            self.oem_help.set_theme(theme)
 
 
 class VolumePage(BaseHubPage):

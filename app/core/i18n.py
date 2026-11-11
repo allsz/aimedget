@@ -38,6 +38,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "card_configure": "Configurar",
 
         # Music Page
+        "music_web_compat_help": "Evite usar o widget com o YouTube Music no Firefox. O Firefox informa ao Windows o estado da música (tocando ou pausada), a posição e a duração com atraso, de alguns segundos até cerca de 1 minuto. Por isso o botão de play/pause e a barra de progresso podem ficar errados ou dar saltos. É uma limitação do navegador, que o Aimedget não consegue corrigir. No Chrome o widget funciona normalmente, e players de desktop, como o Spotify, são os mais confiáveis.",
         "music_title": "Music Player",
         "music_subtitle": "Personalize a aparência, posição de tela, atalho global e comportamento do reprodutor flutuante.",
         "music_pos_title": "Posição padrão na tela",
@@ -78,6 +79,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keys_test_title": "Testar flyout na tela",
         "keys_test_sub": "Dispara uma pré-visualização instantânea do efeito visual de acionamento.",
         "keys_test_btn": "Disparar teste",
+        "keys_oem_osd_help": "Viu dois avisos ao apertar Caps Lock ou Num Lock? Alguns notebooks (Lenovo, Dell, HP, ASUS, entre outros) trazem um indicador próprio do fabricante, que aparece junto com o do Aimedget. Por enquanto o Aimedget não consegue escondê-lo. Para ficar só com este, pesquise como desativar o indicador de Caps Lock na tela do seu modelo de notebook.",
         "keys_opt_caps_title": "Caps Lock",
         "keys_opt_caps_sub": "Exibir indicador quando alternar Caps Lock",
         "keys_opt_num_title": "Num Lock",
@@ -267,6 +269,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 
         # Music Page
         "music_title": "Music Player",
+        "music_web_compat_help": "Avoid using the widget with YouTube Music in Firefox. Firefox reports the playback state (playing or paused), position and duration to Windows late, from a few seconds up to about a minute. So the play/pause button and the progress bar can be wrong or jump. This is a browser limitation that Aimedget can't fix. In Chrome the widget works normally, and desktop players such as Spotify are the most reliable.",
         "music_subtitle": "Customize appearance, screen position, global shortcut, and floating player behavior.",
         "music_pos_title": "Default screen position",
         "music_pos_sub": "Click on a quadrant to anchor the player on the monitor.",
@@ -307,6 +310,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "keys_test_sub": "Triggers an instant preview of the visual activation effect.",
         "keys_test_btn": "Trigger test",
         "keys_opt_caps_title": "Caps Lock",
+        "keys_oem_osd_help": "Seeing two indicators when you press Caps Lock or Num Lock? Some laptops (Lenovo, Dell, HP, ASUS and others) ship their own manufacturer indicator, which shows up alongside Aimedget's. For now, Aimedget can't hide it. To keep only this one, search how to turn off the on-screen Caps Lock indicator for your laptop model.",
         "keys_opt_caps_sub": "Show indicator when toggling Caps Lock",
         "keys_opt_num_title": "Num Lock",
         "keys_opt_num_sub": "Show indicator when toggling Num Lock",
