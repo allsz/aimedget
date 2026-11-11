@@ -372,6 +372,18 @@ class ConfigManager:
         timer_cfg["duration"] = int(duration)
         self._save()
 
+    def get_timer_alarm_time(self) -> Optional[int]:
+        """Horário do modo Alarme em segundos desde a meia-noite; None = nunca definido."""
+        value = self._data.get("timer_widget", {}).get("alarm_time")
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value % 86400
+
+    def set_timer_alarm_time(self, seconds: int):
+        timer_cfg = self._data.setdefault("timer_widget", {})
+        timer_cfg["alarm_time"] = int(seconds) % 86400
+        self._save()
+
     def get_timer_theme_mode(self, default: str = "hub") -> str:
         timer_cfg = self._data.get("timer_widget", {})
         return str(timer_cfg.get("theme_mode", default))

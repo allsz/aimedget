@@ -1,3 +1,4 @@
+import datetime
 import time
 from typing import Optional, Type
 from PySide6.QtCore import QObject, QRect, QTimer, Signal
@@ -5,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
+from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
@@ -14,11 +16,13 @@ class TimerWidgetController(QObject):
     """
     Controlador central do Timer Widget:
     - Motor de contagem de alta precisão via monotonic `time.perf_counter()`
-    - Suporta modo Temporizador (contagem regressiva) e Cronômetro (progressiva)
+    - Suporta modo Temporizador (contagem regressiva), Cronômetro (progressiva) e Alarme (contagem até um horário)
     - Gerencia skins intercambiáveis preservando estado e posicionamento
     - Senta no topo da tela por padrão ou restaura a posição favorita salva
     - Efeito de aviso sonoro e pulso luminoso visual ao concluir contagem
     """
+
+    MODES = ("timer", "stopwatch", "alarm")
 
     status_changed = Signal(bool)
     skin_changed = Signal(str)
@@ -34,8 +38,14 @@ class TimerWidgetController(QObject):
         # Estado da contagem
         self.is_running: bool = False
         self.mode: str = config_manager.get_timer_mode("timer")
+        if self.mode not in self.MODES:
+            self.mode = "timer"
         self.target_duration: float = float(config_manager.get_timer_duration(300))
-        self.current_seconds: float = self.target_duration if self.mode == "timer" else 0.0
+        saved_alarm = config_manager.get_timer_alarm_time()
+        self.alarm_time: int = saved_alarm if saved_alarm is not None else default_alarm_time(datetime.datetime.now())
+        self.alarm_finished: bool = False            # o alarme tocou ("CONCLUÍDO") até a próxima ação
+        self._alarm_deadline: Optional[float] = None  # instante (time.time) em que o alarme armado toca
+        self.current_seconds: float = self._idle_seconds()
         self._last_tick_time: float = 0.0
 
         # Ticker periódico preciso
@@ -75,6 +85,7 @@ class TimerWidgetController(QObject):
                 self.skin.play_pause_clicked.disconnect(self.toggle_play_pause)
                 self.skin.reset_clicked.disconnect(self.reset)
                 self.skin.duration_changed.disconnect(self.set_duration)
+                self.skin.alarm_time_changed.disconnect(self.set_alarm_time)
                 self.skin.mode_changed.disconnect(self.set_mode)
                 self.skin.close_requested.disconnect(self.on_skin_closed)
                 self.skin.skin_switch_requested.disconnect(self.set_skin)
@@ -87,11 +98,12 @@ class TimerWidgetController(QObject):
         self.skin.play_pause_clicked.connect(self.toggle_play_pause)
         self.skin.reset_clicked.connect(self.reset)
         self.skin.duration_changed.connect(self.set_duration)
+        self.skin.alarm_time_changed.connect(self.set_alarm_time)
         self.skin.mode_changed.connect(self.set_mode)
         self.skin.close_requested.connect(self.on_skin_closed)
         self.skin.skin_switch_requested.connect(self.set_skin)
 
-        self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        self._sync_skin()
 
         if old_pos is not None:
             self.skin.move_square_to(old_pos.x(), old_pos.y())
@@ -161,20 +173,28 @@ class TimerWidgetController(QObject):
         # Se for modo temporizador e já estiver zerado, reinicia com a duração alvo
         if self.mode == "timer" and self.current_seconds <= 0:
             self.current_seconds = self.target_duration
+        if self.mode == "alarm":
+            # Arma para a próxima vez em que o relógio marcar o horário (hoje, ou amanhã se já passou)
+            self._alarm_deadline = next_alarm(datetime.datetime.now(), self.alarm_time).timestamp()
+            self.current_seconds = max(0.0, self._alarm_deadline - time.time())
+            self.alarm_finished = False
 
         self.is_running = True
         self._last_tick_time = time.perf_counter()
         self._ticker.start()
         self._stop_alarm_pulse()
-        if self.skin:
-            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        self._sync_skin()
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def pause(self):
         self.is_running = False
         self._ticker.stop()
-        if self.skin:
-            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        if self.mode == "alarm":
+            # Pausar um alarme é desarmá-lo: o widget volta a mostrar o horário configurado
+            self._alarm_deadline = None
+            if not self.alarm_finished:
+                self.current_seconds = float(self.alarm_time)
+        self._sync_skin()
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def reset(self):
@@ -184,11 +204,16 @@ class TimerWidgetController(QObject):
             # Reiniciar zera o relógio (00:00:00); a duração antiga não volta
             self.target_duration = 0.0
             config_manager.set_timer_duration(0)
+        if self.mode == "alarm":
+            # Como no Temporizador: reiniciar desarma e zera o horário (00:00:00)
+            self.alarm_time = 0
+            config_manager.set_timer_alarm_time(0)
+        self.alarm_finished = False
         self.current_seconds = 0.0
 
         if self.skin:
             self.skin.target_duration = self.target_duration
-            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        self._sync_skin()
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def set_duration(self, seconds: int):
@@ -198,23 +223,50 @@ class TimerWidgetController(QObject):
             self.current_seconds = self.target_duration
         if self.skin:
             self.skin.target_duration = self.target_duration
-            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        self._sync_skin()
+        self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
+
+    def set_alarm_time(self, seconds: int):
+        """Horário do modo Alarme (ajustado no widget). Com o alarme armado, a contagem já mira o horário novo."""
+        self.alarm_time = normalize_alarm_time(seconds)
+        config_manager.set_timer_alarm_time(self.alarm_time)
+        self.alarm_finished = False
+        if self.mode == "alarm":
+            if self.is_running:
+                self._alarm_deadline = next_alarm(datetime.datetime.now(), self.alarm_time).timestamp()
+                self.current_seconds = max(0.0, self._alarm_deadline - time.time())
+            else:
+                self.current_seconds = float(self.alarm_time)
+        self._sync_skin()
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def set_mode(self, mode: str):
-        if mode in ("timer", "stopwatch"):
+        if mode in self.MODES:
             self.pause()
+            self._stop_alarm_pulse()
             self.mode = mode
             config_manager.set_timer_mode(mode)
-            if mode == "timer":
-                self.current_seconds = self.target_duration
-            else:
-                self.current_seconds = 0.0
+            self.alarm_finished = False
+            self.current_seconds = self._idle_seconds()
 
             if self.skin:
                 self.skin.mode = mode
-                self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+            self._sync_skin()
             self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
+
+    def _idle_seconds(self) -> float:
+        """O que o widget mostra parado: a duração (Temporizador), zero (Cronômetro) ou o horário (Alarme)."""
+        if self.mode == "timer":
+            return self.target_duration
+        if self.mode == "alarm":
+            return float(self.alarm_time)
+        return 0.0
+
+    def _sync_skin(self):
+        if self.skin:
+            self.skin.alarm_time = self.alarm_time
+            self.skin.alarm_finished = self.alarm_finished
+            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
 
     # --- Motor de Contagem Monotônica ---
 
@@ -228,6 +280,16 @@ class TimerWidgetController(QObject):
 
         if self.mode == "stopwatch":
             self.current_seconds += dt
+        elif self.mode == "alarm":
+            # Pelo relógio do sistema, não por acumulação: certo mesmo depois de o PC dormir
+            remaining = (self._alarm_deadline or 0.0) - time.time()
+            if remaining <= 0.0:
+                self.current_seconds = 0.0
+                self.alarm_finished = True
+                self.pause()
+                self._trigger_alarm_finish()
+            else:
+                self.current_seconds = remaining
         else:
             self.current_seconds -= dt
             if self.current_seconds <= 0.0:
@@ -235,8 +297,7 @@ class TimerWidgetController(QObject):
                 self.pause()
                 self._trigger_alarm_finish()
 
-        if self.skin:
-            self.skin.set_time_state(self.current_seconds, self.is_running, self.mode)
+        self._sync_skin()
         self.time_updated.emit(self.current_seconds, self.is_running, self.mode)
 
     def _trigger_alarm_finish(self):

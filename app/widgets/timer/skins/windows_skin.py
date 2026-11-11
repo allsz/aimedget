@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QToolTip
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
+from app.widgets.timer.alarm_rules import alarm_field_accepts, compose_alarm_time, step_alarm_time
 from app.widgets.timer.duration_rules import (
     MAX_SECONDS, MIN_RUN_SECONDS, compose_duration, split_duration, step_duration, typed_field_accepts,
 )
@@ -167,8 +168,10 @@ class WindowsTimerSkin(BaseTimerSkin):
 
         return None
 
+    EDITABLE_MODES = ("timer", "alarm")   # modos em que o tempo exibido parado é editável (duração ou horário)
+
     def is_play_enabled(self) -> bool:
-        """Sem 10 s ou mais definidos, o temporizador não pode iniciar."""
+        """Sem 10 s ou mais definidos, o temporizador não pode iniciar. O alarme sempre pode (todo horário vale)."""
         return self.is_running or self.mode != "timer" or self.target_duration >= MIN_RUN_SECONDS
 
     def _hit_test_for_play(self) -> str:
@@ -227,6 +230,8 @@ class WindowsTimerSkin(BaseTimerSkin):
             select_segment=self._sweep_segment,
             select_progress=self._sweep_progress,
             select_color=self.skin_theme.select_border,
+            alarm_time=self.alarm_time,
+            alarm_finished=self.alarm_finished,
         )
         m = float(self.art_margin)
         paint_windows_timer(p, QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m), state, self.theme,
@@ -440,7 +445,7 @@ class WindowsTimerSkin(BaseTimerSkin):
     # --- Digitação do tempo (só com o widget focado, parado, no modo timer e com o mouse sobre um segmento) ---
 
     def _start_sweep(self, segment: str):
-        if segment not in ("hours", "minutes", "seconds") or self.is_running or self.mode != "timer":
+        if segment not in ("hours", "minutes", "seconds") or self.is_running or self.mode not in self.EDITABLE_MODES:
             return
         self._sweep_segment = segment
         self._sweep_progress = 0.0
@@ -470,7 +475,9 @@ class WindowsTimerSkin(BaseTimerSkin):
         no_mods = not (event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
                                             | Qt.KeyboardModifier.MetaModifier))
         seg = self.hovered_time_segment if config_manager.is_timer_smart_hover_enabled() else None
-        can_type = no_mods and not self.is_running and self.mode == "timer" and seg in ("hours", "minutes", "seconds")
+        can_type = (no_mods and not self.is_running and self.mode in self.EDITABLE_MODES
+                    and seg in ("hours", "minutes", "seconds"))
+        is_alarm = self.mode == "alarm"
 
         if key == Qt.Key.Key_Escape.value and self._typed_digits:
             self._reset_typing()
@@ -489,17 +496,22 @@ class WindowsTimerSkin(BaseTimerSkin):
         if self._typed_segment != seg or not self._typing_timer.isActive():
             self._typed_digits = ""
             self._typed_segment = seg
-            self._typed_fields = split_duration(int(self.target_duration))
+            self._typed_fields = split_duration(self.alarm_time if is_alarm else int(self.target_duration))
 
         if key == Qt.Key.Key_Backspace.value:
             self._typed_digits = self._typed_digits[:-1]
         else:
             candidate = self._typed_digits + str(key - Qt.Key.Key_0.value)
-            if typed_field_accepts(seg, candidate):   # 240 nos minutos fica 24: o 0 não cabe e é ignorado
+            accepts = alarm_field_accepts if is_alarm else typed_field_accepts   # Alarme: horas até 23
+            if accepts(seg, candidate):   # 240 nos minutos fica 24: o 0 não cabe e é ignorado
                 self._typed_digits = candidate
         self._typing_timer.start()
 
         self._typed_fields[seg] = int(self._typed_digits or 0)
+        if is_alarm:
+            self._set_alarm_time(compose_alarm_time(self._typed_fields))
+            event.accept()
+            return
         new_val = compose_duration(self._typed_fields)
         self.target_duration = float(new_val)
         self.current_seconds = float(new_val)
@@ -509,7 +521,7 @@ class WindowsTimerSkin(BaseTimerSkin):
 
     def focusNextPrevChild(self, next_: bool) -> bool:
         """Tab / Shift+Tab pulam entre horas, minutos e segundos (em loop) em vez de mudar o foco do Qt."""
-        if self.is_running or self.mode != "timer" or not config_manager.is_timer_smart_hover_enabled():
+        if self.is_running or self.mode not in self.EDITABLE_MODES or not config_manager.is_timer_smart_hover_enabled():
             return super().focusNextPrevChild(next_)
         order = ("hours", "minutes", "seconds")
         if self.hovered_time_segment in order:
@@ -548,6 +560,14 @@ class WindowsTimerSkin(BaseTimerSkin):
             self.pressed_btn = None
             self.update()
 
+    def _set_alarm_time(self, seconds: int):
+        """Mostra o horário novo na hora e avisa o controller (que salva e, se armado, recalcula a contagem)."""
+        self.alarm_time = seconds
+        self.alarm_finished = False
+        self.current_seconds = float(seconds)
+        self.alarm_time_changed.emit(seconds)
+        self.update()
+
     def wheelEvent(self, event: QWheelEvent):
         """Scroll do mouse inteligente: ajusta individualmente horas, minutos ou segundos."""
         if not self.is_running:
@@ -570,6 +590,10 @@ class WindowsTimerSkin(BaseTimerSkin):
                 step = 300 if shift_pressed else 60
 
             change = step * direction
+            if self.mode == "alarm":   # o horário dá a volta: 23:59 + 1 min = 00:00
+                self._set_alarm_time(step_alarm_time(self.alarm_time, change))
+                event.accept()
+                return
             base_val = self.target_duration if self.mode == "timer" else self.current_seconds
             if self.mode == "timer":
                 new_val = step_duration(int(base_val), change)   # 0 ou >= 10 s (sem valores mortos)

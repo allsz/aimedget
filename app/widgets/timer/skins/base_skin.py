@@ -4,6 +4,7 @@ from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QWidget
 
 from app.core.config_manager import config_manager
+from app.core.i18n import i18n, t
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
 from app.hub.theme import HubTheme, resolve_theme
@@ -85,6 +86,7 @@ class BaseTimerSkin(QWidget):
     play_pause_clicked = Signal()
     reset_clicked = Signal()
     duration_changed = Signal(int)
+    alarm_time_changed = Signal(int)   # horário do modo Alarme (segundos desde a meia-noite)
     mode_changed = Signal(str)
     close_requested = Signal()
     skin_switch_requested = Signal(str)
@@ -124,7 +126,10 @@ class BaseTimerSkin(QWidget):
         self.current_seconds: float = 300.0
         self.target_duration: float = 300.0
         self.is_running: bool = False
-        self.mode: str = config_manager.get_timer_mode("timer")  # 'timer' ou 'stopwatch'
+        self.mode: str = config_manager.get_timer_mode("timer")  # 'timer', 'stopwatch' ou 'alarm'
+        self.alarm_time: int = 0            # horário do Alarme (o controller mantém atualizado)
+        self.alarm_finished: bool = False   # o alarme tocou: rótulo "CONCLUÍDO" até a próxima ação
+        i18n.language_changed.connect(self.update)   # o rótulo do topo é desenhado no idioma do app
 
         # Interações de mouse
         self._drag_pos = QPoint()
@@ -262,58 +267,67 @@ class BaseTimerSkin(QWidget):
     # --- Menu de Contexto Fluent Adaptativo ---
 
     def _build_menu_qss(self) -> str:
-        return get_fluent_menu_stylesheet(self.theme)
+        # O menu é do Windows/Hub, não do tema do Timer: o texto do tema (ex.: branco) sobre o fundo do menu claro o
+        # deixaria ilegível, e a borda translúcida do tema aparece mais clara nas curvas.
+        return get_fluent_menu_stylesheet(self._hub_theme)
 
     def contextMenuEvent(self, event):
-        self.theme = self._resolve_active_theme()
+        # Atualiza o tema do Hub (claro/escuro/destaque) SEM perder o tema do Timer que vai por cima no widget: antes
+        # isto atribuía o tema do Hub a `self.theme` e descartava as cores do tema (destaque, borda, botões).
+        self.update_theme()
         menu_qss = self._build_menu_qss()
 
-        menu = FluentTimerMenu(parent=self, theme=self.theme)
+        menu = FluentTimerMenu(parent=self, theme=self._hub_theme)
         menu.setFont(get_ui_font(13))
         menu.setStyleSheet(menu_qss)
 
         # 1. Lembrar posição
         is_remembered = config_manager.is_timer_position_remembered()
-        act_remember = QAction("Lembrar posição", self)
+        act_remember = QAction(t("timer_menu_remember"), self)
         menu.set_trailing_check(act_remember, is_remembered)
         act_remember.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
         menu.addAction(act_remember)
 
         # 2. Ajuste inteligente de tempo (hover & scroll por dígito)
         is_smart = config_manager.is_timer_smart_hover_enabled()
-        act_smart = QAction("Ajuste inteligente (Scroll nos dígitos)", self)
+        act_smart = QAction(t("timer_menu_smart_hover"), self)
         menu.set_trailing_check(act_smart, is_smart)
         act_smart.triggered.connect(lambda: self._toggle_smart_hover(not is_smart))
         menu.addAction(act_smart)
         menu.addSeparator()
 
         # 3. Alternar Modo (Temporizador vs Cronômetro)
-        mode_menu = FluentTimerMenu("Modo", menu, theme=self.theme)
+        mode_menu = FluentTimerMenu(t("timer_menu_mode"), menu, theme=self._hub_theme)
         mode_menu.setFont(get_ui_font(13))
         mode_menu.setStyleSheet(menu_qss)
 
-        act_timer = QAction("Temporizador (Regressivo)", self)
+        act_timer = QAction(t("timer_mode_timer"), self)
         mode_menu.set_trailing_check(act_timer, self.mode == "timer")
         act_timer.triggered.connect(lambda: self.mode_changed.emit("timer"))
         mode_menu.addAction(act_timer)
 
-        act_stopwatch = QAction("Cronômetro", self)
+        act_stopwatch = QAction(t("timer_mode_stopwatch"), self)
         mode_menu.set_trailing_check(act_stopwatch, self.mode == "stopwatch")
         act_stopwatch.triggered.connect(lambda: self.mode_changed.emit("stopwatch"))
         mode_menu.addAction(act_stopwatch)
+
+        act_alarm = QAction(t("timer_mode_alarm"), self)
+        mode_menu.set_trailing_check(act_alarm, self.mode == "alarm")
+        act_alarm.triggered.connect(lambda: self.mode_changed.emit("alarm"))
+        mode_menu.addAction(act_alarm)
         menu.addMenu(mode_menu)
 
         menu.addSeparator()
 
         # 4. Redefinir tamanho
-        act_reset_size = QAction("Redefinir tamanho padrão", self)
+        act_reset_size = QAction(t("timer_menu_reset_size"), self)
         act_reset_size.triggered.connect(self._reset_default_size)
         menu.addAction(act_reset_size)
 
         menu.addSeparator()
 
         # 6. Fechar Widget
-        act_close = QAction("Fechar widget", self)
+        act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)
 

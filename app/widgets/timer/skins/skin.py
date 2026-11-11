@@ -18,16 +18,18 @@ from PySide6.QtGui import (
     QPen,
 )
 
+from app.core.i18n import t
 from app.core.theme_art import paint_background, paint_stickers
 from app.core.typography import get_ui_font
 from app.hub.theme import HubTheme, THEME_DARK
+from app.widgets.timer.alarm_rules import format_clock
 
 
 @dataclass
 class TimerState:
     current_seconds: float = 300.0
     target_duration: float = 300.0
-    mode: str = "timer"  # 'timer' ou 'stopwatch'
+    mode: str = "timer"  # 'timer', 'stopwatch' ou 'alarm'
     is_running: bool = False
     is_alarm_pulsing: bool = False
     pressed_btn: str | None = None
@@ -40,11 +42,29 @@ class TimerState:
     select_segment: str | None = None   # segmento clicado, com a volta de luz na borda da pílula
     select_progress: float = 0.0        # 0..1 da volta (1 = completa)
     select_color: QColor | None = None  # None: branco no tema escuro, escuro no claro
+    alarm_time: int = 0                 # Alarme: horário (segundos desde a meia-noite)
+    alarm_finished: bool = False        # Alarme: tocou (rótulo "CONCLUÍDO")
 
 
 SHADOW_PAD = 8.0
 CORNER_RADIUS = 16.0
 DEFAULT_SIZE = 164.0
+
+
+def mode_label(state: TimerState) -> str:
+    """Rótulo do topo do cartão, no idioma do app. No Alarme armado, mostra o horário que vai tocar ("ALARME · 07:30")."""
+    if state.mode == "alarm":
+        if state.alarm_finished:
+            return t("timer_label_done")
+        if state.is_running:
+            return t("timer_label_alarm_at", time=format_clock(state.alarm_time))
+        return t("timer_label_alarm")
+    if state.mode == "stopwatch":
+        return t("timer_label_stopwatch")
+    # "Concluído" só quando a contagem terminou; um timer zerado pelo usuário segue sendo "temporizador"
+    if state.current_seconds <= 0 and not state.is_running and state.target_duration > 0:
+        return t("timer_label_done")
+    return t("timer_label_timer")
 
 
 def natural_size(state: TimerState | None = None) -> QSizeF:
@@ -124,10 +144,7 @@ def paint_windows_timer(
     p.drawRoundedRect(card, CORNER_RADIUS, CORNER_RADIUS)
 
     # 3. Rótulo de Modo / Status no topo
-    mode_text = "TEMPORIZADOR" if state.mode == "timer" else "CRONÔMETRO"
-    # "Concluído" só quando a contagem terminou; um timer zerado pelo usuário segue sendo "temporizador"
-    if state.mode == "timer" and state.current_seconds <= 0 and not state.is_running and state.target_duration > 0:
-        mode_text = "CONCLUÍDO"
+    mode_text = mode_label(state)
 
     lbl_font = get_ui_font(max(8, int(9.5 * scale)), QFont.Weight.DemiBold)
     p.setFont(lbl_font)
