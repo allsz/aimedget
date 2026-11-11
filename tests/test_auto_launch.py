@@ -21,6 +21,15 @@ class DummyMediaWorker:
 
 
 class TestMusicAutoLaunch(unittest.TestCase):
+    def _stop_worker_after_test(self, worker):
+        """
+        Cada MusicWidgetController sem worker injetado cria um WindowsMediaWorker REAL (thread lendo o GSMTC). Sem
+        parar, a thread segue viva pelo resto da suíte e entrega a mídia que estiver tocando no PC para widgets já
+        fechados, o que derrubava o processo de forma intermitente nos testes seguintes.
+        """
+        if hasattr(worker, "stop"):
+            self.addCleanup(worker.stop)
+
     def setUp(self):
         self._orig_mode = config_manager.get_music_launch_mode()
         self._orig_hide = config_manager.is_auto_hide_enabled()
@@ -50,6 +59,7 @@ class TestMusicAutoLaunch(unittest.TestCase):
         worker._last_title = "Nenhuma mídia ativa"
 
         controller = MusicWidgetController(skin_name="capa_empilhada")
+        self._stop_worker_after_test(controller.media_worker)
         controller.media_worker = worker
 
         controller.start()
@@ -75,6 +85,7 @@ class TestMusicAutoLaunch(unittest.TestCase):
         config_manager.set_music_enabled(True)
 
         controller = MusicWidgetController(skin_name="capa_empilhada")
+        self._stop_worker_after_test(controller.media_worker)
         controller.start()
         self.assertTrue(controller.skin.isVisible())
 
@@ -87,6 +98,7 @@ class TestMusicAutoLaunch(unittest.TestCase):
         config_manager.set_music_enabled(True)
 
         controller = MusicWidgetController(skin_name="capa_empilhada")
+        self._stop_worker_after_test(controller.media_worker)
         controller.show()
         controller._has_played_since_shown = True
         self.assertTrue(controller.skin.isVisible())
@@ -110,6 +122,7 @@ class TestMusicAutoLaunch(unittest.TestCase):
         config_manager.set_auto_hide_enabled(False)
 
         bridge = HubServiceBridge()
+        self._stop_worker_after_test(bridge.music_controller.media_worker)
         page = MusicPage(parent=None)
 
         self.assertTrue(page.sw_auto_launch.isChecked())
