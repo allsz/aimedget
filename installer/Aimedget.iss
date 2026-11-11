@@ -36,10 +36,14 @@ VersionInfoVersion={#AppVersion}
 VersionInfoProductName={#AppName}
 
 PrivilegesRequired=lowest
+; Quem quiser instalar para todos os usuários (ex.: em C:\Program Files) escolhe isso numa caixa antes do assistente
+PrivilegesRequiredOverridesAllowed=dialog
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-DisableDirPage=auto
+; Sempre pergunta onde instalar (a pasta anterior vem preenchida numa reinstalação)
+DisableDirPage=no
+UsePreviousAppDir=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
@@ -53,7 +57,8 @@ OutputBaseFilename=Aimedget-Setup-{#AppVersion}
 SetupIconFile=..\assets\aimedget_icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-WizardStyle=modern
+; "dynamic": o assistente abre claro ou escuro conforme o tema de aplicativos do Windows do usuário
+WizardStyle=modern dynamic
 Compression=lzma2/ultra64
 SolidCompression=yes
 
