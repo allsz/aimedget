@@ -4,6 +4,23 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.0.1] - 2026-11-11
+
+### Adicionado
+- **Verificar atualizações automaticamente** (Geral > Atualizações): ligado por padrão, consulta o GitHub ao abrir o
+  app no máximo uma vez por dia e **pergunta antes de atualizar**. Com o Hub na bandeja, avisa por um balão e a
+  pergunta aparece ao clicar. "Agora não" não pergunta de novo pela mesma versão. Pode ser desligado; o botão
+  "Verificar agora" continua funcionando.
+
+### Alterado
+- A skin do Timer e o tema embutido agora se chamam **Padrão** (antes "Aimedget").
+- O indicador de Caps/Num Lock tem versão clara do visual embutido quando o app está no modo claro.
+- Skin **Ecos da Capa**: ícones de aleatório e repetir redesenhados, nítidos em qualquer escala.
+
+### Corrigido
+- Desinstalar com o Aimedget aberto (na bandeja) deixava a pasta do app para trás; agora o desinstalador fecha o
+  app antes e remove tudo.
+
 ## [1.0.0] - 2026-11-11
 
 Primeira versão pública.
@@ -20,4 +37,5 @@ Primeira versão pública.
 - **Atualização automática** pelo instalador, com conferência do SHA-256 do download.
 - Instalador por usuário (sem administrador) e versão portátil.
 
+[1.0.1]: https://github.com/allsz/aimedget/releases/tag/v1.0.1
 [1.0.0]: https://github.com/allsz/aimedget/releases/tag/v1.0.0

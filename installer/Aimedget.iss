@@ -103,9 +103,15 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
+    { O app costuma estar aberto (fica na bandeja). Com ele aberto os arquivos ficam travados e sobraria a pasta
+      inteira depois de desinstalar; CloseApplications só vale para a instalação, não para o desinstalador. }
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(800);
+
     { "Iniciar com o Windows" grava este valor (app\core\config_manager.py). Sem remover, o Windows tentaria abrir
       um app que não existe mais a cada login. }
     RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Aimedget');
