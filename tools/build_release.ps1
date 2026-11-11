@@ -41,6 +41,13 @@ if (-not $SkipTests) {
 
 # 3. Executável (pasta dist\Aimedget)
 Step "PyInstaller"
+# Um Aimedget aberto a partir de dist\ trava os arquivos: apagar a pasta falharia NO MEIO e deixaria esse app sem
+# metade dos arquivos. Confere ANTES de apagar qualquer coisa.
+$distFull = (Join-Path $Root "dist\Aimedget")
+$running = Get-Process -Name Aimedget -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($distFull, [StringComparison]::OrdinalIgnoreCase) }
+if ($running) {
+    throw "O Aimedget está aberto a partir de dist\Aimedget (PID $($running.Id -join ', ')). Encerre-o pela bandeja e rode de novo."
+}
 if (Test-Path "dist\Aimedget") { Remove-Item -Recurse -Force "dist\Aimedget" }
 $ErrorActionPreference = "Continue"   # o PyInstaller escreve avisos no stderr; quem decide é o código de saída
 python -m PyInstaller Aimedget.spec --noconfirm --log-level WARN 2>&1 | Out-Null
@@ -50,7 +57,15 @@ if ($code -ne 0 -or -not (Test-Path "dist\Aimedget\Aimedget.exe")) { throw "PyIn
 
 # 4. Nada de conteúdo privado no pacote (o tema exclusivo é distribuído à mão, fora do repositório)
 Step "Conferindo o pacote"
-$private = Get-ChildItem -Recurse "dist\Aimedget" | Where-Object { $_.Name -match "tassia|exclusive|lavanda|\.aimskin$" }
+# Pacotes de tema (.aimskin) nunca vão no app. Outros nomes privados ficam em .git\info\private-names (um regex por
+# linha), que existe só no PC de quem gera a release e nunca é publicado.
+$privateNames = @('\.aimskin$')
+$namesFile = Join-Path $Root ".git\info\private-names"
+if (Test-Path $namesFile) {
+    $privateNames += Get-Content $namesFile | Where-Object { $_.Trim() -and -not $_.TrimStart().StartsWith("#") }
+}
+$privatePattern = ($privateNames -join "|")
+$private = Get-ChildItem -Recurse "dist\Aimedget" | Where-Object { $_.Name -match $privatePattern }
 if ($private) { $private | ForEach-Object { Write-Host "  PRIVADO: $($_.FullName)" -ForegroundColor Red }; throw "Conteúdo privado no pacote" }
 Copy-Item "THIRD_PARTY_NOTICES.txt" "dist\Aimedget\" -Force
 Copy-Item "LICENSE" "dist\Aimedget\LICENSE.txt" -Force   # o portátil leva a licença junto, como o instalador

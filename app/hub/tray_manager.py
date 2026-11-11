@@ -17,8 +17,11 @@ from app.ui_components.fluent_menu import FluentMusicMenu
 class AimedgetTrayIcon(QSystemTrayIcon):
     open_hub_requested = Signal()
 
-    def __init__(self, on_open_hub: Optional[Callable[[], None]] = None, parent=None):
+    def __init__(self, on_open_hub: Optional[Callable[[], None]] = None,
+                 on_quit: Optional[Callable[[], None]] = None, parent=None):
         super().__init__(parent)
+        # Encerrar: o Hub passa o encerramento completo (hub_window.quit_app); sem ele, sai direto do loop
+        self._on_quit = on_quit or (lambda: QApplication.exit(0))
         self.setIcon(create_aimedget_icon(32))
         self.setToolTip("Aimedget Suite")
 
@@ -65,7 +68,7 @@ class AimedgetTrayIcon(QSystemTrayIcon):
 
         # 5. Sair do aplicativo
         self.act_exit = QAction(t("tray_quit"), self)
-        self.act_exit.triggered.connect(QApplication.instance().quit)
+        self.act_exit.triggered.connect(lambda: self._on_quit())
         self._menu.addAction(self.act_exit)
 
         self.setContextMenu(self._menu)

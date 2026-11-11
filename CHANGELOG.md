@@ -4,6 +4,17 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.0.2] - 2026-11-11
+
+### Corrigido
+- **Encerrar** na bandeja às vezes só escondia a janela do Hub e deixava os widgets abertos, exigindo um segundo
+  Encerrar. Agora fecha tudo de uma vez.
+- O **X** da janela com "Manter na bandeja" desligado fechava só o Hub e deixava os widgets rodando; agora encerra o
+  app inteiro. Com a opção ligada, continua só escondendo o Hub.
+
+### Adicionado
+- O tema **Keycap Digital** do Caps/Num Lock vem com o app (aparece na galeria de temas na primeira abertura).
+
 ## [1.0.1] - 2026-11-11
 
 ### Adicionado
@@ -37,5 +48,6 @@ Primeira versão pública.
 - **Atualização automática** pelo instalador, com conferência do SHA-256 do download.
 - Instalador por usuário (sem administrador) e versão portátil.
 
+[1.0.2]: https://github.com/allsz/aimedget/releases/tag/v1.0.2
 [1.0.1]: https://github.com/allsz/aimedget/releases/tag/v1.0.1
 [1.0.0]: https://github.com/allsz/aimedget/releases/tag/v1.0.0

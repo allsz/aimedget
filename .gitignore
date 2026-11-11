@@ -72,13 +72,6 @@ PASSO_A_PASSO_WIDGET.md
 .impeccable/
 
 
-
-# Skin exclusiva (distribuida manualmente, fora do repositorio)
-tools/build_lavanda_theme.py
-tests/test_lavanda_build.py
-**/*tassia*
-**/*exclusive*
-
 # Metadados de agente/produto (so o skill modular-architecture fica versionado)
 .agents/skills/impeccable/
 PRODUCT.md

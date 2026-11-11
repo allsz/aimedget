@@ -62,7 +62,8 @@ class AimedgetHubWindow(QMainWindow):
         self._accent_timer.timeout.connect(self._flush_accent)
 
         # Inicializar Tray Icon
-        self.tray_icon = AimedgetTrayIcon(on_open_hub=self.show_and_activate, parent=self)
+        self._quitting = False
+        self.tray_icon = AimedgetTrayIcon(on_open_hub=self.show_and_activate, on_quit=self.quit_app, parent=self)
         self.tray_icon.show()
         self._offered_update = None      # versão nova encontrada, à espera da resposta do usuário
         self._offering_update = False
@@ -185,8 +186,28 @@ class AimedgetHubWindow(QMainWindow):
         super().showEvent(event)
         self._apply_asymmetric_windows_icons()
 
+    def quit_app(self):
+        """
+        Encerra o Aimedget de verdade: Hub, widgets, flyouts e serviços, numa etapa só (Encerrar da bandeja, ou o X
+        com "Manter na bandeja" desligado).
+
+        Usa QApplication.exit() e não quit(): no Qt 6 o quit() PEDE para fechar todas as janelas e desiste se alguma
+        recusar. O Hub recusa (com "Manter na bandeja" ele só se esconde), então o Encerrar às vezes era cancelado e
+        o app ficava rodando com os widgets na tela até um segundo Encerrar.
+        """
+        if self._quitting:
+            return
+        self._quitting = True
+        if self.isVisible() and not self.isMaximized() and not self.isMinimized():
+            geo = self.geometry()
+            config_manager.save_hub_geometry(geo.x(), geo.y(), geo.width(), geo.height())
+        QApplication.exit(0)   # aboutToQuit continua disparando: os serviços são encerrados por cleanup_all
+
     def closeEvent(self, event: QCloseEvent):
-        """Ao fechar ou minimizar, salva a geometria (posição e tamanho) no config."""
+        """X da janela: com "Manter na bandeja" só esconde o Hub; sem ele, encerra o app inteiro (widgets juntos)."""
+        if self._quitting:
+            event.accept()
+            return
         if not self.isMaximized() and not self.isMinimized():
             geo = self.geometry()
             config_manager.save_hub_geometry(geo.x(), geo.y(), geo.width(), geo.height())
@@ -195,7 +216,9 @@ class AimedgetHubWindow(QMainWindow):
             event.ignore()
             self.hide()
         else:
+            # Fechar só a janela deixaria os widgets vivos sem Hub e sem ícone útil: encerra tudo
             event.accept()
+            QTimer.singleShot(0, self.quit_app)
 
     def hideEvent(self, event):
         """Garante que a geometria seja salva mesmo ao ocultar a janela."""

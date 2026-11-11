@@ -49,6 +49,10 @@ def main():
         return
     instance.listen()
 
+    # Temas que vêm com o app vão para a pasta de temas do usuário (uma vez; antes dos flyouts lerem os temas)
+    from app.core.bundled_themes import seed_bundled_themes
+    seed_bundled_themes()
+
     # Inicializa todos os serviços integrados (Música, Lock Keys e Mixer)
     bridge = get_service_bridge()
     bridge.start_all()

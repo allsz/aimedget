@@ -574,6 +574,24 @@ class ConfigManager:
         cfg["hotkey"] = str(hotkey)
         self._save()
 
+    # --- Temas que vêm com o app (app/core/bundled_themes.py) ---
+
+    def was_theme_seeded(self, container_id: str, theme_id: str) -> bool:
+        seeded = self._data.get("themes_seeded", {})
+        ids = seeded.get(container_id) if isinstance(seeded, dict) else None
+        return isinstance(ids, list) and theme_id in ids
+
+    def mark_theme_seeded(self, container_id: str, theme_id: str):
+        seeded = self._data.get("themes_seeded")
+        if not isinstance(seeded, dict):
+            seeded = self._data["themes_seeded"] = {}
+        ids = seeded.get(container_id)
+        if not isinstance(ids, list):
+            ids = seeded[container_id] = []
+        if theme_id not in ids:
+            ids.append(theme_id)
+            self._save()
+
     # --- Verificação automática de atualizações ---
 
     def is_auto_update_check_enabled(self) -> bool:
