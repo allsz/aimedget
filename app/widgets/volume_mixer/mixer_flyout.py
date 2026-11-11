@@ -153,6 +153,12 @@ class VolumeMixerFlyout(QWidget):
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._try_start_hide)
 
+        # Nome do app ao passar o mouse no ícone: some com um atraso curto (ver _update_app_tooltip)
+        self._tip_hide_timer = QTimer(self)
+        self._tip_hide_timer.setSingleShot(True)
+        self._tip_hide_timer.setInterval(self.TOOLTIP_HIDE_DELAY_MS)
+        self._tip_hide_timer.timeout.connect(self._hide_app_tooltip)
+
         self._apply_window_canvas_size(expanded_canvas=False)
 
     def _sync_refresh_rate_interval(self):
@@ -418,6 +424,8 @@ class VolumeMixerFlyout(QWidget):
         self.visibility_changed.emit(True)
 
     def hideEvent(self, event):
+        self._tip_hide_timer.stop()
+        QToolTip.hideText()
         # hide() direto (atalho que alterna o mixer) também precisa soltar o Caps Lock empilhado
         self.card_top_changed.emit(0.0, False)
         self.card_bounds_changed.emit(0.0, 0.0, False)
@@ -1139,14 +1147,27 @@ class VolumeMixerFlyout(QWidget):
 
             curr_y += row_h
 
-        if hovered_app_name:
-            QToolTip.showText(event.globalPosition().toPoint(), hovered_app_name, self)
-        else:
-            QToolTip.hideText()
+        self._update_app_tooltip(hovered_app_name, event.globalPosition().toPoint())
 
         if changed:
             self._start_anim_timer()
             self.update()
+
+    TOOLTIP_HIDE_DELAY_MS = 150
+
+    def _hide_app_tooltip(self):
+        QToolTip.hideText()
+
+    def _update_app_tooltip(self, name: str, global_pos):
+        """O nome do app aparece ao passar no ícone. Entre dois ícones há uma faixa sem nada (o ícone tem 22 px para
+        uma linha de 34,5 px): esconder a bolha na hora fazia o Qt animar o sumiço e, ao voltar ao ícone seguinte,
+        criar outra bolha com fade, e o nome piscava. Agora o sumiço espera um instante e é cancelado se o mouse
+        chega a outro ícone; a bolha que já está na tela só troca o texto, sem recriar."""
+        if name:
+            self._tip_hide_timer.stop()
+            QToolTip.showText(global_pos, name, self)
+        elif not self._tip_hide_timer.isActive():
+            self._tip_hide_timer.start()
 
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -1179,6 +1200,8 @@ class VolumeMixerFlyout(QWidget):
         self._restart_hide_timer()
 
     def leaveEvent(self, event):
+        self._tip_hide_timer.stop()
+        QToolTip.hideText()
         self._speaker_hovered = False
         self._chevron_hovered = False
         self._chevron_pressed = False
