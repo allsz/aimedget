@@ -90,6 +90,31 @@ class BaseMusicSkin(QWidget):
         self.target_palette: ThemePalette = get_default_palette()
 
     def _update_and_cache_cover(self, thumb_bytes: bytes) -> bool:
+    # Faixa nova que segue "sem capa" por este tempo volta à capa padrão (antes disso, segura a anterior: evita piscar
+    # o padrão nas trocas normais, em que a capa nova chega logo)
+    DEFAULT_COVER_GRACE_S = 1.0
+
+    def _note_cover_for_track(self):
+        """A faixa atual recebeu uma capa própria (não é mais a da faixa anterior)."""
+        self._cover_track_key = (self.title_text, self.artist_text)
+
+    def _default_cover_due(self) -> bool:
+        """
+        Deve mostrar a capa padrão? Sim sem mídia, ou quando uma faixa nova chega explicitamente sem capa (ex.: vídeo
+        do navegador, cujo quadro 16:9 o MediaWorker descarta) e nenhuma capa dela chegou depois da carência. Sem
+        isso, a capa da música ANTERIOR ficaria ao lado do título novo até o fim da faixa.
+        """
+        if self.title_text == "Nenhuma mídia ativa":
+            return True
+        key = (self.title_text, self.artist_text)
+        if getattr(self, "_cover_track_key", None) == key:
+            return False
+        now = time.monotonic()
+        if getattr(self, "_no_cover_key", None) != key:
+            self._no_cover_key = key
+            self._no_cover_since = now
+        return now - self._no_cover_since >= self.DEFAULT_COVER_GRACE_S
+
         """
         Atualiza o QPixmap da capa e extrai automaticamente a nova paleta de cores dominante.
         Retém a capa anterior durante trocas rápidas de faixa para evitar piscadas.
@@ -101,7 +126,8 @@ class BaseMusicSkin(QWidget):
                 self.album_pixmap = QPixmap.fromImage(img)
                 self.target_palette = extract_palette_from_image(img)
                 return True
-        elif not thumb_bytes and self.title_text == "Nenhuma mídia ativa":
+                self._note_cover_for_track()
+        elif not thumb_bytes and self._default_cover_due():
             if self._last_thumb_bytes:
                 self._last_thumb_bytes = b""
                 self.album_pixmap = None

@@ -150,7 +150,8 @@ class VinylMusicSkin(BaseMusicSkin):
                 self._set_playing_state(is_playing)
                 changed = True
 
-        if dur > 0:
+        # Faixa nova sem duração (o player ainda não mandou a dela): zera em vez de herdar a da faixa anterior
+        if dur > 0 or track_changed:
             self.duration = dur
 
         # Sincronização refinada da barra de progresso (sem saltos entre snapshots antigos e novos)
@@ -160,7 +161,7 @@ class VinylMusicSkin(BaseMusicSkin):
             and not self._pending_play_on_land
             and (now - self._last_seek_sent > 1.5)
         )
-        if can_sync_pos and dur > 0:
+        if can_sync_pos and (dur > 0 or track_changed):
             if track_changed:
                 self.current_time = min(self.duration, max(0.0, pos))
                 changed = True

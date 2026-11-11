@@ -26,8 +26,6 @@ _HD_ART_CACHE: dict[str, bytes] = {}
 _STACK_EXTRAS_CACHE: dict[str, tuple[str, list[bytes]]] = {}
 # Cache por artista para evitar re-downloads na troca de músicas do mesmo artista
 _ARTIST_COVERS_CACHE: dict[str, list[bytes]] = {}
-# Cache de validação musical: track_key -> bool (True = faixa oficial confirmada, False = vídeo/gameplay rejeitado)
-_VERIFIED_MUSIC_CACHE: dict[str, bool] = {}
 
 # Identificadores de players de música nativos, locais e dedicados
 KNOWN_MUSIC_PLAYERS = (
@@ -61,6 +59,37 @@ MUSIC_PWA_IDS = (
     "tidal.desktop",
     "deezer.desktop",
 )
+
+# O Firefox se registra no GSMTC com um AUMID em hash (16 hex), sem o nome do navegador
+_FIREFOX_HASH_AUMID = re.compile(r"[0-9a-f]{16}")
+
+def timeline_signature(tl) -> tuple:
+    """Identidade de um dado de posição do GSMTC: muda sempre que o player manda uma posição nova."""
+    upd = getattr(tl, "last_updated_time", None)
+    return (
+        round(tl.position.total_seconds(), 3),
+        round((tl.end_time - tl.start_time).total_seconds(), 3),
+        upd.timestamp() if upd is not None and getattr(upd, "year", 0) >= 2000 else None,
+    )
+
+
+def resolve_track_timeline(sig: tuple, stale_sig: tuple | None, pos: float, dur: float):
+    """
+    O Firefox troca o título antes da posição: por até ~10 s a faixa nova chega com a posição e a duração da
+    ANTERIOR (e com um carimbo de tempo velho, que faria a barra nascer adiantada). `stale_sig` é o último dado
+    de posição visto antes da troca de faixa; enquanto o player repetir esse mesmo dado, ele é tratado como
+    "ainda não chegou": posição 0 e duração 0 (desconhecida). Devolve (pos, dur, stale_sig a manter).
+    """
+    if stale_sig is not None and sig == stale_sig:
+        return 0.0, 0.0, stale_sig
+    return pos, dur, None
+
+
+def is_browser_app_id(app_id: str) -> bool:
+    """AUMID pertence a um navegador? Inclui o Firefox, cujo AUMID é só um hash."""
+    a = (app_id or "").strip().lower()
+    return bool(_FIREFOX_HASH_AUMID.fullmatch(a)) or any(b in a for b in BROWSER_APP_IDS)
+
 
 # Termos que denunciam imediatamente vídeos comuns (gameplay, vlogs, notícias, etc.)
 NON_MUSIC_PATTERNS = re.compile(
@@ -451,6 +480,8 @@ class WindowsMediaWorker(QObject):
         self._cand_thumb_cache: dict[str, tuple[tuple[str, str], bytes]] = {}
         self._prev_track_gsmtc_raw = b""
         self._track_changed_at = 0.0
+        self._last_tl_sig: tuple | None = None    # último dado de posição recebido (ver resolve_track_timeline)
+        self._stale_tl_sig: tuple | None = None   # dado da faixa anterior que ainda não foi substituído
         self._hd_cover_locked = False
         self._fetching_hd_for_key = ""
         self._no_session_since = 0.0
@@ -537,7 +568,7 @@ class WindowsMediaWorker(QObject):
         escolhida é lida mais adiante, e só se ainda não estiver travada em cache).
         Em navegadores, a leitura (cara) é reaproveitada enquanto a faixa não muda.
         """
-        if not any(b in key for b in BROWSER_APP_IDS):
+        if not is_browser_app_id(key):
             return b""
         track = (
             (getattr(props, "title", "") or "").strip(),
@@ -573,27 +604,13 @@ class WindowsMediaWorker(QObject):
         return False
 
     @staticmethod
-    def _is_verified_music(title: str, artist: str) -> bool:
-        """Verifica se a faixa é música oficial conhecida ou se já tem capa em cache."""
-        clean_t, clean_a = _clean_metadata_for_search(title, artist)
-        track_key = f"{clean_t}|{clean_a}" if (clean_t and clean_a) else f"{title}|{artist}"
-
-        if track_key in _VERIFIED_MUSIC_CACHE:
-            return _VERIFIED_MUSIC_CACHE[track_key]
-
-        if track_key in _HD_ART_CACHE or bool(_load_cover_from_disk(track_key)):
-            _VERIFIED_MUSIC_CACHE[track_key] = True
-            return True
-
-        if NON_MUSIC_PATTERNS.search(title):
-            _VERIFIED_MUSIC_CACHE[track_key] = False
+    def _is_video_frame(thumb_bytes: bytes) -> bool:
+        """Imagem retangular (ex.: miniatura 16:9 de vídeo do YouTube), em vez de capa quadrada de álbum."""
+        img = QImage.fromData(thumb_bytes) if thumb_bytes else QImage()
+        if img.isNull() or img.height() <= 0:
             return False
-
-        # Busca rápida online para verificar se existe como música oficial cadastrada
-        art = fetch_online_album_art(clean_t or title, clean_a or artist)
-        is_music = bool(art and len(art) > 1024)
-        _VERIFIED_MUSIC_CACHE[track_key] = is_music
-        return is_music
+        aspect = img.width() / img.height()
+        return aspect > 1.25 or aspect < 0.8
 
     def _classify_session(
         self,
@@ -664,7 +681,7 @@ class WindowsMediaWorker(QObject):
             return True, "local", 85 + play_bonus
 
         # 6. Navegadores Web (Chrome, Edge, Firefox, Brave, Opera, etc.)
-        if any(b in app_id for b in BROWSER_APP_IDS):
+        if is_browser_app_id(app_id):
             # 6a. Descarte imediato se contiver termos de gameplay, react, vlog, risadas, etc.
             if NON_MUSIC_PATTERNS.search(title):
                 return False, "browser_video_rejected", -1
@@ -688,12 +705,12 @@ class WindowsMediaWorker(QObject):
             if 0.88 <= aspect <= 1.15:
                 return True, "youtube_music", 55 + play_bonus
 
-            # Se for widescreen (> 1.25, típico thumbnail 16:9 de vídeo do YouTube)
+            # Widescreen (> 1.25, típico 16:9 de vídeo do YouTube) ou sem capa: o navegador só informa título e
+            # canal, e nada distingue de forma confiável um vídeo de música de outro vídeo. Aceita (os padrões de
+            # 6a/6b já descartaram o que é claramente outra coisa) com prioridade menor que a de capa oficial.
+            # A capa é resolvida à parte: busca online e, sem achar, a capa padrão (nunca o quadro do vídeo).
             if aspect > 1.25 or not thumb_bytes:
-                if self._is_verified_music(title, artist):
-                    return True, "youtube_music", 50 + play_bonus
-                else:
-                    return False, "browser_video_rejected", -1
+                return True, "youtube_music", 40 + play_bonus
 
             return True, "youtube_music", 45 + play_bonus
 
@@ -721,6 +738,11 @@ class WindowsMediaWorker(QObject):
 
         def _worker():
             hd_bytes = fetch_online_album_art(title, artist)
+            if not hd_bytes and " - " in title:
+                # Vídeo de terceiros: o "artista" é o canal e o título vem como "Obra - Faixa"; tenta pelas partes
+                left, _, right = title.partition(" - ")
+                if left.strip() and right.strip():
+                    hd_bytes = fetch_online_album_art(right.strip(), left.strip())
             if hd_bytes and self._last_track_key == track_key and not self._hd_cover_locked:
                 _HD_ART_CACHE[track_key] = hd_bytes
                 self._cached_thumb = hd_bytes
@@ -862,6 +884,8 @@ class WindowsMediaWorker(QObject):
                         self._last_track_key = track_key
                         self._last_gsmtc_raw = b""
                         self._track_changed_at = now_mono
+                        # O dado de posição que vinha antes da troca: se ele continuar chegando, é da faixa anterior
+                        self._stale_tl_sig = self._last_tl_sig
 
                         # 1a. Verifica cache em memória ou cache persistente em disco (0ms, zero piscadas!)
                         if track_key in _HD_ART_CACHE:
@@ -889,7 +913,9 @@ class WindowsMediaWorker(QObject):
                             )
                             if not is_stale_from_prev and not is_browser_logo_thumbnail(raw_gsmtc):
                                 self._last_gsmtc_raw = raw_gsmtc
-                                self._cached_thumb = raw_gsmtc
+                                # Quadro de vídeo (widescreen) não serve de capa: fica a capa padrão até a busca online
+                                # achar a oficial. Ícones pequenos e quadrados continuam valendo como capa provisória.
+                                self._cached_thumb = b"" if self._is_video_frame(raw_gsmtc) else raw_gsmtc
                                 if self._is_low_res_or_cropped(raw_gsmtc):
                                     self._trigger_hd_fetch_async(track_key, title, artist)
                                 else:
@@ -897,6 +923,11 @@ class WindowsMediaWorker(QObject):
                                     self._hd_cover_locked = True
                                     _HD_ART_CACHE[track_key] = raw_gsmtc
                                     _save_cover_to_disk(track_key, raw_gsmtc)
+
+                    # Posição/duração ainda da faixa anterior (Firefox): segura em "desconhecida" até chegar a nova
+                    tl_sig = timeline_signature(tl)
+                    pos, dur, self._stale_tl_sig = resolve_track_timeline(tl_sig, self._stale_tl_sig, pos, dur)
+                    self._last_tl_sig = tl_sig
 
                     provider = best_provider
 

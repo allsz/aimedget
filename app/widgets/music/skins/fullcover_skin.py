@@ -120,8 +120,9 @@ class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
                 self.album_pixmap = QPixmap.fromImage(img)
                 self._fullbleed_pixmap = self._prepare_crisp_fullbleed(img)
                 self.target_palette = extract_palette_from_image(img)
+                self._note_cover_for_track()
                 return True
-        elif not thumb_bytes and self.title_text == "Nenhuma mídia ativa":
+        elif not thumb_bytes and self._default_cover_due():
             if self._last_thumb_bytes:
                 self._last_thumb_bytes = b""
                 self.album_pixmap = None
@@ -160,7 +161,8 @@ class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
                 self.is_playing = is_playing
                 changed = True
 
-        if dur > 0:
+        # Faixa nova sem duração (o player ainda não mandou a dela): zera em vez de herdar a da faixa anterior
+        if dur > 0 or track_changed:
             self.duration = dur
 
         can_sync_pos = (
@@ -168,7 +170,7 @@ class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
             and self.pressed_btn != "bar"
             and (now - self._last_seek_sent > 1.5)
         )
-        if can_sync_pos and dur > 0:
+        if can_sync_pos and (dur > 0 or track_changed):
             if track_changed:
                 self.current_time = min(self.duration, max(0.0, pos))
                 changed = True
