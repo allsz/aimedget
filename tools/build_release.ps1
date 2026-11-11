@@ -87,7 +87,8 @@ Step "SHA256SUMS.txt"
 $sums = Get-ChildItem $Out -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" } | ForEach-Object {
     "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
 }
-$sums | Set-Content -Path (Join-Path $Out "SHA256SUMS.txt") -Encoding ascii
+# LF (não CRLF): é o formato que o sha256sum -c e o Get-FileHash dos usuários esperam
+[IO.File]::WriteAllText((Join-Path (Resolve-Path $Out) "SHA256SUMS.txt"), (($sums -join "`n") + "`n"), [Text.Encoding]::ASCII)
 
 Step "Pronto"
 Get-ChildItem $Out | ForEach-Object { "  {0,-40} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB) }
