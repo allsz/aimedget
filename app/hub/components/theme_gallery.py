@@ -25,7 +25,7 @@ from app.core.theme_validation import CONTAINERS
 from app.core.theme_package import (
     PACKAGE_EXT, PackageError, analyze_package, export_themes, has_theme, install_package, slugify,
 )
-from app.hub.components.message_dialog import show_message
+from app.hub.components.message_dialog import confirm_destructive, show_message
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.theme_import_dialog import TARGET_KEYS, ThemeImportDialog
 from app.hub.theme import HubTheme
@@ -175,8 +175,10 @@ class ThemeGalleryCard(QFrame):
         self.btn_import = self._action_button(t("theme_import_btn"), self._pick_and_import)
         self.btn_export = self._action_button(t("theme_export_btn"), self._export)
         self.btn_export.setToolTip(t("theme_export_tip"))
+        self.btn_delete = self._action_button(t("theme_delete_btn"), self._delete)
+        self.btn_delete.setToolTip(t("theme_delete_tip"))
         self.btn_folder = self._action_button(t("theme_open_folder"), self._open_folder)
-        for btn in (self.btn_import, self.btn_export, self.btn_folder):
+        for btn in (self.btn_import, self.btn_export, self.btn_delete, self.btn_folder):
             self.actions.addWidget(btn)
         root.addLayout(self.actions)
 
@@ -300,6 +302,45 @@ class ThemeGalleryCard(QFrame):
         show_message(self, self._theme, t("theme_export_pick_title"), t("theme_export_done", n=count, where=where))
         return True
 
+    # --- Excluir ---
+
+    def _delete(self):
+        """Exclui o tema em uso (o mesmo alvo do Exportar), depois de confirmar; oferece exportar uma cópia antes."""
+        active = self._current_active(set(self._cards))
+        card = self._cards.get(active)
+        name = card._spec.title if card else (t(self._default_title_key) if active == DEFAULT_ID else active)
+        if self._loader.is_protected(active):
+            show_message(self, self._theme, t("theme_delete_title"), t("theme_delete_protected", name=name))
+            return
+        text = t("theme_delete_confirm", name=name)
+        elsewhere = [c for c in CONTAINERS if c != self._container and has_theme(c, active)]
+        if elsewhere:   # pacotes com vários destinos: só sai desta parte do app
+            text += "\n\n" + t("theme_delete_elsewhere", where=", ".join(t(TARGET_KEYS[c]) for c in elsewhere))
+        choice = confirm_destructive(self, self._theme, t("theme_delete_title"), text,
+                                     yes=t("theme_delete_yes"), no=t("theme_import_cancel"),
+                                     extra=t("theme_delete_export_first"))
+        if choice == "no":
+            return
+        if choice == "extra":
+            suggested = f"{slugify(name)}{PACKAGE_EXT}"
+            path = _file_dialog(self, t("theme_export_pick_title"), save=True, suggested=suggested)
+            if not path or not self.export_to(active, path):
+                return   # sem cópia garantida, nada é apagado
+        self.delete_theme(active)
+
+    def delete_theme(self, theme_id: str) -> bool:
+        """Apaga o tema desta parte do app e, se ele estava em uso, aplica o Padrão (o widget/flyout muda na hora)."""
+        was_active = self._current_active(set(self._cards)) == theme_id
+        try:
+            self._loader.delete(theme_id)
+        except (OSError, ValueError) as exc:
+            show_message(self, self._theme, t("theme_delete_title"), t("theme_delete_error", why=str(exc)), "warning")
+            return False
+        self.refresh()
+        if was_active:
+            self._on_applied()
+        return True
+
     def _open_folder(self):
         folder = self._loader.themes_dir()
         try:
@@ -325,6 +366,8 @@ class ThemeGalleryCard(QFrame):
         self.btn_import.setText(t("theme_import_btn"))
         self.btn_export.setText(t("theme_export_btn"))
         self.btn_export.setToolTip(t("theme_export_tip"))
+        self.btn_delete.setText(t("theme_delete_btn"))
+        self.btn_delete.setToolTip(t("theme_delete_tip"))
         self.btn_folder.setText(t("theme_open_folder"))
         self.refresh()
 

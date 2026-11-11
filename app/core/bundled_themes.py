@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 BUNDLED_THEMES_DIR = os.path.join(ASSETS_DIR, "themes")
 
 
+def is_bundled(container: str, theme_id: str, source_dir: str = BUNDLED_THEMES_DIR) -> bool:
+    """O tema `theme_id` deste container vem com o app (ex.: Keycap Digital)? Esses não são excluídos pelo Hub."""
+    if not theme_id or os.path.basename(theme_id) != theme_id:
+        return False
+    return os.path.isfile(os.path.join(source_dir, container, theme_id, "theme.json"))
+
+
 def seed_bundled_themes(source_dir: str = BUNDLED_THEMES_DIR, user_themes_dir: str | None = None) -> list[str]:
     """Copia os temas embutidos que o usuário ainda não recebeu. Devolve '<container>/<tema>' de cada cópia feita."""
     user_themes_dir = user_themes_dir or os.path.join(config_manager.config_dir, "themes")

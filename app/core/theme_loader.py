@@ -17,11 +17,13 @@ senão o visual padrão. Um tema quebrado nunca impede o flyout de abrir: cada v
 import json
 import logging
 import os
+import shutil
 from dataclasses import dataclass, field
 from typing import Callable, Generic, TypeVar
 
 from PySide6.QtGui import QColor
 
+from app.core.bundled_themes import is_bundled
 from app.core.config_manager import config_manager
 from app.core.theme_art import (
     dir_signature,
@@ -237,6 +239,38 @@ class ThemeLoader(Generic[T]):
         config_manager.set_theme_choice(self.container_id, theme_id)
         self.reset()
 
+    # --- Exclusão ---
+
+    def fallback_id(self) -> str:
+        """O visual de uma instalação nova ("Padrão"): para onde a escolha volta quando o tema em uso é excluído."""
+        return APP_ID if self._app_theme is not None else DEFAULT_ID
+
+    def is_protected(self, theme_id: str) -> bool:
+        """Temas que o Hub não exclui: os sem pasta (Padrão/Windows) e os que vêm com o app (ex.: Keycap Digital)."""
+        return self.is_builtin(theme_id) or is_bundled(self.container_id, theme_id)
+
+    def delete(self, theme_id: str) -> None:
+        """
+        Apaga o tema do disco (a pasta dele; o "Personalizado" é só o theme.json solto da raiz). Se ele estava em
+        uso, a escolha volta ao Padrão. Levanta ValueError para tema protegido ou id inválido e OSError se o disco
+        recusar (arquivo aberto, permissão).
+        """
+        if self.is_protected(theme_id):
+            raise ValueError(f"o tema {theme_id!r} vem com o app e não pode ser excluído")
+        located = self._theme_file_and_dir(theme_id)
+        if located is None or not os.path.isfile(located[0]):
+            raise ValueError(f"tema {theme_id!r} não encontrado")
+        was_active = self.active_id() == theme_id
+        if theme_id == CUSTOM_ID:
+            os.remove(located[0])            # as subpastas da raiz são outros temas: só o arquivo solto sai
+        else:
+            shutil.rmtree(located[1])
+        self._preview_cache.pop(theme_id, None)
+        if was_active:
+            self.set_active(self.fallback_id())
+        else:
+            self.reset()
+
     # --- Carregamento ---
 
     def load(self) -> T:
@@ -247,6 +281,10 @@ class ThemeLoader(Generic[T]):
         if located is None or not os.path.isfile(located[0]):
             if theme_id != DEFAULT_ID:
                 logger.warning("Tema do %s: '%s' não encontrado; usando o padrão", self._label, theme_id)
+                if config_manager.get_theme_choice(self.container_id) == theme_id:
+                    # A pasta foi apagada por fora: grava o visual que já está sendo usado (o mesmo de antes), para o
+                    # aviso não se repetir a cada abertura
+                    config_manager.set_theme_choice(self.container_id, DEFAULT_ID)
             key = (DEFAULT_ID, ())
             default = self.default
             if self._cache is None or self._cache[0] != key or self._cache[1] is not default:

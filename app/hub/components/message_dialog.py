@@ -79,8 +79,11 @@ class StatusIcon(QWidget):
 
 
 class MessageDialog(QDialog):
+    EXTRA = 2   # código de saída do botão extra (`extra`), além de Accepted (1) e Rejected (0)
+
     def __init__(self, parent: QWidget | None, theme: HubTheme, title: str, text: str, kind: str = "info",
-                 yes: str | None = None, no: str | None = None):
+                 yes: str | None = None, no: str | None = None, extra: str | None = None,
+                 safe_default: bool = False):
         super().__init__(parent)
         self._theme = theme
         self.setWindowTitle(title)
@@ -119,13 +122,23 @@ class MessageDialog(QDialog):
         buttons.setContentsMargins(24, 14, 24, 14)
         buttons.setSpacing(8)
         buttons.addStretch()
+        btn_no = None
         if no is not None:
-            buttons.addWidget(self._button(no, self.reject))
+            btn_no = self._button(no, self.reject)
+            buttons.addWidget(btn_no)
+        self.btn_extra = None
+        if extra is not None:
+            self.btn_extra = self._button(extra, lambda: self.done(self.EXTRA))
+            buttons.addWidget(self.btn_extra)
         ok = self._button(yes or t("dialog_ok"), self.accept, primary=True)
-        ok.setDefault(True)
         buttons.addWidget(ok)
+        # Ação destrutiva: Enter cancela (o usuário precisa clicar no botão que apaga); senão, Enter confirma
+        default = btn_no if (safe_default and btn_no is not None) else ok
+        default.setDefault(True)
+        default.setFocus()
         root.addWidget(footer)
         self.btn_ok = ok
+        self.btn_no = btn_no
         self.adjustSize()
 
     def showEvent(self, event):
@@ -153,3 +166,16 @@ def confirm(parent: QWidget | None, theme: HubTheme, title: str, text: str, yes:
     """Pergunta sim/não; o padrão (Enter) é a ação principal `yes`, Esc cancela."""
     dialog = MessageDialog(parent, theme, title, text, "question", yes=yes, no=no)
     return dialog.exec() == QDialog.DialogCode.Accepted
+
+
+def confirm_destructive(parent: QWidget | None, theme: HubTheme, title: str, text: str, yes: str, no: str,
+                        extra: str | None = None) -> str:
+    """
+    Confirmação de algo que não dá para desfazer. Devolve "yes", "extra" ou "no". Enter e Esc cancelam: só um clique
+    no botão `yes` apaga. `extra` é um caminho alternativo (ex.: "Exportar e excluir").
+    """
+    dialog = MessageDialog(parent, theme, title, text, "warning", yes=yes, no=no, extra=extra, safe_default=True)
+    code = dialog.exec()
+    if code == QDialog.DialogCode.Accepted:
+        return "yes"
+    return "extra" if code == MessageDialog.EXTRA else "no"

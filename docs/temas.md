@@ -67,6 +67,10 @@ Cada tema é uma **pasta** dentro da pasta de temas do usuário:
 
 - No Hub, em **Lock keys**, **Volume & mixer**, **Música** e **Timer**, cada tema vira um cartão com miniatura. Clique para usar.
 - O botão **Abrir pasta de temas** abre essa pasta no Explorer.
+- O botão **Excluir tema…** apaga o tema **em uso** daquela parte do app (depois de pedir confirmação, com a opção de
+  **exportar antes**). Se ele estava em uso, o visual volta ao Padrão. Os visuais que já vêm com o app (Padrão, Windows e
+  os temas de fábrica, como o Keycap Digital) não podem ser excluídos. Se o mesmo tema existir em outras partes do app,
+  ele continua instalado lá. Também dá para apagar a pasta do tema à mão: o app volta ao padrão na próxima abertura.
 - Um `theme.json` solto na raiz de `keylock\`, `mixer\`, `music\` ou `timer\` aparece como "Personalizado" (formato antigo,
   ainda aceito).
 - O nome mostrado no cartão é o campo `"name"` do `theme.json` (aceita espaços e acentos, até 40 letras). Sem `name`,
@@ -484,6 +488,12 @@ demais, tamanho demais ou zip corrompido.
 **Exportar tema** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
 de mesmo id em outros destinos, ele vai junto no mesmo pacote: exportar a "Lavanda" de qualquer página leva a Lavanda de todos
 os destinos que a tiverem. Os visuais que já vêm com o app (Padrão, Windows, Cores da capa) não se exportam.
+
+### Excluir
+
+**Excluir tema…** age sobre o tema **em uso** da página onde você está, como o Exportar. A janela de confirmação lista onde o
+mesmo tema continua instalado e oferece **Exportar e excluir**: o tema só é apagado depois de o arquivo ser salvo. Enter e Esc
+cancelam. Os visuais que vêm com o app não se excluem.
 
 ---
 

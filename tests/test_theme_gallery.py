@@ -56,6 +56,12 @@ def opaque_in(img: QImage, x0, y0, x1, y1) -> bool:
 
 class _Isolated(unittest.TestCase):
     def setUp(self):
+        # Os textos conferidos são os em PT: fixa o idioma sem depender (nem gravar) na config do usuário
+        from unittest import mock
+        from app.core.i18n import i18n
+        lang = mock.patch.object(i18n, "_current_lang", "pt")
+        lang.start()
+        self.addCleanup(lang.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self._old = (config_manager.config_dir, config_manager.config_path, config_manager._data.get("themes"))
         config_manager.config_dir = self._tmp.name
