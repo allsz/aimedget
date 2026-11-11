@@ -71,7 +71,7 @@ class ConfigManager:
                 "hotkey": "Win+Alt+T",
             },
             "hub": {
-                "theme": "light",
+                "theme": "system",  # segue o tema do Windows
                 "keep_in_tray": True,
                 "start_with_windows": False,
                 "start_minimized": True,
