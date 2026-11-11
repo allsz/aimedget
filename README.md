@@ -1,40 +1,93 @@
-# Windows Redesign · Caps Lock Flyout Specification
+# Aimedget
 
-Referência visual e especificações de design para o popup de Caps Lock (substituição do OSD quadrado do Logitech Options+).
+Widgets e flyouts para o Windows 10 e 11, com a cara do Windows 11 e personalização de verdade: um player de música
+na área de trabalho, um mixer de volume por aplicativo, o indicador de Caps/Num Lock e um timer, todos configurados
+por um único app, o **Hub**.
 
----
+## O que vem nele
 
-## 🎨 Especificações Visuais
+- **Music Player** — widget que mostra e controla o que está tocando (Spotify, navegador, qualquer player que apareça
+  nos controles de mídia do Windows). Quatro skins: Vinil Retrô, Capa Completa, Ecos da Capa e Capa Empilhada.
+  Capa em alta resolução, volume do player pela roda do mouse e posição/escala que se adaptam à tela.
+- **Volume & mixer** — substitui o flyout de volume do Windows: volume geral, volume e mudo por aplicativo e saída
+  ou entrada de áudio diferente para cada app.
+- **Caps / Num Lock** — indicador na tela ao alternar Caps Lock e Num Lock.
+- **Timer & Foco** — timer e cronômetro sempre à mão, com som de fim.
+- **Hub** — temas claro, escuro e OLED (ou o do Windows), cor de destaque, português e inglês, iniciar com o
+  Windows, posição de cada flyout na tela (8 posições) e atualização automática.
+- **Temas** — cada flyout e widget aceita temas visuais (cores, fundo, figurinhas), importáveis e exportáveis em um
+  arquivo `.aimskin`. Guia completo em [docs/temas.md](docs/temas.md).
 
-- **Proporção:** ~4:3 (quase quadrado: `160px` largura × `144px` altura).
-- **Raio de Borda (Border Radius):** `24px` (Squircle / Curvatura Fluent do Windows 11).
-- **Fundo do Card:**
-  - Cor base: `rgba(26, 26, 30, 0.75)`
-  - Efeito: Acrílico translúcido com `backdrop-filter: blur(28px) saturate(180%)`
-  - Borda externa: `1px solid rgba(255, 255, 255, 0.12)`
-  - Sombra: `0 20px 40px -10px rgba(0, 0, 0, 0.65)`
+### Atalhos
 
----
+| Atalho | Ação |
+|---|---|
+| `Win` + `Alt` + `M` | Mostra/esconde o Music Player |
+| `Win` + `Alt` + `V` | Abre o mixer de volume |
+| `Win` + `Alt` + `T` | Mostra/esconde o Timer |
+| `Win` + `Alt` + `K` | Testa o indicador de Caps Lock |
 
-## 🔒 Elementos & Hierarquia
+Todos podem ser trocados no Hub.
 
-1. **Ícone de Cadeado:**
-   - **Sem container/fundo**: O SVG repousa diretamente sobre a transparência do card.
-   - **Caps Ativo (Locked):** Cadeado fechado branco puro (`#FFFFFF`) com leve drop shadow.
-   - **Caps Inativo (Unlocked):** Cadeado aberto em tom cinza suave (`#A3A3A3`).
+## Download
 
-2. **Tipografia:**
-   - Texto: `CAPS LOCK` (sem texto redundante de on/off).
-   - Fonte: Segoe UI Variable / Inter / Sans-serif.
-   - Tamanho: `12px` (estilo sub-caption Windows 11), peso semi-bold (`600`), tracking sutil (`wider`).
+Baixe na página de [Releases](https://github.com/allsz/aimedget/releases):
 
-3. **Indicador de Status (Barra LED):**
-   - Dimensões: `44px` largura × `6px` altura com cantos totalmente arredondados (`border-radius: 9999px`).
-   - **Ativo:** Azul elétrico (`#38BDF8`) com brilho sutil em neon (`box-shadow: 0 0 12px rgba(56, 189, 248, 0.9)`).
-   - **Inativo:** Cinza escuro transparente (`rgba(255, 255, 255, 0.14)`), sem brilho.
+- **`Aimedget-Setup-<versão>.exe`** — instalador (recomendado). Não pede administrador, cria o atalho no Menu
+  Iniciar e se atualiza sozinho pelo Hub (Geral > Atualizações).
+- **`Aimedget-<versão>-portable.zip`** — versão portátil: extraia e abra `Aimedget\Aimedget.exe`. Para atualizar,
+  baixe a versão nova.
+- **`SHA256SUMS.txt`** — os hashes SHA-256 dos arquivos, para conferir o download
+  (`Get-FileHash .\arquivo -Algorithm SHA256` no PowerShell).
 
----
+Requisitos: Windows 10 ou 11, 64 bits.
 
-## 📁 Arquivos do Projeto
+> **Aviso do Windows (SmartScreen):** o executável ainda não tem assinatura digital, então o Windows pode mostrar
+> "O Windows protegeu o computador" na primeira vez. Clique em **Mais informações → Executar assim mesmo**. Se
+> preferir, confira o hash do arquivo com o `SHA256SUMS.txt` antes.
 
-- [caps_lock_fluent_design.html](<file:///C:/Users/Matthew/Projects%20(Studying)/Windows_Redesign/caps_lock_fluent_design.html>): Prévia interativa completa em HTML/CSS/Tailwind que responde ao toque da tecla física no teclado.
+As configurações, temas e capas salvas ficam em `%LOCALAPPDATA%\Aimedget`. O desinstalador pergunta se você quer
+apagá-los também.
+
+## Desenvolvimento
+
+Requisitos: Python 3.11+ no Windows.
+
+```powershell
+pip install -r requirements.txt -r requirements-dev.txt
+python -m app.main          # abre o app (use --minimized para começar só na bandeja)
+python -m pytest tests -q   # testes (com $env:QT_QPA_PLATFORM="offscreen" para não abrir janelas)
+```
+
+### Gerar uma release
+
+Requer também o [Inno Setup](https://jrsoftware.org/isinfo.php) (6 ou 7).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
+```
+
+O script roda os testes, gera o executável (PyInstaller, em pasta), a versão portátil, o instalador e o
+`SHA256SUMS.txt` em `dist\release`. A versão vem de um lugar só: [app/core/version.py](app/core/version.py).
+
+### Estrutura
+
+```
+app/
+  core/       configuração, caminhos, i18n, temas, tipografia, relatório de erros
+  services/   serviços do Windows sem interface: mídia, áudio, teclas, atalhos, atualização
+  widgets/    os widgets e flyouts (music, volume_mixer, keylock_osd, timer)
+  hub/        o app de configuração (janela, páginas e componentes)
+installer/    script do instalador (Inno Setup)
+tools/        build da release e ferramentas de temas
+tests/        testes automatizados (pytest)
+```
+
+## Licença
+
+O Aimedget é software livre, distribuído sob a [GNU General Public License v3.0](LICENSE): você pode usar, estudar,
+modificar e redistribuir; quem distribuir uma versão modificada precisa disponibilizar o código dela sob a mesma
+licença.
+
+Componentes de terceiros (Qt/PySide6, Python, fontes, som do timer) têm as próprias licenças, listadas em
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
