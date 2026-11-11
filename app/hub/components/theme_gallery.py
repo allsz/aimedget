@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
 from app.core.i18n import t
 from app.core.preview_card import PreviewCard
 from app.core.preview_registry import SkinSpec
-from app.core.theme_loader import DEFAULT_ID, ThemeLoader
+from app.core.theme_loader import APP_ID, DEFAULT_ID, ThemeLoader
 from app.core.theme_validation import CONTAINERS
 from app.core.theme_package import (
     PACKAGE_EXT, PackageError, analyze_package, export_themes, has_theme, install_package, slugify,
@@ -139,7 +139,11 @@ class ThemeGalleryCard(QFrame):
     # --- Conteúdo ---
 
     def _title_for(self, theme_id: str, name: str) -> str:
-        return t(self._default_title_key) if theme_id == DEFAULT_ID else (name or t("theme_custom"))
+        if theme_id == DEFAULT_ID:
+            return t(self._default_title_key)
+        if theme_id == APP_ID:
+            return t("theme_app")   # o tema embutido que herda a aparência do app é o "Padrão"
+        return name or t("theme_custom")
 
     def _current_active(self, ids: set[str]) -> str:
         active = self._loader.active_id()

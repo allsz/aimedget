@@ -24,7 +24,7 @@ from app.core.colorimetry import (
     get_default_palette,
 )
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
-from app.ui_components.media_icons import MediaIconsMixin
+from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
 
 # Dimensões nativas do canvas 16:9
@@ -32,7 +32,7 @@ CANVAS_W = 960
 CANVAS_H = 540
 
 
-class RippleSkin(MediaIconsMixin, BaseMusicSkin):
+class RippleSkin(CrispIconsMixin, BaseMusicSkin):
     """
     Skin Wide Ripple (inspirada em wide_ripple.html - Circle Cover Widget):
     - 4 círculos concêntricos da capa do álbum expandindo do centro (600px, 810px, 1020px, 1230px no canvas 960x540)

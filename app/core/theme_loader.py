@@ -145,18 +145,26 @@ class ThemeLoader(Generic[T]):
     """
 
     def __init__(self, container_id: str, default: T, parse: Callable[[dict, str], T], label: str,
-                 context: Callable[[], object] | None = None, app_theme: Callable[[], T] | None = None):
+                 context: Callable[[], object] | None = None, app_theme: Callable[[], T] | None = None,
+                 default_factory: Callable[[], T] | None = None):
         # `context` devolve algo que, quando muda, invalida o cache (ex.: a razão de escala da tela)
         self._context = context
         # `app_theme` calcula o tema embutido "Aimedget" (sem arquivos). Deve devolver o MESMO objeto enquanto a
         # aparência do app não mudar. Sem ele, o loader não oferece esse tema.
         self._app_theme = app_theme
         self.container_id = container_id
-        self.default = default
+        self._default_static = default
+        # `default_factory`: o visual embutido "Windows" quando ele muda com o app (ex.: versão clara). Deve devolver
+        # sempre o MESMO objeto enquanto a aparência não mudar.
+        self._default_factory = default_factory
         self._parse = parse
         self._label = label
         self._cache: tuple[tuple, T] | None = None
         self._preview_cache: dict[str, tuple[tuple, T]] = {}   # só para miniaturas (ver `theme_for`)
+
+    @property
+    def default(self) -> T:
+        return self._default_factory() if self._default_factory is not None else self._default_static
 
     # --- Caminhos ---
 
@@ -240,8 +248,9 @@ class ThemeLoader(Generic[T]):
             if theme_id != DEFAULT_ID:
                 logger.warning("Tema do %s: '%s' não encontrado; usando o padrão", self._label, theme_id)
             key = (DEFAULT_ID, ())
-            if self._cache is None or self._cache[0] != key:
-                self._cache = (key, self.default)
+            default = self.default
+            if self._cache is None or self._cache[0] != key or self._cache[1] is not default:
+                self._cache = (key, default)
             return self._cache[1]
 
         theme_file, base_dir = located

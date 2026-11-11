@@ -7,6 +7,7 @@ com zero timers ativos e sem overhead de CPU.
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 
+from app.core.i18n import t
 from app.core.preview_registry import SkinSpec, get_skins_for_widget, register_skin
 from app.hub.theme import HubTheme, THEME_DARK
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
@@ -49,7 +50,7 @@ def init_timer_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="windows",
             widget_id="timer",
-            title="Aimedget",
+            title=t("theme_default_timer"),
             subtitle="PIP clássico",
             natural_size=QSizeF(164, 164),
             paint=_make_paint(paint_windows_timer),

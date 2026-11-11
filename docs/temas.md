@@ -5,7 +5,7 @@ Este guia ensina a criar **temas visuais** para quatro partes do Aimedget (os **
 - **Caps/Num Lock** (o indicador que aparece ao apertar Caps Lock ou Num Lock) — chamado de `keylock` nos arquivos;
 - **Volume e mixer** (o painel de volume com os aplicativos) — chamado de `mixer` nos arquivos;
 - **Música**, skin **Capa Empilhada** do widget de música — chamado de `music` nos arquivos;
-- **Timer**, skin **Aimedget** do widget de timer — chamado de `timer` nos arquivos.
+- **Timer**, skin **Padrão** do widget de timer — chamado de `timer` nos arquivos.
 
 Os dois primeiros são **flyouts** (aparecem e somem); os dois últimos são **widgets** (ficam na área de trabalho).
 
@@ -62,7 +62,7 @@ Cada tema é uma **pasta** dentro da pasta de temas do usuário:
   music\
     roxo-suave\            <- um tema da Capa Empilhada (Música)
   timer\
-    roxo-suave\            <- um tema do Timer (skin Aimedget)
+    roxo-suave\            <- um tema do Timer (skin Padrão)
 ```
 
 - No Hub, em **Lock keys**, **Volume & mixer**, **Música** e **Timer**, cada tema vira um cartão com miniatura. Clique para usar.
@@ -276,7 +276,7 @@ Desenhe o LED apagado no fundo e um LED aceso (com brilho) como figurinha `on`, 
 - **Mixer**: não tem `scale`, `size`, nem figurinhas por estado.
 - **Widgets (Música e Timer)**: só cores, fundo e figurinhas (que podem passar da borda). Não têm `shadow`, `radius`, `scale` nem
   `size` (o formato e o tamanho são os da skin, e o usuário redimensiona o widget). O tema de Música vale **só para a skin Capa Empilhada**; o de
-  Timer, **só para a skin Aimedget**. As capas "vinil" que a Capa Empilhada desenha quando ainda não há capa de álbum não mudam
+  Timer, **só para a skin Padrão**. As capas "vinil" que a Capa Empilhada desenha quando ainda não há capa de álbum não mudam
   com o tema.
 
 Se o desenho do designer pede algo desta lista, **avise** o que não dá para fazer e entregue a melhor aproximação, em vez de
@@ -334,7 +334,7 @@ Ao escolher (ou importar) um tema de Música, o app passa a usar a skin Capa Emp
 }
 ```
 
-### 3.9 Chaves do Timer — skin Aimedget (`timer`)
+### 3.9 Chaves do Timer — skin Padrão (`timer`)
 
 O Timer segue o **modo claro/escuro** e a **cor de destaque** do app. O tema troca **só as cores que definir**: um tema só com
 `accent` continua claro ou escuro conforme o app; um tema com todas as cores tem visual fixo. O padrão de cada cor é "a do app".
@@ -483,7 +483,7 @@ demais, tamanho demais ou zip corrompido.
 
 **Exportar tema** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
 de mesmo id em outros destinos, ele vai junto no mesmo pacote: exportar a "Lavanda" de qualquer página leva a Lavanda de todos
-os destinos que a tiverem. Os visuais que já vêm com o app (Aimedget, Windows, Cores da capa) não se exportam.
+os destinos que a tiverem. Os visuais que já vêm com o app (Padrão, Windows, Cores da capa) não se exportam.
 
 ---
 
@@ -556,7 +556,7 @@ ignorar nada. Você **não vê o app**, então use o validador para as regras e 
 
 ### 8.1 Antes de começar, pergunte (se não estiver claro)
 
-1. Para quais destinos: **Caps/Num Lock**, **Volume e mixer**, **Música (Capa Empilhada)**, **Timer (Aimedget)**? (Um ou vários.)
+1. Para quais destinos: **Caps/Num Lock**, **Volume e mixer**, **Música (Capa Empilhada)**, **Timer (Padrão)**? (Um ou vários.)
 2. Quais imagens são o **fundo** e quais são **figurinhas**? Onde cada figurinha deve ficar (cantos, topo, base)?
 3. O clima: claro ou escuro? Cor principal? O nome do tema?
 4. Se houver SVG: ele tem bitmap embutido? (Se sim, peça PNG.)

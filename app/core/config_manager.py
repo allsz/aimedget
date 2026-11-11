@@ -574,6 +574,35 @@ class ConfigManager:
         cfg["hotkey"] = str(hotkey)
         self._save()
 
+    # --- Verificação automática de atualizações ---
+
+    def is_auto_update_check_enabled(self) -> bool:
+        """Consultar o GitHub sozinho ao abrir o app (no máximo 1x por dia). Padrão: ligado."""
+        value = self._data.get("updates", {}).get("auto_check")
+        return value if isinstance(value, bool) else True
+
+    def set_auto_update_check_enabled(self, enabled: bool):
+        self._data.setdefault("updates", {})["auto_check"] = bool(enabled)
+        self._save()
+
+    def get_last_update_check(self) -> float:
+        """Quando a última consulta automática deu certo (segundos desde 1970); 0 = nunca."""
+        value = self._data.get("updates", {}).get("last_check")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+    def set_last_update_check(self, timestamp: float):
+        self._data.setdefault("updates", {})["last_check"] = float(timestamp)
+        self._save()
+
+    def get_declined_update_version(self) -> str:
+        """Versão que o usuário respondeu 'agora não': a consulta automática não pergunta de novo por ela."""
+        value = self._data.get("updates", {}).get("declined_version")
+        return value if isinstance(value, str) else ""
+
+    def set_declined_update_version(self, version: str):
+        self._data.setdefault("updates", {})["declined_version"] = str(version)
+        self._save()
+
     def get_osd_anchor(self, flyout: str) -> str:
         """
         Âncora na tela de um flyout ('keylock' ou 'mixer'); 'bc' = acima da barra de tarefas.

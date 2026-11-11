@@ -19,7 +19,7 @@ from app.core.theme_loader import MAX_NAME_LEN
 CONTAINERS = ("keylock", "mixer", "music", "timer")
 # Nome de cada destino para mensagens (pt-BR) e a pasta dele dentro de um pacote
 CONTAINER_NAMES = {"keylock": "Caps/Num Lock", "mixer": "Volume e mixer",
-                   "music": "Música (Capa Empilhada)", "timer": "Timer (Aimedget)"}
+                   "music": "Música (Capa Empilhada)", "timer": "Timer (Padrão)"}
 
 
 def container_folders_text(sep: str = " e ") -> str:

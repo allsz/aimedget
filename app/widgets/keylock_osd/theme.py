@@ -85,6 +85,23 @@ class KeyLockTheme:
 
 DEFAULT_THEME = KeyLockTheme()
 
+# Versão clara do visual "Windows" (quando o app está no modo claro): fundo cinza claro do Windows, ícone e letra
+# escuros, barrinha azul do Windows. Só o visual embutido muda; temas de pasta partem sempre do DEFAULT_THEME.
+LIGHT_DEFAULT_THEME = KeyLockTheme(
+    card_bg=QColor(243, 243, 243, 248),
+    border=QColor(214, 214, 214),
+    text=QColor(27, 27, 27),
+    icon=QColor(27, 27, 27),
+    off_color=QColor(196, 208, 217),
+    on_color=QColor(0, 120, 212),     # azul do Windows (o ciano claro do escuro não aparece no fundo claro)
+)
+
+
+def default_theme() -> KeyLockTheme:
+    """O visual embutido "Windows" para o modo do app: escuro ou claro."""
+    from app.core.app_theme import current_hub_theme   # tardio: app_theme importa este módulo
+    return DEFAULT_THEME if current_hub_theme().is_dark else LIGHT_DEFAULT_THEME
+
 _COLOR_KEYS = ("card_bg", "border", "text", "text_off", "icon", "off_color", "on_color")
 _LAYOUT_KEYS = ("indicator", "show_icon", "label_align", "label_size", "label_case", "size")
 
@@ -167,7 +184,7 @@ def _app_theme() -> KeyLockTheme:
 
 
 _loader = ThemeLoader("keylock", DEFAULT_THEME, theme_from_dict, "keylock", context=lambda: round(screen_ratio(), 2),
-                      app_theme=_app_theme)
+                      app_theme=_app_theme, default_factory=default_theme)
 
 theme_path = _loader.path
 load_user_theme = _loader.load

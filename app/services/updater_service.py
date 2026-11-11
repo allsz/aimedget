@@ -29,6 +29,17 @@ _INSTALLER_ASSET = re.compile(r"setup.*\.exe$", re.IGNORECASE)
 _UNINSTALLER_NAME = "unins000.exe"
 
 
+AUTO_CHECK_INTERVAL_S = 24 * 60 * 60   # a consulta automática roda no máximo 1x por dia
+
+
+def is_check_due(last_check: float, now: float, interval: float = AUTO_CHECK_INTERVAL_S) -> bool:
+    """
+    A consulta automática está na hora? Nunca feita (0) ou passou o intervalo. Um último registro no FUTURO (relógio
+    do PC ajustado para trás) conta como vencido: senão o app ficaria sem consultar até o relógio alcançá-lo.
+    """
+    return last_check <= 0 or last_check > now or (now - last_check) >= interval
+
+
 @dataclass
 class UpdateInfo:
     latest_version: str

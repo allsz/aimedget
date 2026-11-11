@@ -8,6 +8,7 @@ Design refinado com integração nativa ao Windows 11 DWM:
 """
 
 import sys
+import time
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
@@ -20,6 +21,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config_manager import config_manager
+from app.core.i18n import t
+from app.core.version import __version__
+from app.hub.components.message_dialog import confirm
 from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
@@ -60,6 +64,9 @@ class AimedgetHubWindow(QMainWindow):
         # Inicializar Tray Icon
         self.tray_icon = AimedgetTrayIcon(on_open_hub=self.show_and_activate, parent=self)
         self.tray_icon.show()
+        self._offered_update = None      # versão nova encontrada, à espera da resposta do usuário
+        self._offering_update = False
+        self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
         self._build_ui()
         self._apply_theme(self._current_theme)
@@ -98,22 +105,69 @@ class AimedgetHubWindow(QMainWindow):
             pass
 
     def _check_background_update(self):
-        """Verifica se há versão mais recente no GitHub Releases sem travar a UI."""
-        from app.services.updater_service import updater_service
-        updater_service.check_for_updates(on_update_found=self._on_background_update_found)
+        """
+        Consulta o GitHub Releases em segundo plano, sem travar a UI. Só se o usuário deixou ligado (Geral >
+        Atualizações) e no máximo uma vez por dia. Uma consulta que falhou (sem internet) não conta: tenta na próxima
+        abertura.
+        """
+        from app.services.updater_service import is_check_due, updater_service
+        if not config_manager.is_auto_update_check_enabled():
+            return
+        if not is_check_due(config_manager.get_last_update_check(), time.time()):
+            return
+        updater_service.check_for_updates(
+            on_update_found=self._on_background_update_found,
+            on_up_to_date=lambda _version: config_manager.set_last_update_check(time.time()),
+        )
 
     def _on_background_update_found(self, info):
-        """Notifica o usuário pelo System Tray caso haja uma versão mais nova."""
+        """
+        Versão nova: pergunta se o usuário quer atualizar. Com o Hub aberto, pergunta na hora; com ele na bandeja,
+        avisa por um balão e a pergunta aparece ao clicar nele (nada salta na tela sem o usuário estar olhando).
+        """
+        config_manager.set_last_update_check(time.time())
+        if info.latest_version == config_manager.get_declined_update_version():
+            return   # já respondeu "agora não" para esta versão: não insiste (a consulta manual ainda mostra)
+        self._offered_update = info
+        if self.isVisible() and not self.isMinimized():
+            self._offer_update()
+            return
         if hasattr(self, "tray_icon") and self.tray_icon:
             try:
                 self.tray_icon.showMessage(
-                    "Aimedget Update",
-                    f"Nova versão v{info.latest_version} disponível! Abra o Hub para atualizar.",
+                    t("update_toast_title"),
+                    t("update_toast_text").format(version=info.latest_version),
                     QSystemTrayIcon.MessageIcon.Information,
-                    5000,
+                    8000,
                 )
             except Exception:
                 pass
+
+    def _offer_update(self):
+        """Pergunta se quer atualizar para a versão encontrada. Sim abre Geral e começa; Agora não lembra a versão."""
+        info = getattr(self, "_offered_update", None)
+        if info is None or self._offering_update:
+            return
+        self._offering_update = True
+        try:
+            wants = confirm(
+                self, self._current_theme, t("update_prompt_title"),
+                t("update_prompt_text").format(version=info.latest_version, current=__version__),
+                yes=t("update_prompt_yes"), no=t("update_prompt_no"),
+            )
+        finally:
+            self._offering_update = False
+        self._offered_update = None
+        if wants:
+            self.sidebar.select_page("gen")
+            self.page_gen.start_update(info)
+        else:
+            config_manager.set_declined_update_version(info.latest_version)
+
+    def _on_tray_message_clicked(self):
+        if getattr(self, "_offered_update", None) is not None:
+            self.show_and_activate()
+            self._offer_update()
 
     def show_and_activate(self):
         """Traz a janela do Hub para o primeiro plano."""

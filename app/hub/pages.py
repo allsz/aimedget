@@ -290,7 +290,7 @@ class OverviewPage(BaseHubPage):
         active_timer_skin = self.bridge.timer_controller.active_skin_name
         timer_specs = init_timer_skin_specs()
         timer_spec = next((s for s in timer_specs if s.id == active_timer_skin), timer_specs[0] if timer_specs else init_timer_spec())
-        skin_label = timer_spec.title if timer_spec else "Aimedget"
+        skin_label = timer_spec.title if timer_spec else t("theme_default_timer")
 
         self.timer_card = WidgetCard(
             widget_id="timer",
@@ -1805,6 +1805,28 @@ class GeneralPage(BaseHubPage):
 
         up_layout.addLayout(row_up)
 
+        # Verificação automática (1x por dia, ao abrir o app): o usuário decide se o app fala com o GitHub sozinho
+        sep_auto = QFrame()
+        sep_auto.setFrameShape(QFrame.Shape.HLine)
+        sep_auto.setProperty("class", "HubDivider")
+        up_layout.addWidget(sep_auto)
+
+        row_auto = QHBoxLayout()
+        info_auto = QVBoxLayout()
+        info_auto.setSpacing(2)
+        self.t_auto_update = QLabel(t("gen_updates_auto_title"))
+        self.t_auto_update.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.d_auto_update = QLabel(t("gen_updates_auto_sub"))
+        self.d_auto_update.setWordWrap(True)
+        self.d_auto_update.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_auto.addWidget(self.t_auto_update)
+        info_auto.addWidget(self.d_auto_update)
+        row_auto.addLayout(info_auto, stretch=1)
+        self.sw_auto_update = PillSwitch(checked=config_manager.is_auto_update_check_enabled(), theme=self._theme)
+        self.sw_auto_update.toggled.connect(config_manager.set_auto_update_check_enabled)
+        row_auto.addWidget(self.sw_auto_update)
+        up_layout.addLayout(row_auto)
+
         self.lbl_update_status = QLabel("")
         self.lbl_update_status.setWordWrap(True)
         self.lbl_update_status.setStyleSheet(f"color: {self._theme.mute}; font-size: 12px;")
@@ -1852,6 +1874,11 @@ class GeneralPage(BaseHubPage):
         self.btn_apply_update.setEnabled(True)
         self.lbl_update_status.setVisible(True)
         self.lbl_update_status.setText(t("gen_updates_found").format(version=info.latest_version))
+
+    def start_update(self, info: UpdateInfo):
+        """O usuário aceitou o aviso de versão nova (janela principal): segue o mesmo caminho do botão Atualizar."""
+        self._on_update_found(info)
+        self._apply_update()
 
     def _on_up_to_date(self, current_ver: str):
         self.btn_check_update.setEnabled(True)
@@ -2069,9 +2096,15 @@ class GeneralPage(BaseHubPage):
             self.btn_check_update.setText(t("gen_updates_btn_check"))
         if hasattr(self, "btn_apply_update"):
             self.btn_apply_update.setText(t("gen_updates_btn_download"))
+        if hasattr(self, "t_auto_update"):
+            self.t_auto_update.setText(t("gen_updates_auto_title"))
+            self.d_auto_update.setText(t("gen_updates_auto_sub"))
 
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
+        if hasattr(self, "sw_auto_update"):
+            self.sw_auto_update.set_theme(theme)
+            self.d_auto_update.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
         if hasattr(self, "s1"):
             self.s1.set_theme(theme)
         if hasattr(self, "s_min"):
