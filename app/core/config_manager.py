@@ -419,6 +419,17 @@ class ConfigManager:
         hub_cfg["theme"] = str(theme_name)
         self._save()
 
+    def get_last_theme_dir(self) -> str:
+        """Última pasta usada ao importar/exportar temas ("" = nunca)."""
+        value = self._data.get("hub", {}).get("last_theme_dir")
+        return value if isinstance(value, str) else ""
+
+    def set_last_theme_dir(self, path: str):
+        hub_cfg = self._data.setdefault("hub", {})
+        if hub_cfg.get("last_theme_dir") != path:
+            hub_cfg["last_theme_dir"] = str(path)
+            self._save()
+
     def get_hub_accent(self):
         """Cor de destaque escolhida: '#RRGGBB' (cor exata), int 0-359 (matiz) ou None (âmbar padrão do app)."""
         hub_cfg = self._data.get("hub", {})

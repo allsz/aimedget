@@ -155,16 +155,35 @@ class NativeDialogTests(unittest.TestCase):
         self.gallery = theme_gallery
         self._old = theme_gallery._last_dir
         theme_gallery._last_dir = ""
+        from unittest import mock
+        self._stored = ""   # config simulado: não toca no arquivo real do usuário
+        for name, target in (
+            ("get_last_theme_dir", lambda: self._stored),
+            ("set_last_theme_dir", lambda p: setattr(self, "_stored", p)),
+        ):
+            p = mock.patch.object(theme_gallery.config_manager, name, side_effect=target)
+            p.start()
+            self.addCleanup(p.stop)
 
     def tearDown(self):
         self.gallery._last_dir = self._old
+
+    def test_last_folder_survives_an_app_restart(self):
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog, QWidget
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(self.gallery, "_pick", return_value=os.path.join(tmp, "x.aimskin")):
+                self.gallery._file_dialog(QWidget(), "t", save=False)
+            self.assertEqual(self._stored, tmp)
+            self.gallery._last_dir = ""              # "reabriu o app": só o config lembra
+            self.assertEqual(self.gallery._start_dir(), tmp)
 
     def test_open_starts_in_downloads_and_remembers_the_folder(self):
         from unittest import mock
         from PySide6.QtWidgets import QFileDialog, QWidget
         with tempfile.TemporaryDirectory() as tmp:
             chosen = os.path.join(tmp, "x.aimskin")
-            with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(chosen, "")) as m:
+            with mock.patch.object(self.gallery, "_pick", return_value=chosen) as m:
                 parent = QWidget()
                 self.assertEqual(self.gallery._file_dialog(parent, "t", save=False), chosen)
                 self.assertEqual(self.gallery._file_dialog(parent, "t", save=False), chosen)
@@ -175,7 +194,7 @@ class NativeDialogTests(unittest.TestCase):
     def test_cancel_returns_empty_and_keeps_the_last_folder(self):
         from unittest import mock
         from PySide6.QtWidgets import QFileDialog, QWidget
-        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=("", "")),                 mock.patch.object(QFileDialog, "getSaveFileName", return_value=("", "")):
+        with mock.patch.object(self.gallery, "_pick", return_value=""):
             parent = QWidget()
             self.assertEqual(self.gallery._file_dialog(parent, "t", save=False), "")
             self.assertEqual(self.gallery._file_dialog(parent, "t", save=True, suggested="x.aimskin"), "")
@@ -186,11 +205,29 @@ class NativeDialogTests(unittest.TestCase):
         from PySide6.QtWidgets import QFileDialog, QWidget
         with tempfile.TemporaryDirectory() as tmp:
             self.gallery._last_dir = tmp
-            with mock.patch.object(QFileDialog, "getSaveFileName", return_value=(os.path.join(tmp, "meu"), "")) as m:
+            with mock.patch.object(self.gallery, "_pick", return_value=os.path.join(tmp, "meu")) as m:
                 path = self.gallery._file_dialog(QWidget(), "t", save=True, suggested="tema.aimskin")
             self.assertEqual(m.call_args.args[2], os.path.join(tmp, "tema.aimskin"))
             self.assertTrue(path.endswith(".aimskin"))
 
+
+    def test_picker_blocks_only_the_hub_window(self):
+        """O seletor é WindowModal (não do app todo): os widgets seguem clicáveis e arrastáveis."""
+        from unittest import mock
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtWidgets import QFileDialog, QWidget
+        seen = {}
+
+        def fake_open(dlg):
+            seen["modality"] = dlg.windowModality()
+            QTimer.singleShot(0, dlg.reject)   # "usuário cancelou"
+            from PySide6.QtWidgets import QDialog
+            self._real_open(dlg)
+
+        self._real_open = QFileDialog.open
+        with mock.patch.object(QFileDialog, "open", fake_open):
+            self.assertEqual(self.gallery._pick(QWidget(), "t", "", "*.aimskin", False), "")
+        self.assertEqual(seen["modality"], Qt.WindowModality.WindowModal)
 
 
 if __name__ == "__main__":

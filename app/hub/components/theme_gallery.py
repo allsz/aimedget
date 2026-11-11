@@ -7,12 +7,16 @@ Um clique escolhe o tema, mostra o flyout para testar e atualiza o selo. Não h�
 temas não têm menu de troca rápida.
 """
 
+import ctypes
 import os
+import sys
+from contextlib import contextmanager
 from typing import Callable
 
-from PySide6.QtCore import QStandardPaths, Qt
+from PySide6.QtCore import QEventLoop, QStandardPaths, Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.preview_card import PreviewCard
 from app.core.preview_registry import SkinSpec
@@ -29,14 +33,58 @@ from app.hub.theme import HubTheme
 SpecFactory = Callable[[str, str, object], SkinSpec]   # (id do tema, título, tema carregado) -> SkinSpec
 
 
-_last_dir = ""   # última pasta usada nos seletores (vale até fechar o app)
+_last_dir = ""   # última pasta usada nos seletores (cache da sessão; a cópia persistente fica no config)
 
 
 def _start_dir() -> str:
-    """Pasta inicial do seletor: a última usada ou, na primeira vez, Downloads."""
-    if _last_dir and os.path.isdir(_last_dir):
-        return _last_dir
+    """Pasta inicial do seletor: a última usada (inclusive em sessões anteriores) ou, na primeira vez, Downloads."""
+    for candidate in (_last_dir, config_manager.get_last_theme_dir()):
+        if candidate and os.path.isdir(candidate):
+            return candidate
     return QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or ""
+
+
+@contextmanager
+def _above_widgets(parent: QWidget):
+    """
+    Enquanto o seletor está aberto, deixa a janela do Hub "sempre no topo". O seletor nativo pertence ao Hub e
+    herda isso; sem isso ele pode abrir atrás de um widget (também "sempre no topo"), e o Windows bloqueia os
+    cliques no widget com o som de erro, já que o Hub está modal.
+    """
+    hwnd = 0
+    try:
+        hwnd = int(parent.window().winId()) if sys.platform == "win32" else 0
+    except Exception:
+        hwnd = 0
+    flags = 0x0001 | 0x0002 | 0x0010   # SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+    user32 = ctypes.windll.user32 if hwnd else None
+    if user32:
+        user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)        # HWND_TOPMOST
+    try:
+        yield
+    finally:
+        if user32:
+            user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, flags)    # HWND_NOTOPMOST
+
+
+def _pick(parent: QWidget, title: str, initial: str, filt: str, save: bool) -> str:
+    """
+    Abre o seletor bloqueando SÓ a janela do Hub (WindowModal), não o app inteiro: os widgets (Música, Timer)
+    seguem clicáveis e arrastáveis enquanto o seletor está aberto. Espera por um laço de eventos local, então
+    quem chama continua recebendo o caminho de forma síncrona. Devolve "" se o usuário cancelou.
+    """
+    dlg = QFileDialog(parent, title, initial, filt)
+    dlg.setAcceptMode(QFileDialog.AcceptMode.AcceptSave if save else QFileDialog.AcceptMode.AcceptOpen)
+    if not save:
+        dlg.setFileMode(QFileDialog.FileMode.ExistingFile)
+    dlg.setWindowModality(Qt.WindowModality.WindowModal)
+    loop = QEventLoop(dlg)
+    dlg.finished.connect(loop.quit)
+    dlg.open()
+    loop.exec()
+    files = dlg.selectedFiles() if dlg.result() == QDialog.DialogCode.Accepted else []
+    dlg.deleteLater()
+    return files[0] if files else ""
 
 
 def _file_dialog(parent: QWidget, title: str, save: bool, suggested: str = "") -> str:
@@ -50,15 +98,14 @@ def _file_dialog(parent: QWidget, title: str, save: bool, suggested: str = "") -
     global _last_dir
     start = _start_dir()
     filt = t("theme_import_filter")
-    if save:
-        initial = os.path.join(start, suggested) if suggested else start
-        path, _ = QFileDialog.getSaveFileName(parent, title, initial, filt)
-        if path and not os.path.splitext(path)[1]:
-            path += PACKAGE_EXT
-    else:
-        path, _ = QFileDialog.getOpenFileName(parent, title, start, filt)
+    initial = os.path.join(start, suggested) if (save and suggested) else start
+    with _above_widgets(parent):
+        path = _pick(parent, title, initial, filt, save)
+    if save and path and not os.path.splitext(path)[1]:
+        path += PACKAGE_EXT
     if path:
         _last_dir = os.path.dirname(path)
+        config_manager.set_last_theme_dir(_last_dir)
     return path or ""
 
 
