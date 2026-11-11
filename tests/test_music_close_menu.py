@@ -93,3 +93,30 @@ class ControllerCloseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MenuTranslationTests(unittest.TestCase):
+    def test_every_skin_menu_follows_the_app_language(self):
+        from app.core.i18n import i18n
+        with mock.patch.object(i18n, "_current_lang", "en"):
+            for cls in SKINS:
+                with self.subTest(skin=cls.__name__):
+                    texts = [a.text() for a in _open_menu(_make(cls))]
+                    self.assertIn("Size", texts)
+                    self.assertIn("Remember position", texts)
+                    self.assertNotIn("Tamanho", texts)
+                    self.assertNotIn("Lembrar posição", texts)
+
+
+class NoMediaTextTests(unittest.TestCase):
+    def test_placeholder_is_translated_only_when_shown(self):
+        from app.core.i18n import i18n
+        for cls in SKINS:
+            with self.subTest(skin=cls.__name__):
+                skin = _make(cls)
+                with mock.patch.object(i18n, "_current_lang", "en"):
+                    self.assertEqual(skin.shown_title(), "Nothing playing right now")
+                    self.assertEqual(skin.shown_artist(), "What are we listening to today?")
+                self.assertEqual(skin.title_text, "Nenhuma mídia ativa")      # o marcador interno não muda
+                skin.title_text, skin.artist_text = "Faixa", "Artista"
+                self.assertEqual((skin.shown_title(), skin.shown_artist()), ("Faixa", "Artista"))

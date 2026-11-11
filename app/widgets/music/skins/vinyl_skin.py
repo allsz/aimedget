@@ -382,7 +382,7 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.setFont(font_title)
         painter.setPen(QColor("#FFFFFF"))
         fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, int(title_w))
+        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, int(title_w))
         painter.drawText(QRectF(52, title_y, title_w, 54), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
 
         # Nome do Artista: y=248
@@ -391,7 +391,7 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.setFont(font_artist)
         painter.setPen(QColor(255, 255, 255, 175))
         fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.artist_text, Qt.TextElideMode.ElideRight, int(title_w))
+        elided_artist = fm_artist.elidedText(self.shown_artist(), Qt.TextElideMode.ElideRight, int(title_w))
         painter.drawText(QRectF(52, artist_y, title_w, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
 
         # --- 3. Barra de Progresso Expandida (left=52, top=326, w=405) ---

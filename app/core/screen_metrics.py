@@ -24,10 +24,10 @@ MAX_AUTO_RATIO: float = 1.75   # Máximo para painéis 4K / UHD
 
 # Presets de escala customizada disponíveis para o usuário
 MUSIC_SCALE_PRESETS = [
-    (0.375, "75% (Compacto)"),
-    (0.50, "100% (Padrão 1440p)"),
-    (0.625, "125% (Grande)"),
-    (0.75, "150% (Extra Grande)"),
+    (0.375, "music_scale_compact"),        # chaves i18n: "75%"
+    (0.50, "music_scale_default"),         # "100%"
+    (0.625, "music_scale_large"),          # "125%"
+    (0.75, "music_scale_xlarge"),          # "150%"
 ]
 
 

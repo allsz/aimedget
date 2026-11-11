@@ -389,7 +389,7 @@ class OverviewPage(BaseHubPage):
         if hasattr(self, "vol_card"):
             self.vol_card.retranslate_ui(name=t("overview_card_volume"), skin_label=self._active_flyout_spec("mixer")[1])
         if hasattr(self, "timer_card"):
-            self.timer_card.retranslate_ui(name=t("overview_card_timer"))
+            self.timer_card.retranslate_ui(name=t("overview_card_timer"), skin_label=t("theme_default_timer"))
         self._refresh_grid()
 
     def set_theme(self, theme: HubTheme):
@@ -1538,13 +1538,14 @@ class TimerPage(BaseHubPage):
             self.hk_picker.retranslate_ui()
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
-        timer_skin_subs = {
-            "windows": t("skin_windows_sub"),
+        # O título e o subtítulo da skin ficam na spec (criada na inicialização): refaz no idioma novo
+        timer_skin_texts = {
+            "windows": (t("theme_default_timer"), t("skin_windows_sub")),
         }
         if hasattr(self, "_skin_cards"):
             for s_id, card in self._skin_cards.items():
-                if s_id in timer_skin_subs:
-                    card._spec.subtitle = timer_skin_subs[s_id]
+                if s_id in timer_skin_texts:
+                    card._spec.title, card._spec.subtitle = timer_skin_texts[s_id]
                     card._invalidate_cache()
                     card.update()
 

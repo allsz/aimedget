@@ -327,7 +327,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         painter.setFont(font_title)
         painter.setPen(QColor("#FFFFFF"))
         fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, 690)
+        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, 690)
         painter.drawText(QRectF(56, title_y, 690, 46), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
 
         artist_y = 384.0
@@ -336,7 +336,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         painter.setFont(font_artist)
         painter.setPen(QColor(255, 255, 255, 200))
         fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.artist_text.upper(), Qt.TextElideMode.ElideRight, 690)
+        elided_artist = fm_artist.elidedText(self.shown_artist().upper(), Qt.TextElideMode.ElideRight, 690)
         painter.drawText(QRectF(56, artist_y, 690, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
 
         # --- 4. Botão Circular Flutuante Play/Pause à Direita ---

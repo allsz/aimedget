@@ -471,9 +471,19 @@ class BaseMusicSkin(QWidget):
         """Hook sobrescrito pelas subclasses para atualizar retângulos de colisão."""
         pass
 
+    # O texto "sem mídia" também é um marcador de dados (o worker, o controller e as skins o comparam): fica em PT
+    # internamente e só é traduzido na hora de desenhar.
+    def shown_title(self) -> str:
+        return t("music_no_media_title") if self.title_text == "Nenhuma mídia ativa" else self.title_text
+
+    def shown_artist(self) -> str:
+        if self.title_text == "Nenhuma mídia ativa" and self.artist_text == "O que vamos ouvir hoje?":
+            return t("music_no_media_artist")
+        return self.artist_text
+
     def _get_skin_effects_title(self) -> str:
         """Título do submenu de efeitos da skin (ex: 'Efeitos da Capa' ou 'Efeitos da Skin')."""
-        return "Efeitos da Skin"
+        return t("music_menu_effects_skin")
 
     def _get_skin_effects_icon(self, is_dark: bool = True) -> QIcon | None:
         """Ícone minimalista para o submenu de efeitos."""
@@ -540,7 +550,7 @@ class BaseMusicSkin(QWidget):
 
         # Submenu minimalista de redimensionamento e escala
         from app.core.screen_metrics import MUSIC_SCALE_PRESETS
-        scale_menu = FluentMusicMenu("Tamanho", menu)
+        scale_menu = FluentMusicMenu(t("music_menu_size"), menu)
         scale_icon = self._build_minimal_skin_icon("scale", is_dark)
         if not scale_icon.isNull():
             scale_menu.setIcon(scale_icon)
@@ -549,24 +559,19 @@ class BaseMusicSkin(QWidget):
         curr_scale = self.scale
 
         for s_val, s_label in MUSIC_SCALE_PRESETS:
-            act_s = QAction(s_label, self)
+            act_s = QAction(t(s_label), self)
             is_active = (not is_auto) and abs(curr_scale - s_val) < 0.005
             scale_menu.set_trailing_check(act_s, is_active)
             act_s.triggered.connect(lambda chk=False, s=s_val: self.set_scale(s, save_preference=True))
             scale_menu.addAction(act_s)
 
-        scale_menu.addSeparator()
-        act_auto = QAction("Automático (Adaptar à tela)", self)
-        scale_menu.set_trailing_check(act_auto, is_auto)
-        act_auto.triggered.connect(self.set_scale_auto)
-        scale_menu.addAction(act_auto)
-
+        # "Automático (adaptar à tela)" fica só nas configurações do app (Hub)
         menu.addMenu(scale_menu)
 
         # Opção de fixar / lembrar posição favorita na tela com check (certo) à direita
         menu.addSeparator()
         is_remembered = config_manager.is_music_position_remembered()
-        act_remember_pos = QAction(self._build_minimal_skin_icon("pin", is_dark), "Lembrar posição", self)
+        act_remember_pos = QAction(self._build_minimal_skin_icon("pin", is_dark), t("menu_remember_position"), self)
         menu.set_trailing_check(act_remember_pos, is_remembered)
         act_remember_pos.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
         menu.addAction(act_remember_pos)

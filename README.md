@@ -12,10 +12,10 @@ por um único app, o **Hub**.
 - **Volume & mixer** — substitui o flyout de volume do Windows: volume geral, volume e mudo por aplicativo e saída
   ou entrada de áudio diferente para cada app.
 - **Caps / Num Lock** — indicador na tela ao alternar Caps Lock e Num Lock.
-- **Timer & Foco** — timer e cronômetro sempre à mão, com som de fim.
+- **Timer & Foco** — timer, cronômetro e alarme sempre à mão, com som de fim.
 - **Hub** — temas claro, escuro e OLED (ou o do Windows), cor de destaque, português e inglês, iniciar com o
   Windows, posição de cada flyout na tela (8 posições) e atualização automática.
-- **Temas** — cada flyout e widget aceita temas visuais (cores, fundo, figurinhas), importáveis e exportáveis em um
+- **Temas** — cada flyout e widget aceita temas visuais (cores, fundo, figurinhas), importáveis, exportáveis e excluíveis em um
   arquivo `.aimskin`. Guia completo em [docs/temas.md](docs/temas.md).
 
 ### Atalhos

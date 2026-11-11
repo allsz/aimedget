@@ -24,7 +24,7 @@ from app.core.colorimetry import (
     get_default_palette,
 )
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
-from app.ui_components.media_icons import MediaIconsMixin
+from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
 
 # Dimensões nativas do canvas 16:9
@@ -32,7 +32,7 @@ CANVAS_W = 960
 CANVAS_H = 540
 
 
-class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
+class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
     """
     Skin Wide FullCover (inspirada em wide_fullcover.png):
     - Fundo imersivo (Full Bleed) em alta definição (pré-filtrado via SmoothTransformation sem fantasma duplo).
@@ -273,7 +273,7 @@ class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
         painter.setFont(font_title)
         painter.setPen(QColor("#FFFFFF"))
         fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, 690)
+        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, 690)
         painter.drawText(QRectF(56, title_y, 690, 48), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
 
         artist_y = 276.0
@@ -282,7 +282,7 @@ class FullCoverSkin(MediaIconsMixin, BaseMusicSkin):
         painter.setFont(font_artist)
         painter.setPen(QColor(255, 255, 255, 185))
         fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.artist_text.upper(), Qt.TextElideMode.ElideRight, 690)
+        elided_artist = fm_artist.elidedText(self.shown_artist().upper(), Qt.TextElideMode.ElideRight, 690)
         painter.drawText(QRectF(56, artist_y, 690, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
 
         # --- 4. Botão Circular Flutuante Play/Pause à Direita ---

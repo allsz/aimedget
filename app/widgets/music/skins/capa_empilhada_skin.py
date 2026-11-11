@@ -20,6 +20,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QMenu
 
 from app.core.config_manager import config_manager
+from app.core.i18n import t
 from app.core.paths import APP_ICON_SVG
 from app.core.theme_art import paint_background, paint_stickers
 from app.core.widget_theme import art_margin_px
@@ -1238,7 +1239,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         painter.setFont(font_title)
         painter.setPen(self.pastel_theme.title_color)
         fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.title_text, Qt.TextElideMode.ElideRight, int(max_w))
+        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, int(max_w))
         painter.drawText(
             QRectF(text_x, 122.0, max_w, 52.0),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -1253,9 +1254,9 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
         clean_album = (self.album_text or "").strip()
         if clean_album and clean_album.lower() != self.title_text.lower():
-            subtitle_str = f"{self.artist_text} | {clean_album}"
+            subtitle_str = f"{self.shown_artist()} | {clean_album}"
         else:
-            subtitle_str = self.artist_text
+            subtitle_str = self.shown_artist()
 
         elided_sub = fm_sub.elidedText(subtitle_str, Qt.TextElideMode.ElideRight, int(max_w))
         painter.drawText(
@@ -1477,7 +1478,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         return QIcon(pm)
 
     def _get_skin_effects_title(self) -> str:
-        return "Efeitos da Capa"
+        return t("music_menu_effects_cover")
 
     def _get_skin_effects_icon(self, is_dark: bool = True) -> QIcon:
         return self._build_minimal_transition_icon(self.reveal_mode, active=True, is_dark=is_dark)
