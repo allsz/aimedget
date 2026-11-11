@@ -38,7 +38,7 @@ class AimedgetHubWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(" ")   # título "invisível": vazio ("") faz o Qt cair no nome do executável ("python"); sem display name do app, nada é acrescentado
+        self.setWindowTitle("Aimedget")   # aparece no preview da taskbar; na janela fica invisível (texto da barra pintado com a cor do fundo, ver _apply_theme)
         # Ícone sem fundo (transparente) para o cabeçalho e barra da janela do app
         self.setWindowIcon(create_aimedget_clean_icon(64))
         # Restaurar geometria salva ou aplicar tamanho padrão
@@ -387,7 +387,7 @@ class AimedgetHubWindow(QMainWindow):
         apply_windows_dwm_titlebar(
             hwnd=int(self.winId()),
             bg_hex=theme.bg,
-            text_hex=theme.text,
+            text_hex=theme.bg,   # texto do título = cor da barra: invisível na janela, mas o nome aparece no preview da taskbar
             is_dark=theme.is_dark,
         )
 

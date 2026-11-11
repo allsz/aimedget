@@ -23,7 +23,7 @@ class AimedgetTrayIcon(QSystemTrayIcon):
         # Encerrar: o Hub passa o encerramento completo (hub_window.quit_app); sem ele, sai direto do loop
         self._on_quit = on_quit or (lambda: QApplication.exit(0))
         self.setIcon(create_aimedget_icon(32))
-        self.setToolTip("Aimedget Suite")
+        self.setToolTip("Aimedget")
 
         if on_open_hub:
             self.open_hub_requested.connect(on_open_hub)
