@@ -28,6 +28,7 @@ class BaseMusicSkin(QWidget):
     command_requested = Signal(str, object)
     skin_switch_requested = Signal(str)
     manage_skins_requested = Signal()
+    close_requested = Signal()   # "Fechar widget" no menu de contexto
     volume_wheel_requested = Signal(float)  # entalhes da roda (+ = sobe, fracionário em touchpads)
 
     # Ordem canônica das skins no menu: (id, chave i18n do título)
@@ -89,7 +90,6 @@ class BaseMusicSkin(QWidget):
         self.current_palette: ThemePalette = get_default_palette()
         self.target_palette: ThemePalette = get_default_palette()
 
-    def _update_and_cache_cover(self, thumb_bytes: bytes) -> bool:
     # Faixa nova que segue "sem capa" por este tempo volta à capa padrão (antes disso, segura a anterior: evita piscar
     # o padrão nas trocas normais, em que a capa nova chega logo)
     DEFAULT_COVER_GRACE_S = 1.0
@@ -115,6 +115,7 @@ class BaseMusicSkin(QWidget):
             self._no_cover_since = now
         return now - self._no_cover_since >= self.DEFAULT_COVER_GRACE_S
 
+    def _update_and_cache_cover(self, thumb_bytes: bytes) -> bool:
         """
         Atualiza o QPixmap da capa e extrai automaticamente a nova paleta de cores dominante.
         Retém a capa anterior durante trocas rápidas de faixa para evitar piscadas.
@@ -125,8 +126,8 @@ class BaseMusicSkin(QWidget):
             if not img.isNull():
                 self.album_pixmap = QPixmap.fromImage(img)
                 self.target_palette = extract_palette_from_image(img)
-                return True
                 self._note_cover_for_track()
+                return True
         elif not thumb_bytes and self._default_cover_due():
             if self._last_thumb_bytes:
                 self._last_thumb_bytes = b""
@@ -236,6 +237,13 @@ class BaseMusicSkin(QWidget):
             p.drawRoundedRect(QRectF(5, 5, 22, 22), 4, 4)
             p.setPen(QPen(c_sub, 1.4))
             p.drawRoundedRect(QRectF(11, 11, 10, 10), 2, 2)
+        elif kind == "close":
+            # X de pontas arredondadas, no mesmo traço (1,8-2 px) dos demais ícones do menu
+            pen = QPen(c, 2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawLine(QPointF(9.5, 9.5), QPointF(22.5, 22.5))
+            p.drawLine(QPointF(22.5, 9.5), QPointF(9.5, 22.5))
 
         p.end()
         return QIcon(pm)
@@ -562,6 +570,12 @@ class BaseMusicSkin(QWidget):
         menu.set_trailing_check(act_remember_pos, is_remembered)
         act_remember_pos.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
         menu.addAction(act_remember_pos)
+
+        # Fechar o widget (como no Timer): última opção, separada das preferências
+        menu.addSeparator()
+        act_close = QAction(self._build_minimal_skin_icon("close", is_dark), t("menu_close_widget"), self)
+        act_close.triggered.connect(self.close_requested.emit)
+        menu.addAction(act_close)
 
         menu.exec(event.globalPos())
 

@@ -107,6 +107,7 @@ class MusicWidgetController(QObject):
                 self.skin.command_requested.disconnect(self.media_worker.send_command)
                 self.skin.skin_switch_requested.disconnect(self.set_skin)
                 self.skin.manage_skins_requested.disconnect(self.manage_skins_requested.emit)
+                self.skin.close_requested.disconnect(self._on_skin_close_requested)
                 self.skin.volume_wheel_requested.disconnect(self.volume_wheel_requested.emit)
                 repeat_signal = getattr(self.media_worker, "repeat_state_changed", None)
                 if repeat_signal is not None:
@@ -122,6 +123,7 @@ class MusicWidgetController(QObject):
         self.skin.command_requested.connect(self.media_worker.send_command)
         self.skin.skin_switch_requested.connect(self.set_skin)
         self.skin.manage_skins_requested.connect(self.manage_skins_requested.emit)
+        self.skin.close_requested.connect(self._on_skin_close_requested)
         self.skin.volume_wheel_requested.connect(self.volume_wheel_requested.emit)
         repeat_signal = getattr(self.media_worker, "repeat_state_changed", None)
         if repeat_signal is not None:
@@ -355,6 +357,10 @@ class MusicWidgetController(QObject):
         """Identificador do app/player de origem da mídia atual."""
         worker = self.media_worker
         return getattr(worker, "current_source_app_id", "") or getattr(worker, "_last_provider", "") or ""
+
+    def _on_skin_close_requested(self):
+        """"Fechar widget" no menu de contexto: mesmo caminho do atalho (a música atual não o reabre sozinha)."""
+        self.hide(by_user=True)
 
     def hide(self, soft: bool = False, by_user: bool = False):
         """

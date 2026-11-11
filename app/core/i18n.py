@@ -69,6 +69,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "skin_stacked_sub": "Envelopes 3D e pastel",
         "menu_skins": "Skins",
         "menu_manage_skins": "Gerenciar skins no Hub...",
+        "menu_close_widget": "Fechar widget",
         "music_skin_active_badge": "EM USO",
         "music_skin_toggle_tooltip": "Mostrar no menu de troca rápida do widget",
         "music_skin_min_one": "Mínimo de 1 skin deve permanecer ativa.",
@@ -301,6 +302,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "music_skin_toggle_tooltip": "Enable in quick switch menu",
         "menu_skins": "Skins",
         "menu_manage_skins": "Manage skins in Hub...",
+        "menu_close_widget": "Close widget",
         "music_skin_min_one": "At least 1 skin must remain active.",
 
         # Lock Keys Page
