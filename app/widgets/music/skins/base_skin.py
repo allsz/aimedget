@@ -4,7 +4,8 @@ from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColo
 from PySide6.QtWidgets import QWidget, QMenu
 from app.core.typography import init_app_font
 from app.core.config_manager import config_manager
-from app.core.widget_animator import SlideFadeAnimator
+from app.core.widget_animator import AnimatedSkinMixin
+from app.core.position_glide import glide_widget_to
 from app.core.i18n import t
 from app.services.repeat_modes import next_repeat_mode
 from app.core.colorimetry import (
@@ -15,7 +16,7 @@ from app.core.colorimetry import (
 from app.ui_components.fluent_menu import FluentMusicMenu
 
 
-class BaseMusicSkin(QWidget):
+class BaseMusicSkin(AnimatedSkinMixin, QWidget):
     """
     Classe base para qualquer Skin do Music Widget.
     Fornece:
@@ -66,7 +67,7 @@ class BaseMusicSkin(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedSize(*self._window_size())
         self.setMouseTracking(True)
-        self.animator = SlideFadeAnimator(self)
+        self._init_animator()
 
         # Estado base da mídia
         self.title_text = "Nenhuma mídia ativa"
@@ -271,6 +272,10 @@ class BaseMusicSkin(QWidget):
     def move_card_to(self, x: int, y: int):
         """Põe o CARTÃO em (x, y): as posições salvas e trocas de skin/tema falam do cartão, não da janela."""
         self.move(x - self.art_margin, y - self.art_margin)
+
+    def glide_card_to(self, x: int, y: int):
+        """Como move_card_to, mas com o widget na tela o cartão desliza do lugar atual até (x, y)."""
+        glide_widget_to(self, x - self.art_margin, y - self.art_margin)
 
     def _wanted_art_margin(self) -> int:
         """Margem que o tema atual pede nesta escala. Skins com tema de figurinhas sobrescrevem."""
@@ -606,10 +611,6 @@ class BaseMusicSkin(QWidget):
         if mode != self.repeat_mode:
             self.repeat_mode = mode
             self.update()
-
-    def rest_pos(self) -> QPoint:
-        """Posição real da janela, sem o deslocamento da animação de surgir/sumir."""
-        return self.animator.rest_pos()
 
     def _toggle_remember_position(self, checked: bool):
         """Salva a posição atual do cartão como favorita ou remove a preferência se desmarcado."""

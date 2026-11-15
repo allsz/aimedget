@@ -160,12 +160,11 @@ class HubServiceBridge(QObject):
 
     def toggle_timer_widget(self):
         """Alterna a visibilidade do Timer Widget."""
-        if self.timer_controller.skin and self.timer_controller.skin.isVisible():
+        if self.timer_controller.is_shown():   # saindo (fade-out em curso) conta como escondido: o atalho o traz de volta
             self.set_timer_enabled(False)
         else:
             self.set_timer_enabled(True)
             if self.timer_controller.skin:
-                self.timer_controller.skin.show()
                 self.timer_controller.skin.raise_()
                 self.timer_controller.skin.activateWindow()
 
@@ -316,7 +315,7 @@ class HubServiceBridge(QObject):
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
         self.music_controller.settle()
-        self.music_controller.skin.move_card_to(x, y)
+        self.music_controller.skin.glide_card_to(x, y)   # na tela, o cartão desliza até o lugar escolhido
         config_manager.set_music_position_remembered(True, x, y)
 
     # --- Âncora de cada flyout de sistema (Caps/Num Lock e Mixer; na mesma âncora eles se empilham) ---
@@ -411,7 +410,7 @@ class HubServiceBridge(QObject):
         margin = 24
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
-        self.timer_controller.skin.move_square_to(x, y)
+        self.timer_controller.skin.glide_square_to(x, y)   # na tela, o quadrado desliza até o lugar escolhido
         config_manager.set_timer_position_remembered(True, x, y)
 
     def on_theme_changed(self, theme=None):

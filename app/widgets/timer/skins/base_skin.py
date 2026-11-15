@@ -5,6 +5,8 @@ from PySide6.QtWidgets import QMenu, QWidget
 
 from app.core.config_manager import config_manager
 from app.core.i18n import i18n, t
+from app.core.position_glide import glide_widget_to
+from app.core.widget_animator import AnimatedSkinMixin
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
 from app.hub.theme import HubTheme, resolve_theme
@@ -73,7 +75,7 @@ class FluentTimerMenu(QMenu):
         p.end()
 
 
-class BaseTimerSkin(QWidget):
+class BaseTimerSkin(AnimatedSkinMixin, QWidget):
     """
     Classe base para skins do Timer Widget:
     - Janela frameless flutuante com fundo translúcido e Always-On-Top
@@ -110,6 +112,7 @@ class BaseTimerSkin(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
+        self._init_animator()   # surgir/sumir como o widget de música (ver widget_animator.py)
 
         # Tema visual escolhido no Hub (themes/timer/): cores por cima das do app, fundo e figurinhas
         self.skin_theme: timer_theme.TimerTheme = timer_theme.load_user_theme()
@@ -157,11 +160,16 @@ class BaseTimerSkin(QWidget):
         return self.width() - 2 * self.art_margin
 
     def square_origin(self) -> QPoint:
-        """Canto superior esquerdo do quadrado na tela: as posições salvas falam dele, não da janela."""
-        return self.pos() + QPoint(self.art_margin, self.art_margin)
+        """Canto superior esquerdo do quadrado na tela, sem o deslocamento da animação de surgir/sumir: as posições
+        salvas falam dele, não da janela."""
+        return self.rest_pos() + QPoint(self.art_margin, self.art_margin)
 
     def move_square_to(self, x: int, y: int):
         self.move(x - self.art_margin, y - self.art_margin)
+
+    def glide_square_to(self, x: int, y: int):
+        """Como move_square_to, mas com o widget na tela o quadrado desliza do lugar atual até (x, y)."""
+        glide_widget_to(self, x - self.art_margin, y - self.art_margin)
 
     def _wanted_art_margin(self, side: int) -> int:
         """Margem extra (px) que o tema pede para um quadrado de `side` px: o quanto as figurinhas passam da folga."""

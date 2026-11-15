@@ -4,9 +4,11 @@ import sys
 import time
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QWheelEvent
-from PySide6.QtWidgets import QApplication, QToolTip, QWidget
+from PySide6.QtWidgets import QToolTip, QWidget
 
 from app.core import osd_anchor
+from app.core.position_glide import PositionGlide, reposition_with_glide
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
 from app.services.audio_mixer_service import AppAudioSession
@@ -160,6 +162,10 @@ class VolumeMixerFlyout(QWidget):
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._try_start_hide)
 
+        # Troca de posição com o flyout na tela: o card desliza do lugar antigo para o novo (ver set_anchor)
+        self._glide = PositionGlide(self.move, parent=self)
+        self._glide.finished.connect(self._on_glide_finished)
+
         # Clique fora do card esconde o mixer (ver _poll_outside_click); só roda enquanto a janela está visível
         self._mouse_was_down = False
         self._click_timer = QTimer(self)
@@ -176,9 +182,7 @@ class VolumeMixerFlyout(QWidget):
 
     def _sync_refresh_rate_interval(self):
         """Ajusta o intervalo do timer para a taxa de atualização nativa do monitor onde o OSD aparece."""
-        scr = self.screen() or (QApplication.instance().primaryScreen() if QApplication.instance() else None)
-        hz = float(scr.refreshRate()) if scr and scr.refreshRate() > 10.0 else 60.0
-        interval_ms = max(1, int(round(1000.0 / hz)))
+        interval_ms = refresh_interval_ms(self)
         if self._anim_timer.interval() != interval_ms:
             self._anim_timer.setInterval(interval_ms)
 
@@ -275,6 +279,8 @@ class VolumeMixerFlyout(QWidget):
         - embaixo / meio: [folga][card][folga][deslize]
         - em cima:        [folga][deslize][card][folga]
         """
+        if self._glide.is_running():
+            return   # o deslize leva a janela; ao terminar ela é posta no lugar exato (_on_glide_finished)
         pos = self._target_pos(self.height())
         if pos is not None:
             self.move(pos[0], pos[1])
@@ -343,17 +349,30 @@ class VolumeMixerFlyout(QWidget):
     # --- Âncora e empilhamento com o Caps Lock ---
 
     def set_anchor(self, anchor: str):
-        """Troca a âncora (Hub) e reposiciona na hora, inclusive com o flyout na tela."""
+        """
+        Troca a âncora (Hub) e reposiciona, inclusive com o flyout na tela: o card desliza do lugar antigo até o
+        novo (ver app/core/position_glide.py). Escondido, ou sem efeitos de animação, vai direto.
+        """
         anchor = osd_anchor.normalize(anchor)
         if anchor == self._anchor:
             return
-        self._anchor = anchor
-        self._update_stack_offset_target()
-        self._stack_offset = self._stack_offset_target
-        self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)
-        if self.isVisible():
+
+        def relayout():
+            self._anchor = anchor
+            self._update_stack_offset_target()
+            self._stack_offset = self._stack_offset_target
+            self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)   # a janela vai ao lugar FINAL
+
+        gliding = reposition_with_glide(self, self._glide, lambda: self._card_rect().topLeft(), relayout)
+        if self.isVisible() and not gliding:
             self._notify_card_top()
+        if self.isVisible():
             self.update()
+
+    def _on_glide_finished(self):
+        """Terminou de deslizar: confere o lugar exato (pode ter mudado no caminho) e avisa o Caps Lock empilhado."""
+        self._place_window()
+        self._notify_card_top()
 
     def anchor(self) -> str:
         return self._anchor
@@ -525,6 +544,7 @@ class VolumeMixerFlyout(QWidget):
         self.visibility_changed.emit(True)
 
     def hideEvent(self, event):
+        self._glide.stop(settle=True)   # escondido no meio do deslize: já fica no lugar final para a próxima vez
         self._click_timer.stop()
         self._tip_hide_timer.stop()
         QToolTip.hideText()
@@ -540,6 +560,10 @@ class VolumeMixerFlyout(QWidget):
         Se já estiver visível, apenas atualiza os valores e renova o tempo de exposição.
         """
         self._apply_theme(load_user_theme())  # relê só se algum arquivo do tema mudou
+        # Quem pede para mostrar o flyout pode estar reagindo a um clique que ainda está apertado (o seletor de posição
+        # do Hub age ao APERTAR). Esse aperto não é um "clique fora": sem isto, com o preview anterior ainda na tela
+        # (o showEvent não roda), o monitor de clique-fora via o mesmo aperto e escondia o flyout recém-mostrado.
+        self._mouse_was_down = self._buttons_down()
 
         if volume is not None and is_muted is not None:
             self.on_master_volume_changed(volume, is_muted)
