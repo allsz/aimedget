@@ -697,7 +697,10 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
         def _worker():
             album_name, extra_bytes_list = fetch_stack_extras(title, artist)
-            self._extras_ready.emit(track_key, album_name, extra_bytes_list)
+            try:
+                self._extras_ready.emit(track_key, album_name, extra_bytes_list)
+            except RuntimeError:
+                pass   # a skin foi trocada/fechada enquanto a busca rodava: não há mais para quem entregar
 
         threading.Thread(target=_worker, daemon=True).start()
 

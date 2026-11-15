@@ -24,8 +24,8 @@ Como ler este guia:
 1. Crie uma pasta com um arquivo `theme.json` e as imagens ao lado dele.
 2. Teste: `python tools/validate_theme.py <sua-pasta> --container keylock` (ou `mixer`, `music`, `timer`). Ele diz o que
    está errado.
-3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar tema** na página daquela parte do app.
-4. Para compartilhar: use **Exportar tema** (gera o `.aimskin`) e envie o arquivo.
+3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar** na página daquela parte do app.
+4. Para compartilhar: use **Exportar** (gera o `.aimskin`) e envie o arquivo.
 
 Exemplo mínimo (muda só as cores do Caps/Num Lock):
 
@@ -67,7 +67,7 @@ Cada tema é uma **pasta** dentro da pasta de temas do usuário:
 
 - No Hub, em **Lock keys**, **Volume & mixer**, **Música** e **Timer**, cada tema vira um cartão com miniatura. Clique para usar.
 - O botão **Abrir pasta de temas** abre essa pasta no Explorer.
-- O botão **Excluir tema…** apaga o tema **em uso** daquela parte do app (depois de pedir confirmação, com a opção de
+- O botão **Excluir** apaga o tema **em uso** daquela parte do app (depois de pedir confirmação, com a opção de
   **exportar antes**). Se ele estava em uso, o visual volta ao Padrão. Os visuais que já vêm com o app (Padrão, Windows e
   os temas de fábrica, como o Keycap Digital) não podem ser excluídos. Se o mesmo tema existir em outras partes do app,
   ele continua instalado lá. Também dá para apagar a pasta do tema à mão: o app volta ao padrão na próxima abertura.
@@ -177,6 +177,14 @@ O mixer **não** tem `scale` nem `auto_scale` (usar `scale` aqui é "chave desco
 | `shadow` | ver 3.4 | sombra original | Sombra suave do cartão |
 | `background` | ver 3.5 | nenhum | Imagem de fundo |
 | `stickers` | lista, ver 3.6 | nenhuma | Figurinhas (até 12) |
+| `tilt` | número −12 a 12 (graus) | 0 | Inclina o cartão inteiro (ver 3.10) |
+| `plates` | lista, ver 3.10 | nenhuma | Placas coloridas atrás do cartão (até 6): dão forma própria ao cartão |
+| `slider_style` | `"fluent"` ou `"bar"` | `"fluent"` | `"bar"` = sliders como faixa lisa, sem botão (ver 3.10) |
+| `slider_height` | número 2–24 | 4 | Altura do trilho / da faixa dos sliders |
+| `slider_slant` | número −1 a 1 | 0 | Só com `"bar"`: pontas inclinadas da faixa (fração da altura) |
+| `slider_taper` | número 0.3 a 3 | 1 | Só com `"bar"`: faixa em cunha; altura da ponta direita ÷ altura da esquerda (1.3 = 30% mais alta à direita) |
+| `header` | ver 3.10 | posições originais | Onde ficam a faixa do volume principal e o botão da seta (`{"slider": [x1, x2], "chevron_x": x}`) |
+| `digits` | ver 3.10 | nenhum | Número do volume principal desenhado com uma imagem (0 a 9) |
 | `container` | texto | — | Só em pacote com `theme.json` solto (seção 5) |
 
 Medidas do cartão (em px): **largura 240**; altura **50** recolhido, crescendo com a lista de apps até **370**. Por isso, no
@@ -271,12 +279,14 @@ Desenhe o LED apagado no fundo e um LED aceso (com brilho) como figurinha `on`, 
 ### 3.7 O que ainda **não** é possível (diga isso em vez de improvisar)
 
 - **Mudar o formato do cartão além de tamanho e cantos** (formas irregulares, cartão fora do retângulo arredondado).
+  Exceção: o **mixer** aceita inclinação e placas (3.10).
 - **Arte diferente por tecla** (uma para Caps, outra para Num): o tema vale para as duas. O nome da tecla é sempre escrito pelo
   app; a imagem de fundo não deve conter o nome.
 - **Trocar o cadeado por outro ícone animado**: dá para esconder (`show_icon`), ou desenhar outro como figurinha, mas sem a
   animação de abrir/fechar.
-- **Fonte própria**: a letra é sempre a do app (só tamanho, cor e caixa mudam).
-- **Animações novas** ou sons.
+- **Fonte própria**: a letra é sempre a do app (só tamanho, cor e caixa mudam). Exceção: o número do volume principal
+  do mixer pode ser uma imagem (`digits`, 3.10); os números dos apps continuam na letra do app.
+- **Animações novas** ou sons (o "pulo" do `digits` é a única animação de tema).
 - **Mixer**: não tem `scale`, `size`, nem figurinhas por estado.
 - **Widgets (Música e Timer)**: só cores, fundo e figurinhas (que podem passar da borda). Não têm `shadow`, `radius`, `scale` nem
   `size` (o formato e o tamanho são os da skin, e o usuário redimensiona o widget). O tema de Música vale **só para a skin Capa Empilhada**; o de
@@ -384,6 +394,92 @@ fundo sugerida: **444 × 444 px** (quadrada). Figurinhas pequenas (18–24 px) *
 }
 ```
 
+### 3.10 Forma própria do Volume e mixer (`tilt`, `plates`, `slider_style`, `digits`)
+
+Quatro recursos, **só do mixer**, tiram o painel do "cartão retangular" sem código: tudo continua sendo dados. Eles
+precisam de uma versão do Aimedget **mais nova que a 1.0.4**: uma versão antiga abre o tema, mas ignora essas chaves (e
+avisa "chave desconhecida" na importação).
+
+**`tilt`** — inclina o cartão inteiro (conteúdo, figurinhas e placas juntos), em graus; negativo sobe o lado direito.
+Os cliques continuam funcionando. A borda presa à âncora da tela fica parada quando a lista de apps abre.
+
+**`plates`** — placas coloridas **atrás** do cartão, desenhadas na ordem da lista (a última fica por cima). Cada placa é um
+quadrilátero preso aos quatro cantos do cartão:
+
+```json
+"plates": [{"color": "#e5001c", "corners": [[-7, -16], [31, -20], [4, 23], [-30, 12]]}]
+```
+
+| Campo | Valores | Significado |
+|---|---|---|
+| `color` | cor | **Obrigatório** |
+| `corners` | 4 pares `[x, y]`, de −80 a 80 px | Deslocamento de cada canto da placa em relação ao canto do cartão, na ordem **superior esquerdo, superior direito, inferior direito, inferior esquerdo**. `x` positivo = direita, `y` positivo = **para baixo** |
+
+Como os cantos acompanham o cartão, a placa cresce junto quando a lista de apps abre. Para o cartão sumir e só as placas
+aparecerem, use `"card_bg": "#00000000"`, `"border": "#00000000"` e `"shadow": {"color": "#00000000"}`; faça a placa de
+cima cobrir o cartão inteiro (cantos de cima com `y` negativo, de baixo com `y` positivo), pois o conteúdo é desenhado
+sobre ela.
+
+**`"slider_style": "bar"`** — todos os sliders (principal e dos apps) viram uma faixa lisa, sem botão: `accent` é a parte
+preenchida e `track_inactive` a vazia (`thumb*` deixam de aparecer). `slider_height` é a altura da faixa e
+`slider_slant` inclina as pontas e o corte do preenchimento (0.35 = o topo avança 35% da altura em relação à base).
+
+**`header`** — move a faixa do volume principal e o botão da seta no cabeçalho, em px do cartão (o cartão tem 240 de
+largura; pode passar da borda, a janela cresce sozinha):
+
+```json
+"header": {"slider": [40, 235], "chevron_x": 244}
+```
+
+`slider` é `[x inicial, x final]` (mínimo 40 px de comprimento; padrão `[45, 162]`) e `chevron_x` é onde começa o botão da seta
+(26 px de largura; padrão 203). O alto-falante continua em x = 23 e o número em texto em x = 167 a 198: com uma faixa mais
+longa, use `digits` para o número. Só vale para o volume principal; as faixas dos apps ficam onde estão. `slider_taper`
+transforma as faixas (principal e dos apps) em cunha.
+
+**`digits`** — o número do volume principal desenhado com uma imagem, por cima de tudo:
+
+```json
+"digits": {"image": "digitos.png", "height": 46, "x": 3, "y": 7, "spacing": -4, "tilt": [5, -6, 4], "pop": true}
+```
+
+| Campo | Valores | Significado |
+|---|---|---|
+| `image` | `.png` `.jpg` `.jpeg` `.webp` | **Obrigatório.** Os algarismos **0 a 9 lado a lado, em 10 células de largura igual** (fundo transparente). O app recorta a sobra lateral de cada célula, então o "1" fica estreito |
+| `height` | 10 a 64 (px) | Altura da célula na tela (padrão 28) |
+| `x`, `y` | −60 a 60 (px) | Deslocamento a partir do lugar normal do número (alinhado à direita, antes do botão da seta) |
+| `spacing` | −20 a 20 (px) | Espaço entre algarismos (negativo = encavalados) |
+| `tilt` | lista de até 3 números, −20 a 20 | Inclinação de cada casa, **da direita para a esquerda** (unidade, dezena, centena) |
+| `pop` | `true`/`false` | "Pulo" rápido do número quando o volume muda (padrão `true`) |
+| `muted_opacity` | 0 a 1 | Transparência do número com o áudio mudo (padrão 0.5) |
+
+O número pode passar da borda do cartão (a janela cresce sozinha). Ele cobre o que estiver embaixo, inclusive a ponta
+do slider: confira no app.
+
+<!-- validar: mixer -->
+```json
+{
+  "name": "Exemplo Faixa Inclinada",
+  "card_bg": "#00000000",
+  "border": "#00000000",
+  "radius": 0,
+  "shadow": {"color": "#00000000", "blur": 0, "dy": 0},
+  "tilt": -6,
+  "plates": [
+    {"color": "#e5001c", "corners": [[-7, -16], [31, -20], [4, 23], [-30, 12]]},
+    {"color": "#ffffff", "corners": [[-4, -11], [22, -11], [0, 16], [-23, 9]]},
+    {"color": "#000000", "corners": [[-2, -3], [12, -3], [2, 3], [-12, 3]]}
+  ],
+  "accent": "#ffffff",
+  "track_inactive": "#b9b9b9",
+  "slider_style": "bar",
+  "slider_height": 13,
+  "slider_slant": 0.35,
+  "slider_taper": 1.3,
+  "header": {"slider": [40, 235], "chevron_x": 244},
+  "digits": {"image": "digitos.png", "height": 46, "x": 3, "y": 7, "spacing": -4, "tilt": [5, -6, 4], "pop": true}
+}
+```
+
 ---
 
 ## 4. Regras e limites dos arquivos
@@ -485,13 +581,13 @@ demais, tamanho demais ou zip corrompido.
 
 ### Exportar
 
-**Exportar tema** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
+**Exportar** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
 de mesmo id em outros destinos, ele vai junto no mesmo pacote: exportar a "Lavanda" de qualquer página leva a Lavanda de todos
 os destinos que a tiverem. Os visuais que já vêm com o app (Padrão, Windows, Cores da capa) não se exportam.
 
 ### Excluir
 
-**Excluir tema…** age sobre o tema **em uso** da página onde você está, como o Exportar. A janela de confirmação lista onde o
+**Excluir** age sobre o tema **em uso** da página onde você está, como o Exportar. A janela de confirmação lista onde o
 mesmo tema continua instalado e oferece **Exportar e excluir**: o tema só é apagado depois de o arquivo ser salvo. Enter e Esc
 cancelam. Os visuais que vêm com o app não se excluem.
 
@@ -550,6 +646,10 @@ Saída de exemplo:
 | `'size' precisa ser [largura, altura]` | Formato errado (`"140x52"`, um número só) | Escreva `[140, 52]` |
 | `no máximo 12 figurinhas` | Mais de 12 | Remova ou junte figurinhas |
 | `'fit' inválido` | Valor diferente de `cover`/`stretch` | Use um dos dois |
+| `'slider_style' inválido` | Valor diferente de `fluent`/`bar` | Use um dos dois |
+| `placa N: 'corners' precisa ter 4 pares [x, y]` | Menos ou mais de 4 cantos, ou valor que não é número | Escreva `[[x,y],[x,y],[x,y],[x,y]]` (sup-esq, sup-dir, inf-dir, inf-esq) |
+| `cabeçalho: 'slider' precisa ser [x_inicial, x_final]` | Faixa com um valor só, texto, ou menos de 40 px de comprimento | Escreva `[40, 235]` |
+| `algarismos: a imagem ... precisa ter os 10 algarismos` | Folha do `digits` estreita demais | Uma imagem só, com 0 a 9 lado a lado em células iguais |
 | `'name' passa de 40 letras` | Nome comprido | Encurte |
 | `'shadow' não existe nos widgets` | `shadow` num tema de Música ou Timer | Tire o `shadow` (widgets não têm sombra de tema) |
 | `'layer': 'behind' não existe nos widgets` | Figurinha `behind` em Música ou Timer | Use `below` (atrás do conteúdo) ou `above` |
@@ -582,7 +682,7 @@ ignorar nada. Você **não vê o app**, então use o validador para as regras e 
    tabela da seção 7 e rode de novo. Repita até `"ok": true` em todos os alvos. Não entregue com `issues` pendentes.
 5. Gere o `.aimskin` com `python tools/pack_theme.py <pasta> -o <saida>.aimskin` (ele valida de novo, recusa se sobrar
    qualquer `issue` e confere que o pacote importa). Se precisar montar o zip à mão, as pastas de destino ficam **na raiz do zip**.
-6. Entregue e peça ao humano: *Importar tema → conferir a aparência → dizer o que ajustar*.
+6. Entregue e peça ao humano: *Importar → conferir a aparência → dizer o que ajustar*.
 
 Saída do `--json` (uma lista, um item por destino):
 
@@ -604,6 +704,7 @@ igual ao padrão: algo está errado).
 - **[REGRA]** Fundo: png/jpg/jpeg/webp (nunca SVG). Figurinha: também aceita SVG.
 - **[REGRA]** Se o SVG do designer tiver bitmap embutido, script ou referência externa, **não o use**: peça PNG.
 - **[REGRA]** O mixer **não** tem `scale`/`auto_scale`/`size`, e `state` em figurinha só vale no Caps/Num Lock.
+- **[REGRA]** `tilt`, `plates`, `slider_style`, `slider_height`, `slider_slant`, `slider_taper`, `header` e `digits` existem **só no mixer** (3.10).
 - **[REGRA]** Música e Timer **não** têm `shadow`, `radius`, `scale` nem `size`, nem figurinhas `behind`.
 - **[REGRA]** Se o desenho pedir algo da seção 3.7, avise em vez de inventar chave.
 - **[REGRA]** Não coloque no pacote nada além de `theme.json` e as imagens usadas. Não inclua arte que você não recebeu.

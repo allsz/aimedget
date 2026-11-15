@@ -413,6 +413,48 @@ class MixerFlyoutGeometryTests(_Dir):
         m._anim_card_h = 50.0
         return m
 
+    def test_changing_position_while_visible_is_never_seen_half_done(self):
+        """Regressão: mover a janela translúcida mostrava, por um quadro, o bitmap antigo na posição nova (o "teleporte").
+        A janela precisa ficar invisível durante a troca e só reaparecer, já redesenhada, no lugar novo."""
+        from unittest import mock
+        m = self._flyout(mx_theme.DEFAULT_THEME)
+        m.set_anchor("bc")
+        m.show()
+        try:
+            calls = []
+            real_opacity, real_move, real_repaint = m.setWindowOpacity, m.move, m.repaint
+            with mock.patch.object(m, "setWindowOpacity", side_effect=lambda v: (calls.append(("opacity", v)), real_opacity(v))),                     mock.patch.object(m, "move", side_effect=lambda *a: (calls.append(("move",)), real_move(*a))),                     mock.patch.object(m, "repaint", side_effect=lambda: (calls.append(("repaint",)), real_repaint())):
+                m.set_anchor("tr")
+            kinds = [c[0] if c[0] != "opacity" else f"opacity={c[1]}" for c in calls]
+            self.assertEqual(kinds.index("opacity=0.0"), 0, "primeiro some")
+            self.assertLess(kinds.index("opacity=0.0"), kinds.index("move"), "some ANTES de mover")
+            self.assertLess(kinds.index("move"), kinds.index("opacity=1.0"), "só reaparece DEPOIS de mover")
+            self.assertEqual(kinds[kinds.index("opacity=1.0") - 1], "repaint", "e só depois de redesenhado no lugar novo")
+            self.assertEqual(kinds[-1], "repaint")
+            self.assertEqual(m.windowOpacity(), 1.0)
+            self.assertEqual(m.anchor(), "tr")
+        finally:
+            m.hide()
+
+    def test_changing_position_while_hidden_does_not_touch_the_opacity(self):
+        from unittest import mock
+        m = self._flyout(mx_theme.DEFAULT_THEME)
+        with mock.patch.object(m, "setWindowOpacity") as opacity:
+            m.set_anchor("tl")
+        opacity.assert_not_called()
+        self.assertEqual(m.anchor(), "tl")
+
+    def test_setting_the_same_anchor_does_nothing(self):
+        from unittest import mock
+        m = self._flyout(mx_theme.DEFAULT_THEME)
+        m.show()
+        try:
+            with mock.patch.object(m, "setWindowOpacity") as opacity:
+                m.set_anchor(m.anchor())
+            opacity.assert_not_called()
+        finally:
+            m.hide()
+
     def test_card_stays_centered_and_aligned_when_art_adds_margins(self):
         self.write("a.svg", SVG_GREEN)
         plain = self._flyout(mx_theme.DEFAULT_THEME)
@@ -465,7 +507,7 @@ class MixerFlyoutGeometryTests(_Dir):
                 before = (m.x() + r0.left(), m.y() + r0.bottom())
                 m._apply_theme(art)                                    # com o flyout VISÍVEL
                 ml, mt, mr, mb = m._margins
-                max_h = m.EXPANDED_MAX_H if expanded else m.COLLAPSED_H
+                max_h = m.EXPANDED_MAX_H   # a janela fica sempre com espaço para a gaveta (evita o flash ao expandir)
                 self.assertEqual(m.width(), int(m.CARD_W + ml + mr), expanded)
                 self.assertEqual(m.height(), int(max_h + mt + mb + m.SLIDE_TRAVEL_PX), expanded)
                 r = m._card_rect()

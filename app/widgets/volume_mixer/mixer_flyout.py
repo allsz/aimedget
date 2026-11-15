@@ -1,15 +1,18 @@
+import ctypes
 import math
+import sys
 import time
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QWheelEvent
-from PySide6.QtWidgets import QApplication, QToolTip, QWidget
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QWheelEvent
+from PySide6.QtWidgets import QToolTip, QWidget
 
 from app.core import osd_anchor
+from app.core.position_glide import PositionGlide, reposition_with_glide
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
 from app.services.audio_mixer_service import AppAudioSession
 from app.core.theme_art import (
-    overflow_margins,
     paint_background,
     paint_card_shadow,
     paint_stickers,
@@ -17,6 +20,9 @@ from app.core.theme_art import (
 )
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_theme
+from app.widgets.volume_mixer.theme_shape import (
+    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, paint_digits, paint_plates, pop_amount, tilt_transform,
+)
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow
 
 
@@ -87,6 +93,9 @@ class VolumeMixerFlyout(QWidget):
         self._art_left = 0.0
         self._art_right = 0.0
         self._canvas_expanded = False   # tamanho de janela em uso (recolhido ou com espaço para a gaveta)
+        # Número em imagem (tema com `digits`): último valor desenhado e quando ele mudou (o "pulo")
+        self._digits_value: int | None = None
+        self._digits_pop_start = 0.0
 
         # Âncora na tela e empilhamento com o Caps Lock no meio da tela: o mixer desce metade da altura do
         # Caps Lock (+ o espaço entre eles) para o PAR ficar centralizado; animado para os dois se afastarem juntos
@@ -153,6 +162,16 @@ class VolumeMixerFlyout(QWidget):
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._try_start_hide)
 
+        # Troca de posição com o flyout na tela: o card desliza do lugar antigo para o novo (ver set_anchor)
+        self._glide = PositionGlide(self.move, parent=self)
+        self._glide.finished.connect(self._on_glide_finished)
+
+        # Clique fora do card esconde o mixer (ver _poll_outside_click); só roda enquanto a janela está visível
+        self._mouse_was_down = False
+        self._click_timer = QTimer(self)
+        self._click_timer.setInterval(15)
+        self._click_timer.timeout.connect(self._poll_outside_click)
+
         # Nome do app ao passar o mouse no ícone: some com um atraso curto (ver _update_app_tooltip)
         self._tip_hide_timer = QTimer(self)
         self._tip_hide_timer.setSingleShot(True)
@@ -163,9 +182,7 @@ class VolumeMixerFlyout(QWidget):
 
     def _sync_refresh_rate_interval(self):
         """Ajusta o intervalo do timer para a taxa de atualização nativa do monitor onde o OSD aparece."""
-        scr = self.screen() or (QApplication.instance().primaryScreen() if QApplication.instance() else None)
-        hz = float(scr.refreshRate()) if scr and scr.refreshRate() > 10.0 else 60.0
-        interval_ms = max(1, int(round(1000.0 / hz)))
+        interval_ms = refresh_interval_ms(self)
         if self._anim_timer.interval() != interval_ms:
             self._anim_timer.setInterval(interval_ms)
 
@@ -220,13 +237,33 @@ class VolumeMixerFlyout(QWidget):
         self.update()
 
     def _apply_window_canvas_size(self, expanded_canvas: bool):
-        """Ajusta o tamanho da janela (recolhido ou com espaço para a gaveta) e a reposiciona pela âncora."""
-        self._canvas_expanded = expanded_canvas
+        """
+        Ajusta o tamanho da janela e a reposiciona pela âncora. A janela fica SEMPRE com espaço para a gaveta
+        (`expanded_canvas` é ignorado): expandir/recolher só muda o que é pintado dentro dela. Redimensionar uma
+        janela translúcida a cada clique mostrava, por um quadro, o bitmap antigo (o card recolhido) no topo da
+        janela nova antes de o conteúdo certo chegar: era o flash do card "pulando" antes da animação. Os pixels
+        transparentes da janela deixam o clique passar, então a área extra não bloqueia nada.
+        """
+        self._canvas_expanded = True
         ml, mt, mr, mb = self._margins
         win_w = int(self.CARD_W + ml + mr)
         win_h = int(self._slot_height() + mt + mb + self.SLIDE_TRAVEL_PX)
-        self.setFixedSize(win_w, win_h)
-        self._place_window()
+        if (win_w, win_h) == (self.width(), self.height()):
+            self._place_window()
+            return
+        # Tamanho E posição numa operação só. Antes era setFixedSize + move (duas chamadas ao Windows): entre elas a
+        # janela translúcida aparecia um quadro com o bitmap antigo na posição errada (o flicker/tearing ao expandir
+        # e ao fim do recolhimento). Sem travar o tamanho primeiro, o setGeometry não é limitado pelo fixo antigo.
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        pos = self._target_pos(win_h)
+        if pos is None:
+            self.resize(win_w, win_h)
+        else:
+            self.setGeometry(pos[0], pos[1], win_w, win_h)
+        self.setFixedSize(win_w, win_h)   # já está no tamanho: só trava, sem novo resize
+        if self.isVisible():
+            self.repaint()   # pinta já no tamanho novo, antes de o compositor mostrar um quadro com o conteúdo velho
 
     def _slot_height(self) -> float:
         """Altura máxima que o card pode ter com o tamanho de janela em uso."""
@@ -242,9 +279,17 @@ class VolumeMixerFlyout(QWidget):
         - embaixo / meio: [folga][card][folga][deslize]
         - em cima:        [folga][deslize][card][folga]
         """
+        if self._glide.is_running():
+            return   # o deslize leva a janela; ao terminar ela é posta no lugar exato (_on_glide_finished)
+        pos = self._target_pos(self.height())
+        if pos is not None:
+            self.move(pos[0], pos[1])
+
+    def _target_pos(self, win_h: int) -> tuple[int, int] | None:
+        """Posição (x, y) da janela para a altura `win_h` (separado do move para poder mover e redimensionar juntos)."""
         avail = osd_anchor.primary_available_geometry()
         if avail is None:
-            return
+            return None
         ml, mt, _mr, mb = self._margins
         card_x = osd_anchor.card_left_x(self._anchor, avail, float(self.CARD_W), self._art_left, self._art_right)
         x = int(round(card_x - ml))
@@ -258,8 +303,8 @@ class VolumeMixerFlyout(QWidget):
             y = center - (mt + self._slot_height() / 2.0)
         else:
             card_bottom_gap = edge_gap + self._art_bottom
-            y = avail.y() + avail.height() - card_bottom_gap + mb + self.SLIDE_TRAVEL_PX - self.height()
-        self.move(x, int(round(y)))
+            y = avail.y() + avail.height() - card_bottom_gap + mb + self.SLIDE_TRAVEL_PX - win_h
+        return x, int(round(y))
 
     def _card_rect(self) -> QRectF:
         x0 = self._margins[0]
@@ -278,20 +323,56 @@ class VolumeMixerFlyout(QWidget):
             y0 = base_bottom + slide_offset - card_h
         return QRectF(x0, y0, float(self.CARD_W), card_h)
 
+    def _header(self) -> Header:
+        """Onde ficam a faixa do volume principal e o botão da seta (o tema pode mudar; o padrão é o original)."""
+        return self.theme.header or DEFAULT_HEADER
+
+    def _master_span(self, x0: float) -> tuple[float, float]:
+        """(x inicial, x final) da faixa do volume principal na tela do card."""
+        a, b = self._header().slider
+        return x0 + a, x0 + b
+
+    def _tilt_transform(self):
+        """Rotação do card pedida pelo tema (`tilt`), ou None. Vale para a pintura e, invertida, para o mouse."""
+        if not self.theme.tilt:
+            return None
+        return tilt_transform(self._card_rect(), self.theme.tilt, self._vertical())
+
+    def _card_point(self, pos: QPointF) -> QPointF:
+        """Ponto do mouse no sistema do card (desfaz a inclinação do tema)."""
+        tf = self._tilt_transform()
+        if tf is None:
+            return pos
+        inverse, ok = tf.inverted()
+        return inverse.map(pos) if ok else pos
+
     # --- Âncora e empilhamento com o Caps Lock ---
 
     def set_anchor(self, anchor: str):
-        """Troca a âncora (Hub) e reposiciona na hora, inclusive com o flyout na tela."""
+        """
+        Troca a âncora (Hub) e reposiciona, inclusive com o flyout na tela: o card desliza do lugar antigo até o
+        novo (ver app/core/position_glide.py). Escondido, ou sem efeitos de animação, vai direto.
+        """
         anchor = osd_anchor.normalize(anchor)
         if anchor == self._anchor:
             return
-        self._anchor = anchor
-        self._update_stack_offset_target()
-        self._stack_offset = self._stack_offset_target
-        self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)
-        if self.isVisible():
+
+        def relayout():
+            self._anchor = anchor
+            self._update_stack_offset_target()
+            self._stack_offset = self._stack_offset_target
+            self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)   # a janela vai ao lugar FINAL
+
+        gliding = reposition_with_glide(self, self._glide, lambda: self._card_rect().topLeft(), relayout)
+        if self.isVisible() and not gliding:
             self._notify_card_top()
+        if self.isVisible():
             self.update()
+
+    def _on_glide_finished(self):
+        """Terminou de deslizar: confere o lugar exato (pode ter mudado no caminho) e avisa o Caps Lock empilhado."""
+        self._place_window()
+        self._notify_card_top()
 
     def anchor(self) -> str:
         return self._anchor
@@ -329,6 +410,8 @@ class VolumeMixerFlyout(QWidget):
         self.master_slider.apply_colors(
             theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive
         )
+        self.master_slider.apply_style(theme.slider_style, theme.slider_height, theme.slider_slant, theme.slider_taper)
+        self._digits_value = None   # o primeiro número do tema novo aparece sem pulo
         for row in self._rows:
             row.apply_theme(theme)
         self._update_margins()
@@ -339,8 +422,8 @@ class VolumeMixerFlyout(QWidget):
     def _update_margins(self):
         """Folga da janela para sombra e figurinhas que passam da borda (senão a janela transparente as corta)."""
         base = float(self.SHADOW_MARGIN)
-        ov_l, ov_t, ov_r, ov_b = overflow_margins(
-            self.theme.stickers, self.theme.shadow, float(self.CARD_W), float(self.EXPANDED_MAX_H)
+        ov_l, ov_t, ov_r, ov_b = art_overflow(
+            self.theme, float(self.CARD_W), (float(self.COLLAPSED_H), float(self.EXPANDED_MAX_H))
         )
         grow = lambda ov: max(base, math.ceil(ov) + 2.0) if ov else base
         self._margins = (grow(ov_l), grow(ov_t), grow(ov_r), grow(ov_b))
@@ -419,11 +502,50 @@ class VolumeMixerFlyout(QWidget):
         self.card_top_changed.emit(top, is_active)
         self.card_bounds_changed.emit(top, bottom, is_active)
 
+    def _buttons_down(self) -> bool:
+        """Algum botão do mouse (esquerdo, direito ou do meio) está apertado em QUALQUER lugar do sistema?"""
+        if sys.platform != "win32":
+            return False
+        get_state = ctypes.windll.user32.GetAsyncKeyState
+        return any(get_state(vk) & 0x8000 for vk in (0x01, 0x02, 0x04))
+
+    def _poll_outside_click(self):
+        """
+        O flyout não recebe foco, então um clique em outra janela não chega até ele. Aqui o clique é detectado pelo
+        estado global do mouse (só a borda de descida: apertar) e, se caiu fora do card, o mixer some na hora.
+        """
+        down = self._buttons_down()
+        pressed_now = down and not self._mouse_was_down
+        self._mouse_was_down = down
+        if not pressed_now or self._is_hiding or self._slide_t < 0.5:
+            return
+        # Mesmo mapeamento do mouse do resto do flyout: desfaz a inclinação do tema; a arte que sai do card (placas,
+        # figurinhas) conta como dentro, senão clicar na seta de um tema inclinado/com placas seria "fora"
+        pt = self._card_point(QPointF(self.mapFromGlobal(QCursor.pos())))
+        card = self._card_rect().adjusted(
+            -(self._art_left + 6.0), -(self._art_top + 6.0), self._art_right + 6.0, self._art_bottom + 6.0)
+        if not card.contains(pt):
+            self._hide_now()
+
+    def _hide_now(self):
+        """Esconde já (clique fora), sem esperar o tempo de inatividade."""
+        self._hide_timer.stop()
+        self._is_hiding = True
+        self._slide_start_t = self._slide_t
+        self._slide_target_t = 0.0
+        self._slide_anim_start = time.perf_counter()
+        self._start_anim_timer()
+        self._notify_card_top()
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._mouse_was_down = self._buttons_down()   # um clique que já estava apertado ao abrir não conta
+        self._click_timer.start()
         self.visibility_changed.emit(True)
 
     def hideEvent(self, event):
+        self._glide.stop(settle=True)   # escondido no meio do deslize: já fica no lugar final para a próxima vez
+        self._click_timer.stop()
         self._tip_hide_timer.stop()
         QToolTip.hideText()
         # hide() direto (atalho que alterna o mixer) também precisa soltar o Caps Lock empilhado
@@ -438,6 +560,10 @@ class VolumeMixerFlyout(QWidget):
         Se já estiver visível, apenas atualiza os valores e renova o tempo de exposição.
         """
         self._apply_theme(load_user_theme())  # relê só se algum arquivo do tema mudou
+        # Quem pede para mostrar o flyout pode estar reagindo a um clique que ainda está apertado (o seletor de posição
+        # do Hub age ao APERTAR). Esse aperto não é um "clique fora": sem isto, com o preview anterior ainda na tela
+        # (o showEvent não roda), o monitor de clique-fora via o mesmo aperto e escondia o flyout recém-mostrado.
+        self._mouse_was_down = self._buttons_down()
 
         if volume is not None and is_muted is not None:
             self.on_master_volume_changed(volume, is_muted)
@@ -612,6 +738,10 @@ class VolumeMixerFlyout(QWidget):
         else:
             self._scrollbar_opacity = self._scrollbar_target_opacity
 
+        # 5.1 Pulo do número em imagem (tema com `digits`)
+        if self.theme.digits is not None and now - self._digits_pop_start < POP_DURATION_S:
+            needs_update = True
+
         # 6. Deslocamento do par no meio da tela (Caps Lock chegou/saiu): os dois se afastam/reaproximam do centro
         diff_off = self._stack_offset_target - self._stack_offset
         if abs(diff_off) > 0.3:
@@ -666,6 +796,9 @@ class VolumeMixerFlyout(QWidget):
         card_rect = self._card_rect()
         x0 = card_rect.left()
         y0 = card_rect.top()
+        tilt = self._tilt_transform()
+        if tilt is not None:
+            p.setTransform(tilt, True)
 
         # 1. Sombra externa: a do tema (suave, colorida) ou a multicamada original
         if th.shadow is not None:
@@ -680,6 +813,8 @@ class VolumeMixerFlyout(QWidget):
         # 1.1 Figurinhas "behind": atrás do card (só a parte que sai pelas bordas aparece)
         if th.stickers:
             paint_stickers_behind(p, card_rect, th.stickers)
+        if th.plates:
+            paint_plates(p, card_rect, th.plates)
 
         # 2. Fundo do Card (#1e1e1e) e Borda 1px (#373737)
         bg_rect = card_rect.adjusted(0.5, 0.5, -0.5, -0.5)
@@ -697,21 +832,22 @@ class VolumeMixerFlyout(QWidget):
         header_cy = y0 + 24.5
         self._draw_speaker_icon(p, x0 + 23.0, header_cy)
 
-        self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, header_cy)
+        self.master_slider.set_geometry(*self._master_span(x0), header_cy)
         self.master_slider.draw(p)
 
-        # Número do Volume Master (ex: "40", "44")
-        p.setFont(get_ui_font(14, QFont.Weight.Normal))
-        p.setPen(th.muted_text if self.master_muted else th.text)
-        num_rect = QRectF(x0 + 167.0, header_cy - 11.0, 31.0, 22.0)
-        p.drawText(
-            num_rect,
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            str(self.master_slider.value),
-        )
+        # Número do Volume Master (ex: "40", "44"); com `digits` no tema ele é desenhado no fim, por cima de tudo
+        if th.digits is None:
+            p.setFont(get_ui_font(14, QFont.Weight.Normal))
+            p.setPen(th.muted_text if self.master_muted else th.text)
+            num_rect = QRectF(x0 + 167.0, header_cy - 11.0, 31.0, 22.0)
+            p.drawText(
+                num_rect,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                str(self.master_slider.value),
+            )
 
         # Botão Retrátil (^ / v) em x0 + 203, y0 + 11 (26x26px)
-        self._draw_chevron_button(p, x0 + 203.0, y0 + 11.0)
+        self._draw_chevron_button(p, x0 + self._header().chevron_x, y0 + 11.0)
 
         # 4. Seção Retrátil: Mixer de Volumes por Aplicativo
         if self._expand_t > 0.01 and card_rect.height() > 52.0:
@@ -743,6 +879,18 @@ class VolumeMixerFlyout(QWidget):
         # 5. Figurinhas "above" (por cima de tudo, fora do recorte da lista)
         if th.stickers:
             paint_stickers(p, card_rect, th.stickers, above=True)
+
+        # 6. Número do volume em imagem (tema com `digits`), com o pulo ao mudar
+        if th.digits is not None:
+            value = self.master_slider.value
+            now = time.perf_counter()
+            if value != self._digits_value:
+                if self._digits_value is not None and th.digits.pop:
+                    self._digits_pop_start = now
+                    self._start_anim_timer()
+                self._digits_value = value
+            paint_digits(p, card_rect, th.digits, value, self.master_muted,
+                         pop_amount(now - self._digits_pop_start))
 
     def _draw_speaker_icon(self, p: QPainter, cx: float, cy: float):
         """Desenha o ícone vetorial de alto-falante fiel ao Windows 11 (com ondas dinâmicas ou mudo)."""
@@ -931,12 +1079,12 @@ class VolumeMixerFlyout(QWidget):
         return QRectF(x0 + 11.0, y0 + 11.0, 25.0, 26.0)
 
     def _chevron_hit_rect(self, x0: float, y0: float) -> QRectF:
-        return QRectF(x0 + 202.0, y0 + 10.0, 28.0, 28.0)
+        return QRectF(x0 + self._header().chevron_x - 1.0, y0 + 10.0, 28.0, 28.0)
 
     def mousePressEvent(self, event):
         if event.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
             return
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
         self._restart_hide_timer()
@@ -955,7 +1103,7 @@ class VolumeMixerFlyout(QWidget):
                 return
 
             # 3. Clique/Arrasto no Slider Master
-            self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, y0 + 24.5)
+            self.master_slider.set_geometry(*self._master_span(x0), y0 + 24.5)
             if self.master_slider.contains(pt):
                 self.master_slider.is_dragging = True
                 new_val = self.master_slider.value_from_x(pt.x())
@@ -1048,7 +1196,7 @@ class VolumeMixerFlyout(QWidget):
                 curr_y += row_h
 
     def mouseMoveEvent(self, event):
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
         self._restart_hide_timer()
@@ -1091,7 +1239,7 @@ class VolumeMixerFlyout(QWidget):
         changed = False
         spk_hov = self._speaker_hit_rect(x0, y0).contains(pt)
         chv_hov = self._chevron_hit_rect(x0, y0).contains(pt)
-        self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, y0 + 24.5)
+        self.master_slider.set_geometry(*self._master_span(x0), y0 + 24.5)
         ms_hov = self.master_slider.contains(pt)
 
         # Hover na scrollbar
@@ -1172,7 +1320,7 @@ class VolumeMixerFlyout(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
 
@@ -1216,8 +1364,23 @@ class VolumeMixerFlyout(QWidget):
         self._restart_hide_timer()
         self.update()
 
+    def _row_slider_at(self, pt: QPointF, card_rect: QRectF) -> AppVolumeRow | None:
+        """A linha cujo slider está sob o ponto `pt` (sistema do card), só com a lista visível; senão None."""
+        if self._expand_t <= 0.5:
+            return None
+        x0, y0 = card_rect.left(), card_rect.top()
+        if pt.y() <= y0 + self.HEADER_H or pt.y() >= card_rect.bottom():
+            return None
+        curr_y = y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5) - self._scroll_y
+        for row in self._rows:
+            row.slider.set_geometry(x0 + 45.0, x0 + 186.0, curr_y + row.MAIN_ROW_CY)
+            if row.slider.contains(pt):
+                return row
+            curr_y += row.get_total_height()
+        return None
+
     def wheelEvent(self, event: QWheelEvent):
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         y0 = card_rect.top()
         delta = event.angleDelta().y()
@@ -1232,6 +1395,19 @@ class VolumeMixerFlyout(QWidget):
             self.master_slider.value = new_vol
             self.master_volume_dragged.emit(new_vol)
             self.update()
+            return
+
+        # Sobre o slider de um app: ajusta o volume dele (+-2%, como o Master). Fora dos sliders a roda rola a lista.
+        row = self._row_slider_at(pt, card_rect)
+        if row is not None:
+            step = 2 if delta > 0 else -2
+            new_val = max(0, min(100, row.slider.value + step))
+            if new_val != row.slider.value:
+                row.slider.value = new_val
+                row.volume = new_val
+                self.app_volume_dragged.emit(row.app_id, new_val)
+                self._start_anim_timer()
+                self.update()
             return
 
         # Se rolar sobre a lista do mixer expandido, rola a lista de aplicativos suavemente

@@ -44,18 +44,20 @@ class ClassifyBrowserTests(unittest.TestCase):
         info = SimpleNamespace(playback_status=mw.PlaybackStatus.PLAYING)
         return worker._classify_session(session, props, info, thumb)
 
-    def test_video_with_widescreen_cover_is_accepted_in_firefox(self):
-        ok, provider, score = self._classify("ハープでかぜのさかなのうた / ゼルダの伝説夢をみる島", "Nana Harp", _png(320, 180))
-        self.assertTrue(ok)
-        self.assertEqual(provider, "youtube_music")
+    def test_video_with_widescreen_cover_is_visible_but_does_not_auto_open(self):
+        ok, provider, _, auto_open = self._classify(
+            "ハープでかぜのさかなのうた / ゼルダの伝説夢をみる島", "Nana Harp", _png(320, 180))
+        self.assertTrue(ok)                    # aparece se o usuário abrir o widget
+        self.assertFalse(auto_open)            # mas nunca abre sozinho
+        self.assertEqual(provider, "generic")  # e não ganha o logo do YouTube Music
 
-    def test_square_cover_scores_higher_than_a_video_frame(self):
-        _, _, square = self._classify("Faixa", "Artista", _png(300, 300))
-        _, _, wide = self._classify("Faixa", "Artista", _png(320, 180))
-        self.assertGreater(square, wide)
+    def test_square_cover_alone_is_not_a_music_signal(self):
+        # Kick, Twitch, Spotify Web e YouTube Music mandam todos capa 1:1: a forma da capa não prova nada
+        _, _, _, auto_open = self._classify("Faixa", "Artista", _png(300, 300))
+        self.assertFalse(auto_open)
 
     def test_clear_non_music_is_still_rejected(self):
-        ok, _, _ = self._classify("Gameplay Zelda parte 3", "Canal", _png(320, 180))
+        ok, _, _, _ = self._classify("Gameplay Zelda parte 3", "Canal", _png(320, 180))
         self.assertFalse(ok)
 
     def test_video_frame_detection(self):

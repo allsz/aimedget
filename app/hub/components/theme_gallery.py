@@ -172,12 +172,11 @@ class ThemeGalleryCard(QFrame):
         self.actions = QHBoxLayout()
         self.actions.setSpacing(8)
         self.actions.addStretch()
-        self.btn_import = self._action_button(t("theme_import_btn"), self._pick_and_import)
-        self.btn_export = self._action_button(t("theme_export_btn"), self._export)
-        self.btn_export.setToolTip(t("theme_export_tip"))
-        self.btn_delete = self._action_button(t("theme_delete_btn"), self._delete)
-        self.btn_delete.setToolTip(t("theme_delete_tip"))
-        self.btn_folder = self._action_button(t("theme_open_folder"), self._open_folder)
+        self.btn_import = self._action_button(self._pick_and_import)
+        self.btn_export = self._action_button(self._export)
+        self.btn_delete = self._action_button(self._delete)
+        self.btn_folder = self._action_button(self._open_folder)
+        self._apply_action_texts()
         for btn in (self.btn_import, self.btn_export, self.btn_delete, self.btn_folder):
             self.actions.addWidget(btn)
         root.addLayout(self.actions)
@@ -232,8 +231,8 @@ class ThemeGalleryCard(QFrame):
         self.sync_selection()
         self._on_applied()
 
-    def _action_button(self, text: str, slot) -> QPushButton:
-        btn = QPushButton(text)
+    def _action_button(self, slot) -> QPushButton:
+        btn = QPushButton()
         btn.setProperty("class", "Chip")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.clicked.connect(lambda _checked=False: slot())
@@ -363,13 +362,25 @@ class ThemeGalleryCard(QFrame):
     def retranslate_ui(self):
         self.title.setText(t("theme_picker_title"))
         self.sub.setText(t(self._subtitle_key))
-        self.btn_import.setText(t("theme_import_btn"))
-        self.btn_export.setText(t("theme_export_btn"))
-        self.btn_export.setToolTip(t("theme_export_tip"))
-        self.btn_delete.setText(t("theme_delete_btn"))
-        self.btn_delete.setToolTip(t("theme_delete_tip"))
-        self.btn_folder.setText(t("theme_open_folder"))
+        self._apply_action_texts()
         self.refresh()
+
+    def _apply_action_texts(self):
+        """
+        Texto, dica e nome acessível dos botões de ação (usado ao criar e ao trocar de idioma). Os rótulos são só a
+        função ("Importar"): o cartão já diz que o assunto é o tema. A leitura por tecnologia assistiva e a dica
+        mantêm a frase completa ("Importar tema"), e "Abrir pasta de temas" fica por extenso porque "Abrir pasta"
+        sozinho não diz de qual pasta.
+        """
+        for btn, label_key, name_key, tip_key in (
+            (self.btn_import, "theme_import_btn", "theme_import_title", None),
+            (self.btn_export, "theme_export_btn", "theme_export_pick_title", "theme_export_tip"),
+            (self.btn_delete, "theme_delete_btn", "theme_delete_title", "theme_delete_tip"),
+            (self.btn_folder, "theme_open_folder", "theme_open_folder", None),
+        ):
+            btn.setText(t(label_key))
+            btn.setAccessibleName(t(name_key))
+            btn.setToolTip(t(tip_key) if tip_key else t(name_key) if btn is self.btn_import else "")
 
     def showEvent(self, event):
         self.refresh()

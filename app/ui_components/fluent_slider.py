@@ -1,6 +1,6 @@
 import math
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 
 
 class FluentSlider:
@@ -39,6 +39,18 @@ class FluentSlider:
         self.thumb_outer = QColor(self.COLOR_THUMB_OUTER)
         self.thumb_border = QColor(self.COLOR_THUMB_BORDER)
         self.track_inactive = QColor(self.COLOR_TRACK_INACTIVE)
+        # Estilo (um tema pode trocar): "fluent" = trilho fino + botão; "bar" = faixa lisa sem botão
+        self.style = "fluent"
+        self.track_h = self.TRACK_H
+        self.slant = 0.0          # só no estilo "bar": pontas inclinadas (fração da altura)
+        self.taper = 1.0          # só no estilo "bar": altura da ponta direita / altura da ponta esquerda (cunha)
+
+    def apply_style(self, style: str = "fluent", track_h: float | None = None, slant: float = 0.0,
+                    taper: float = 1.0):
+        self.style = style
+        self.track_h = self.TRACK_H if track_h is None else float(track_h)
+        self.slant = float(slant)
+        self.taper = float(taper)
 
     def apply_colors(self, track_active: QColor, thumb_inner: QColor, thumb_outer: QColor | None = None,
                      thumb_border: QColor | None = None, track_inactive: QColor | None = None):
@@ -93,16 +105,43 @@ class FluentSlider:
         t = max(0.0, min(1.0, (x - self.x_start) / width))
         return int(round(t * 100.0))
 
-    def draw(self, p: QPainter):
+    def _draw_bar(self, p: QPainter):
+        """Faixa lisa: vazio atrás, preenchido por cima; as pontas (e o corte do preenchido) seguem `slant`."""
+        h = self.track_h
+        lean = h * self.slant * 0.5      # o topo vai para a direita e a base para a esquerda
+        span = max(1.0, self.x_end - self.x_start)
+
+        def half(x: float) -> float:
+            """Meia altura da faixa em `x`: cresce (ou encolhe) em linha reta da ponta esquerda para a direita."""
+            u = max(0.0, min(1.0, (x - self.x_start) / span))
+            return h * 0.5 * (1.0 + (self.taper - 1.0) * u)
+
+        def quad(x1: float, x2: float) -> QPolygonF:
+            h1, h2 = half(x1), half(x2)
+            return QPolygonF([QPointF(x1 + lean, self.cy - h1), QPointF(x2 + lean, self.cy - h2),
+                              QPointF(x2 - lean, self.cy + h2), QPointF(x1 - lean, self.cy + h1)])
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self.track_inactive)
+        p.drawPolygon(quad(self.x_start, self.x_end))
         tx = self.thumb_x()
-        track_top = self.cy - self.TRACK_H * 0.5
+        if tx > self.x_start:
+            p.setBrush(self.COLOR_TRACK_MUTED if self.is_muted else self.track_active)
+            p.drawPolygon(quad(self.x_start, tx))
+
+    def draw(self, p: QPainter):
+        if self.style == "bar":
+            self._draw_bar(p)
+            return
+        tx = self.thumb_x()
+        track_top = self.cy - self.track_h * 0.5
 
         # 1. Trilho inativo (direita)
         if tx < self.x_end:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(self.track_inactive)
             p.drawRoundedRect(
-                QRectF(tx, track_top, self.x_end - tx, self.TRACK_H),
+                QRectF(tx, track_top, self.x_end - tx, self.track_h),
                 self.TRACK_RADIUS,
                 self.TRACK_RADIUS,
             )
@@ -112,7 +151,7 @@ class FluentSlider:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(self.COLOR_TRACK_MUTED if self.is_muted else self.track_active)
             p.drawRoundedRect(
-                QRectF(self.x_start, track_top, tx - self.x_start, self.TRACK_H),
+                QRectF(self.x_start, track_top, tx - self.x_start, self.track_h),
                 self.TRACK_RADIUS,
                 self.TRACK_RADIUS,
             )

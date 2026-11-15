@@ -1,6 +1,7 @@
 from PySide6.QtCore import QObject, QRect, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 from app.core.config_manager import config_manager
+from app.core.widget_animator import AnimatedVisibilityMixin
 from app.services.media_worker import WindowsMediaWorker
 from app.widgets.music.auto_open_guard import AutoOpenDismissal
 from app.widgets.music.skins.vinyl_skin import VinylMusicSkin
@@ -9,7 +10,7 @@ from app.widgets.music.skins.ripple_skin import RippleSkin
 from app.widgets.music.skins.capa_empilhada_skin import CapaEmpilhadaSkin
 
 
-class MusicWidgetController(QObject):
+class MusicWidgetController(AnimatedVisibilityMixin, QObject):
     """
     Controlador do Music Widget:
     - Instancia o `WindowsMediaWorker` (único serviço em background).
@@ -20,11 +21,6 @@ class MusicWidgetController(QObject):
     skin_changed = Signal(str)
     scale_changed = Signal(object)
 
-    # Tempos da animação de surgir/sumir (ms). O timeout é mais lento: ninguém pediu, então
-    # o widget se retira sem chamar atenção. Pelo atalho/Hub a resposta é seca.
-    APPEAR_MS = 200
-    HIDE_MS = 160
-    SOFT_HIDE_MS = 320
     manage_skins_requested = Signal()
     volume_wheel_requested = Signal(float)
     AVAILABLE_SKINS = {
@@ -260,7 +256,9 @@ class MusicWidgetController(QObject):
             # Se uma música tocou, a abertura manual cumpriu seu papel de espera
             self._manually_opened = False
 
-            if auto_launch and self.skin and not self._is_shown() and not self._dismissal.active:
+            # Nível C (Work Adventure, Kick, vídeos...): aparece se o usuário abrir o widget, mas nunca o abre sozinho
+            auto_open_ok = getattr(self.media_worker, "current_auto_open_ok", True)
+            if auto_launch and auto_open_ok and self.skin and not self._is_shown() and not self._dismissal.active:
                 if not self.is_hiding():
                     self.restore_or_center_position()
                 self.show()
@@ -329,29 +327,13 @@ class MusicWidgetController(QObject):
 
     # --- Visibilidade animada ---
 
-    def _is_shown(self) -> bool:
-        """Visível e não em retirada (durante o fade-out o widget ainda está na tela)."""
-        return bool(self.skin and self.skin.isVisible() and not self.skin.animator.is_hiding())
-
-    def is_shown(self) -> bool:
-        return self._is_shown()
-
-    def is_hiding(self) -> bool:
-        return bool(self.skin and self.skin.animator.is_hiding())
-
-    def settle(self):
-        """Conclui qualquer animação em curso antes de mover/trocar o widget."""
-        if self.skin:
-            self.skin.animator.settle()
-
     def show(self, is_manual: bool = False):
         if is_manual:
             self._manually_opened = True
             self._has_played_since_shown = False
             self._auto_hide_timer.stop()
             self._dismissal.clear()  # o manual sempre vence
-        if self.skin:
-            self.skin.animator.show(self.APPEAR_MS)
+        self._animate_show()
 
     def _current_source(self) -> str:
         """Identificador do app/player de origem da mídia atual."""
@@ -373,5 +355,4 @@ class MusicWidgetController(QObject):
         self._auto_hide_timer.stop()
         self._manually_opened = False
         self._has_played_since_shown = False
-        if self.skin:
-            self.skin.animator.hide(self.SOFT_HIDE_MS if soft else self.HIDE_MS)
+        self._animate_hide(soft)

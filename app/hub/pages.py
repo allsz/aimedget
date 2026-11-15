@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config_manager import config_manager
-from app.core.i18n import t
+from app.core.i18n import i18n, t
+from app.core.skin_packs import discover as discover_skin_packs
 from app.core.version import __version__
 from app.services.updater_service import UpdateInfo, is_installed_build, updater_service
 from app.hub.components.accent_entry import AccentEntryRow
+from app.hub.components.collapsible_section import skin_and_theme_block, skin_supports_themes
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.hue_slider import MARGIN as SLIDER_MARGIN, HueSlider
 from app.hub.components.theme_import_dialog import warning_color
@@ -612,7 +614,6 @@ class MusicPage(BaseHubPage):
             self._skin_grid.add_card(card)
 
         sk_layout.addWidget(self._skin_grid)
-        self.content_layout.addWidget(skin_card)
 
         # 3b. Card de Tema visual da Capa Empilhada (escolher aplica no widget e torna a Capa Empilhada a skin em uso)
         self.theme_picker = ThemeGalleryCard(
@@ -626,7 +627,12 @@ class MusicPage(BaseHubPage):
             subtitle_key="theme_picker_sub_music",
             default_title_key="theme_default_music",
         )
-        self.content_layout.addWidget(self.theme_picker)
+        # Os temas valem só para a Capa Empilhada: nas outras skins a galeria recolhe (animada), como no Timer
+        skin_block, self.theme_section = skin_and_theme_block(
+            skin_card, self.theme_picker, self.content_layout.spacing(),
+            skin_supports_themes(music_specs, active_skin))
+        self.content_layout.addWidget(skin_block)
+        self.bridge.music_skin_changed.connect(self._on_active_music_skin_changed)
 
         # 3. Card de Comportamento
         behav_card = QFrame()
@@ -788,6 +794,11 @@ class MusicPage(BaseHubPage):
 
     def _on_pos_changed(self, pos_key: str):
         self.bridge.move_music_to_screen_position(pos_key)
+
+    def _on_active_music_skin_changed(self, skin_key: str):
+        """Mostra a galeria de temas só enquanto a skin ativa os aceita (o tema escolhido continua guardado)."""
+        canon = "capa_empilhada" if skin_key in ("stacked", "capaEmpilhada") else skin_key
+        self.theme_section.set_open(skin_supports_themes(init_music_skin_specs(), canon))
 
     def _sync_selected_skin(self, skin_key: str):
         canon = "capa_empilhada" if skin_key in ("stacked", "capaEmpilhada") else skin_key
@@ -1060,6 +1071,8 @@ class LockKeysPage(BaseHubPage):
 
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
+        for switch in self._key_switches.values():
+            switch.set_theme(theme)   # senão o switch fica com o destaque de quando a página foi criada
         if hasattr(self, "hk_picker"):
             self.hk_picker.set_theme(theme)
         if hasattr(self, "theme_picker"):
@@ -1122,31 +1135,6 @@ class VolumePage(BaseHubPage):
         )
         self.content_layout.addWidget(self.theme_picker)
 
-        # Card de Configurações
-        card = QFrame()
-        card.setProperty("class", "HubCard")
-        c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(18, 14, 18, 14)
-        c_layout.setSpacing(12)
-
-        row = QHBoxLayout()
-        info = QVBoxLayout()
-        info.setSpacing(2)
-        self.lbl_m = QLabel(t("volume_opt_mixer_title"))
-        self.lbl_m.setStyleSheet("font-size: 13.5px; font-weight: 600;")
-        self.lbl_d = QLabel(t("volume_opt_mixer_sub"))
-        self.lbl_d.setWordWrap(True)
-        self.lbl_d.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        info.addWidget(self.lbl_m)
-        info.addWidget(self.lbl_d)
-
-        s = PillSwitch(checked=True, theme=self._theme)
-        row.addLayout(info, stretch=1)
-        row.addWidget(s)
-        c_layout.addLayout(row)
-
-        self.content_layout.addWidget(card)
-
         # Card de Atalho de Teclado
         hk_card = QFrame()
         hk_card.setProperty("class", "HubCard")
@@ -1190,10 +1178,6 @@ class VolumePage(BaseHubPage):
             self.t_desc.setText(t("volume_test_sub"))
         if hasattr(self, "btn_test"):
             self.btn_test.setText(t("volume_test_btn"))
-        if hasattr(self, "lbl_m"):
-            self.lbl_m.setText(t("volume_opt_mixer_title"))
-        if hasattr(self, "lbl_d"):
-            self.lbl_d.setText(t("volume_opt_mixer_sub"))
         if hasattr(self, "hk_title"):
             self.hk_title.setText(t("volume_hotkey_title"))
         if hasattr(self, "hk_desc"):
@@ -1285,8 +1269,6 @@ class TimerPage(BaseHubPage):
 
         sk_layout.addWidget(self._skin_grid)
 
-        self.content_layout.addWidget(skin_card)
-
         # 3. Card de Tema visual da skin Aimedget (aplica ao vivo no Timer)
         self.theme_picker = ThemeGalleryCard(
             timer_theme_loader,
@@ -1299,7 +1281,11 @@ class TimerPage(BaseHubPage):
             subtitle_key="theme_picker_sub_timer",
             default_title_key="theme_default_timer",
         )
-        self.content_layout.addWidget(self.theme_picker)
+        # Skins + temas num bloco só: a galeria recolhe (animada) quando a skin escolhida não aceita temas
+        skin_block, self.theme_section = skin_and_theme_block(
+            skin_card, self.theme_picker, self.content_layout.spacing(), self._active_skin_supports_themes())
+        self.content_layout.addWidget(skin_block)
+        self.bridge.timer_skin_changed.connect(self._on_active_timer_skin_changed)
 
         # 4. Card de Comportamento & Ações
         behav_card = QFrame()
@@ -1484,8 +1470,16 @@ class TimerPage(BaseHubPage):
             self.bridge.timer_controller.skin.raise_()
             self.bridge.timer_controller.skin.activateWindow()
 
+    def _active_skin_supports_themes(self, skin_key: str | None = None) -> bool:
+        """A skin ativa aceita temas visuais? (Skins com arte própria, vindas de pacotes, não aceitam.)"""
+        return skin_supports_themes(init_timer_skin_specs(), skin_key or self.bridge.timer_controller.active_skin_name)
+
+    def _on_active_timer_skin_changed(self, skin_key: str):
+        """Mostra a galeria de temas só enquanto a skin ativa os aceita (o tema escolhido continua guardado)."""
+        self.theme_section.set_open(self._active_skin_supports_themes(skin_key))
+
     def _on_skin_selected(self, skin_key: str):
-        if skin_key in self.bridge.timer_controller.AVAILABLE_SKINS:
+        if skin_key in self.bridge.timer_controller.available_skins():
             self.bridge.set_timer_skin(skin_key)
             if hasattr(self, "_skin_cards"):
                 for k, card in self._skin_cards.items():
@@ -1539,9 +1533,9 @@ class TimerPage(BaseHubPage):
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         # O título e o subtítulo da skin ficam na spec (criada na inicialização): refaz no idioma novo
-        timer_skin_texts = {
-            "windows": (t("theme_default_timer"), t("skin_windows_sub")),
-        }
+        timer_skin_texts = {"windows": (t("theme_default_timer"), t("skin_windows_sub"))}
+        for pack in discover_skin_packs("timer"):
+            timer_skin_texts[pack.id] = pack.texts(i18n.current_language)
         if hasattr(self, "_skin_cards"):
             for s_id, card in self._skin_cards.items():
                 if s_id in timer_skin_texts:
@@ -1748,7 +1742,8 @@ class GeneralPage(BaseHubPage):
         self.accent_edit.editingFinished.connect(self._accent_text_committed)
         # Amostra da cor APLICADA dentro do campo (mostra o ajuste de legibilidade, se houver)
         self._accent_swatch = self.accent_edit.addAction(QIcon(), QLineEdit.ActionPosition.LeadingPosition)
-        self.btn_accent_reset = QPushButton(t("gen_accent_reset"))
+        self.btn_accent_reset = QPushButton()
+        self._apply_accent_reset_texts()
         self.btn_accent_reset.setProperty("class", "Chip")
         self.btn_accent_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_accent_reset.clicked.connect(self._reset_accent)
@@ -2003,6 +1998,12 @@ class GeneralPage(BaseHubPage):
             self.accent_edit.setText(self._shown_accent())
             self._set_accent_invalid(False)
 
+    def _apply_accent_reset_texts(self):
+        """Rótulo curto ("Redefinir"); a dica e o nome acessível dizem o que ele redefine (criar e trocar de idioma)."""
+        self.btn_accent_reset.setText(t("gen_accent_reset"))
+        self.btn_accent_reset.setToolTip(t("gen_accent_reset_tip"))
+        self.btn_accent_reset.setAccessibleName(t("gen_accent_reset_tip"))
+
     def _style_accent_field(self):
         th = self._theme
         border = warning_color(th) if self._accent_invalid else th.line
@@ -2098,7 +2099,7 @@ class GeneralPage(BaseHubPage):
             self.t_acc.setText(t("gen_accent_title"))
             self.d_acc.setText(t("gen_accent_invalid") if self._accent_invalid else t("gen_accent_sub"))
             self.accent_edit.setAccessibleName(t("gen_accent_title"))
-            self.btn_accent_reset.setText(t("gen_accent_reset"))
+            self._apply_accent_reset_texts()
             self.accent_entry.relayout()   # largura do botão muda com o idioma
             self.hue_slider.setAccessibleName(t("gen_accent_title"))
         if hasattr(self, "t4"):

@@ -8,6 +8,11 @@ e exposta por `rest_pos()`, para que nada (arraste, "Lembrar posição", troca d
 ponto deslocado.
 
 Respeita a configuração "Efeitos de animação" do Windows: desligada = troca instantânea.
+
+Para ligar um widget a isto sem repetir código há dois mixins:
+- `AnimatedSkinMixin` na JANELA (skin): cria o animador e expõe `rest_pos()`.
+- `AnimatedVisibilityMixin` no CONTROLLER: `show`/`hide` animados, `is_shown`, `is_hiding` e `settle`, com os tempos
+  padrão. O widget de música e o timer usam os mesmos; um widget novo só os herda.
 """
 
 import ctypes
@@ -33,6 +38,54 @@ def animations_enabled() -> bool:
         return bool(flag.value) if ok else True
     except Exception:
         return True
+
+
+class AnimatedSkinMixin:
+    """Para a janela (skin) de um widget que surge/some com SlideFadeAnimator: dono do animador e da posição de repouso."""
+
+    def _init_animator(self) -> "SlideFadeAnimator":
+        self.animator = SlideFadeAnimator(self)
+        return self.animator
+
+    def rest_pos(self) -> QPoint:
+        """Posição real da janela, sem o deslocamento da animação de surgir/sumir."""
+        return self.animator.rest_pos()
+
+
+class AnimatedVisibilityMixin:
+    """
+    Para o controller de um widget cujo `self.skin` usa AnimatedSkinMixin: mostrar/esconder animados e as consultas
+    de estado. Durante o fade-out a janela ainda está na tela, então "visível" não é o mesmo que `is_shown()`.
+    """
+
+    # Tempos da animação de surgir/sumir (ms). O timeout é mais lento: ninguém pediu, então o widget se retira sem
+    # chamar atenção. Pelo atalho/Hub a resposta é seca.
+    APPEAR_MS = 200
+    HIDE_MS = 160
+    SOFT_HIDE_MS = 320
+
+    def _is_shown(self) -> bool:
+        """Visível e não em retirada (durante o fade-out o widget ainda está na tela)."""
+        return bool(self.skin and self.skin.isVisible() and not self.skin.animator.is_hiding())
+
+    def is_shown(self) -> bool:
+        return self._is_shown()
+
+    def is_hiding(self) -> bool:
+        return bool(self.skin and self.skin.animator.is_hiding())
+
+    def settle(self):
+        """Conclui qualquer animação em curso antes de mover/trocar o widget."""
+        if self.skin:
+            self.skin.animator.settle()
+
+    def _animate_show(self):
+        if self.skin:
+            self.skin.animator.show(self.APPEAR_MS)
+
+    def _animate_hide(self, soft: bool = False):
+        if self.skin:
+            self.skin.animator.hide(self.SOFT_HIDE_MS if soft else self.HIDE_MS)
 
 
 class SlideFadeAnimator(QObject):
@@ -79,6 +132,9 @@ class SlideFadeAnimator(QObject):
         w = self._widget
         if not w.isVisible():
             return
+        glide = getattr(w, "_position_glide", None)   # deslize de troca de posição em curso (ver position_glide.py)
+        if glide is not None:
+            glide.stop(settle=True)   # a posição de repouso tem de ser o destino, não um ponto do caminho
         if self._rest is None:
             self._rest = w.pos()
         self._run(0.0, duration_ms)

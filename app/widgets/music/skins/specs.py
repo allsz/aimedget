@@ -62,6 +62,7 @@ def init_music_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="vinyl",
             widget_id="music",
+            supports_themes=False,
             title="Vinil Retrô",
             subtitle="Toca-discos analógico",
             natural_size=QSizeF(480, 270),
@@ -71,6 +72,7 @@ def init_music_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="fullcover",
             widget_id="music",
+            supports_themes=False,
             title="Capa Completa",
             subtitle="Capa imersiva",
             natural_size=QSizeF(480, 270),
@@ -80,6 +82,7 @@ def init_music_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="ripple",
             widget_id="music",
+            supports_themes=False,
             title="Ecos da Capa",
             subtitle="Ondas circulares da capa",
             natural_size=QSizeF(480, 270),

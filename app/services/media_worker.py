@@ -44,6 +44,13 @@ AUDIO_EXTENSIONS = (
     ".alac", ".aiff", ".dsd", ".ape", ".wv", ".mid", ".midi"
 )
 
+# Extensão de áudio como extensão de verdade (ponto + nome inteiro): ".apex" e ".middle" não contam como ".ape"/".mid"
+_AUDIO_EXT_RE = re.compile(
+    r"\.(?:" + "|".join(re.escape(e[1:]) for e in AUDIO_EXTENSIONS) + r")(?![a-z0-9])", re.IGNORECASE
+)
+# Título no formato "Artista - Título" (travessão com espaços dos dois lados)
+_ARTIST_TITLE_RE = re.compile(r"\S\s[-–—]\s\S")
+
 # Navegadores web
 BROWSER_APP_IDS = (
     "chrome", "msedge", "firefox", "brave", "opera", "operagx", "vivaldi", "zen", "arc", "waterfox", "tor"
@@ -445,6 +452,71 @@ def detect_provider(app_id: str, title: str, artist: str, album: str = "") -> st
     return "generic"
 
 
+# --- Diagnóstico da detecção (só com AIMEDGET_MEDIA_DIAG=1) ------------------------------------------------------
+# Registra o que cada sessão de mídia do Windows manda (app id, título, artista, álbum, tipo, capa) e como o
+# classificador a tratou, para decidir as regras do filtro com dados reais. Desligado por padrão: não custa nada.
+_DIAG_ENABLED = os.environ.get("AIMEDGET_MEDIA_DIAG", "").strip() in ("1", "true", "yes")
+_DIAG_MAX_BYTES = 2_000_000
+_diag_last: dict[str, tuple] = {}
+
+
+def _diag_path() -> str:
+    return os.path.join(get_app_data_dir(), "media_diagnostic.jsonl")
+
+
+def _diag_record(session, props, info, thumb_bytes: bytes, result: tuple):
+    """Acrescenta uma linha JSON por MUDANÇA de estado de cada sessão (sem repetir a cada ciclo)."""
+    if not _DIAG_ENABLED or not session:
+        return
+    try:
+        def safe(getter, default=None):
+            try:
+                value = getter()
+                return default if value is None else value
+            except Exception:
+                return default
+
+        ptype = safe(lambda: info.playback_type)
+        ptype = getattr(ptype, "name", ptype)
+        aspect = None
+        if thumb_bytes:
+            img = QImage.fromData(thumb_bytes)
+            if not img.isNull() and img.height() > 0:
+                aspect = round(img.width() / img.height(), 3)
+        app_id = (safe(lambda: session.source_app_user_model_id, "") or "")
+        record = {
+            "app_id": app_id,
+            "is_browser": is_browser_app_id(app_id.lower()),
+            "title": safe(lambda: props.title, ""),
+            "artist": safe(lambda: props.artist, ""),
+            "album": safe(lambda: props.album_title, ""),
+            "album_artist": safe(lambda: props.album_artist, ""),
+            "subtitle": safe(lambda: props.subtitle, ""),
+            "track_number": safe(lambda: props.track_number, 0),
+            "album_track_count": safe(lambda: props.album_track_count, 0),
+            "playback_type": str(ptype) if ptype is not None else None,
+            "status": _status_name(info) if info else "",
+            "thumb_bytes": len(thumb_bytes or b""),
+            "thumb_aspect": aspect,
+            "is_music": result[0],
+            "provider": result[1],
+            "score": result[2],
+            "auto_open": result[3] if len(result) > 3 else None,
+        }
+        sig = tuple(record[k] for k in ("title", "artist", "album", "playback_type", "status", "is_music", "provider", "score"))
+        if _diag_last.get(app_id) == sig:
+            return
+        _diag_last[app_id] = sig
+        record["time"] = datetime.datetime.now().isoformat(timespec="seconds")
+        path = _diag_path()
+        if os.path.exists(path) and os.path.getsize(path) > _DIAG_MAX_BYTES:
+            os.remove(path)   # arquivo de diagnóstico: recomeça em vez de crescer sem limite
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass   # diagnóstico nunca pode derrubar a detecção
+
+
 def _status_name(info) -> str:
     """Status de reprodução da sessão como texto estável para a lógica de seleção."""
     st = getattr(info, "playback_status", None)
@@ -487,6 +559,8 @@ class WindowsMediaWorker(QObject):
         self._no_session_since = 0.0
         # AUMID (minúsculo) do app que originou a mídia atual; usado para o volume por aplicativo
         self.current_source_app_id = ""
+        # A sessão exibida pode abrir o widget sozinha? (False = nível C: aparece, mas só se o usuário abrir.)
+        self.current_auto_open_ok = True
         # Estabilidade da escolha de sessão (ver session_selection.py)
         self._sticky_key: str | None = None
         self._sticky_ok_at = 0.0
@@ -618,34 +692,43 @@ class WindowsMediaWorker(QObject):
         props,
         info,
         thumb_bytes: bytes,
-    ) -> tuple[bool, str, int]:
+    ) -> tuple[bool, str, int, bool]:
         """
-        Classifica a sessão em: (é_música: bool, provedor: str, pontuação_prioridade: int).
-        
-        Prioridades:
-        - 100+ : Player de streaming dedicado ativo (Spotify, Apple Music, Deezer, etc.)
-        - 95+  : Player de música local ativo (Windows Media Player, Groove, Foobar2000, AIMP, etc.)
-        - 90+  : PWA de Música dedicado ativo (YouTube Music PWA, SoundCloud)
-        - 60+  : Música oficial tocando no navegador
-        - < 0  : Vídeos comuns, vlogs, gameplays, notícias, reuniões (rejeitados)
+        Classifica a sessão em: (é_música, provedor, pontuação_de_prioridade, abre_sozinho).
+
+        `é_música` False = rejeitada (nunca aparece). `abre_sozinho` decide só a ABERTURA AUTOMÁTICA do widget:
+        sessões ambíguas (True, ..., False) ainda aparecem se o usuário abrir o widget, mas não o abrem sozinhas.
+
+        Níveis:
+        - A (abre sozinho): players de streaming e locais conhecidos, PWAs de música conhecidos, arquivos de áudio.
+        - B (abre sozinho): navegador com sinal forte de música (álbum preenchido ou canal "- Topic") e arquivo
+          local sem tags mas com título "Artista - Título".
+        - C (não abre sozinho): o resto que vem de navegador/app instalado desconhecido (Work Adventure, Kick, Twitch,
+          vídeos, SoundCloud na aba) e arquivo local sem nenhuma pista de música.
+
+        A capa quadrada NÃO é sinal: Kick, Twitch, Spotify Web e YouTube Music mandam todos capa 1:1 (medido).
         """
         if not session or not props:
-            return False, "generic", -1
+            return False, "generic", -1, False
 
         app_id = (session.source_app_user_model_id or "").lower()
         title = (getattr(props, "title", "") or "").strip()
         artist = (getattr(props, "artist", "") or "").strip()
         album = (getattr(props, "album_title", "") or "").strip()
+        track_no = getattr(props, "track_number", 0) or 0
         is_playing = (info.playback_status == PlaybackStatus.PLAYING) if info else False
         play_bonus = 20 if is_playing else 0
 
         if not title or title.lower() in ("sem título", "nenhuma mídia ativa"):
-            return False, "generic", -1
+            return False, "generic", -1, False
 
-        # 1. PWA Dedicado de Música (YouTube Music / SoundCloud)
+        has_tags = bool(artist or album or track_no > 0)
+        looks_like_song = bool(_ARTIST_TITLE_RE.search(title))   # "Artista - Título"
+
+        # 1. PWA dedicado de música conhecido (YouTube Music, ...). Um app instalado DESCONHECIDO (outro
+        #    `Chrome._crx_<id>`, como o Work Adventure) não entra aqui: cai no nível C mais abaixo.
         if any(p in app_id for p in MUSIC_PWA_IDS) or "youtube music" in title.lower():
-            provider = detect_provider(app_id, title, artist, album)
-            return True, provider, 80 + play_bonus
+            return True, detect_provider(app_id, title, artist, album), 80 + play_bonus, True
 
         # 2. Players de streaming conhecidos (Spotify, Apple Music, Deezer, Tidal, etc.)
         streaming_players = (
@@ -653,72 +736,66 @@ class WindowsMediaWorker(QObject):
             "tidal", "amazonmusic", "amazon music", "qobuz"
         )
         if any(p in app_id for p in streaming_players):
-            provider = detect_provider(app_id, title, artist, album)
-            return True, provider, 90 + play_bonus
+            return True, detect_provider(app_id, title, artist, album), 90 + play_bonus, True
 
         # 3. Players locais de áudio do Windows (Groove, Media Player, Foobar, AIMP, MusicBee, Winamp...)
+        #    O Media Player também toca VÍDEO e manda o mesmo tipo de dado (só título): sem tags e sem cara de
+        #    "Artista - Título", não dá para saber se é música, então não abre sozinho.
         local_music_apps = (
             "microsoft.zunemusic", "microsoft.media.player", "windows.media.player", "wmplayer",
             "foobar2000", "aimp", "musicbee", "winamp", "dopamine", "clementine", "strawberry",
             "audacious", "mediamonkey", "resonic"
         )
         if any(p in app_id for p in local_music_apps):
-            return True, "local", 85 + play_bonus
+            if has_tags or _AUDIO_EXT_RE.search(title):
+                return True, "local", 85 + play_bonus, True
+            if looks_like_song:
+                return True, "local", 75 + play_bonus, True
+            return True, "local", 45 + play_bonus, False
 
         # 4. Players multimídia mistos (VLC, PotPlayer, MPC)
         video_audio_players = ("vlc", "potplayer", "mpc-hc", "mpc-be")
         if any(p in app_id for p in video_audio_players):
-            title_lower = title.lower()
-            if any(title_lower.endswith(ext) or (ext in title_lower) for ext in AUDIO_EXTENSIONS) or album or getattr(props, "track_number", 0) > 0:
-                return True, "local", 85 + play_bonus
-            if any(title_lower.endswith(ext) for ext in (".mp4", ".mkv", ".avi", ".mov", ".wmv")):
-                return False, "video_file", -1
-            return True, "local", 70 + play_bonus
+            if _AUDIO_EXT_RE.search(title) or has_tags:
+                return True, "local", 85 + play_bonus, True
+            if title.lower().endswith((".mp4", ".mkv", ".avi", ".mov", ".wmv")):
+                return False, "video_file", -1, False
+            if looks_like_song:
+                return True, "local", 70 + play_bonus, True
+            return True, "local", 45 + play_bonus, False
 
-        # 5. Arquivos com extensão de áudio local explícita em qualquer outro app
-        title_lower = title.lower()
-        if any(title_lower.endswith(ext) or (ext in title_lower) for ext in AUDIO_EXTENSIONS):
-            return True, "local", 85 + play_bonus
+        # 5. Arquivo com extensão de áudio explícita no título, em qualquer outro app
+        if _AUDIO_EXT_RE.search(title):
+            return True, "local", 85 + play_bonus, True
 
         # 6. Navegadores Web (Chrome, Edge, Firefox, Brave, Opera, etc.)
         if is_browser_app_id(app_id):
-            # 6a. Descarte imediato se contiver termos de gameplay, react, vlog, risadas, etc.
+            # 6a. Descarte imediato: gameplay, react, vlog, podcast...
             if NON_MUSIC_PATTERNS.search(title):
-                return False, "browser_video_rejected", -1
+                return False, "browser_video_rejected", -1, False
 
-            # 6b. Se o artista for o próprio navegador e não tiver separador ' - ' de música
+            # 6b. Artista é o próprio navegador e o título não tem o formato "Artista - Título"
             if artist.lower() in ("youtube", "google chrome", "chrome", "microsoft edge", "firefox", "navegador") and " - " not in title:
-                return False, "browser_video_rejected", -1
+                return False, "browser_video_rejected", -1, False
 
-            # 6c. Se o canal for oficial de música do YouTube (termina com '- Topic')
-            if artist.endswith("- Topic") or artist.endswith(" - Topic"):
-                return True, "youtube_music", 60 + play_bonus
+            # 6c. Canal oficial de música do YouTube (termina com "- Topic")
+            if artist.endswith("- Topic"):
+                return True, "youtube_music", 65 + play_bonus, True
 
-            # 6d. Verificação da proporção do thumbnail
-            aspect = 1.0
-            if thumb_bytes:
-                img = QImage.fromData(thumb_bytes)
-                if not img.isNull() and img.height() > 0:
-                    aspect = img.width() / max(1, img.height())
+            # 6d. Álbum preenchido: só players de música mandam isso (Spotify Web). Vídeo, live e rede social não.
+            if album:
+                return True, detect_provider(app_id, title, artist, album), 75 + play_bonus, True
 
-            # Se a capa for quadrada (~1:1), é arte oficial de álbum
-            if 0.88 <= aspect <= 1.15:
-                return True, "youtube_music", 55 + play_bonus
+            # 6e. Nível C: o navegador só informa título e canal, e nada separa de forma confiável um vídeo de
+            #     música de Work Adventure, Kick, Twitch ou X. Aparece se o usuário abrir o widget, mas não abre
+            #     sozinho. A capa é resolvida à parte (busca online; sem achar, a capa padrão, nunca o quadro).
+            return True, "generic", 40 + play_bonus, False
 
-            # Widescreen (> 1.25, típico 16:9 de vídeo do YouTube) ou sem capa: o navegador só informa título e
-            # canal, e nada distingue de forma confiável um vídeo de música de outro vídeo. Aceita (os padrões de
-            # 6a/6b já descartaram o que é claramente outra coisa) com prioridade menor que a de capa oficial.
-            # A capa é resolvida à parte: busca online e, sem achar, a capa padrão (nunca o quadro do vídeo).
-            if aspect > 1.25 or not thumb_bytes:
-                return True, "youtube_music", 40 + play_bonus
-
-            return True, "youtube_music", 45 + play_bonus
-
-        # Se não caiu em nenhuma categoria conhecida, mas tem tags completas de álbum e artista
+        # Não é navegador nem player conhecido: só com tags completas de álbum e artista, e sem abrir sozinho.
         if album and artist and artist.lower() not in ("artista desconhecido", "youtube"):
-            return True, "generic", 40 + play_bonus
+            return True, "generic", 40 + play_bonus, False
 
-        return False, "unknown", -1
+        return False, "unknown", -1, False
 
     def _publish_repeat_state(self, info):
         """Informa a UI do modo de repetição REAL do player (ela não adivinha mais por contagem)."""
@@ -797,14 +874,15 @@ class WindowsMediaWorker(QObject):
                         s_props = await s.try_get_media_properties_async()
                         s_info = s.get_playback_info()
                         s_thumb = await self._candidate_thumbnail(key, s_props)
-                        is_m, p_name, score = self._classify_session(s, s_props, s_info, s_thumb)
+                        is_m, p_name, score, auto_ok = self._classify_session(s, s_props, s_info, s_thumb)
+                        _diag_record(s, s_props, s_info, s_thumb, (is_m, p_name, score, auto_ok))
                         candidates.append(
                             SessionCandidate(
                                 key=key,
                                 is_music=is_m,
                                 score=score,
                                 status=_status_name(s_info),
-                                payload=(s, s_props, s_info, p_name, s_thumb),
+                                payload=(s, s_props, s_info, p_name, s_thumb, auto_ok),
                             )
                         )
                     except Exception:
@@ -816,8 +894,9 @@ class WindowsMediaWorker(QObject):
                     self._sticky_ok_at = now_sel
                 chosen, hold = pick_session(candidates, self._sticky_key, self._sticky_ok_at, now_sel)
                 if chosen is not None and chosen.payload is not None:
-                    best_session, best_props, best_info, best_provider, best_raw_thumb = chosen.payload
+                    best_session, best_props, best_info, best_provider, best_raw_thumb, best_auto_ok = chosen.payload
                     best_score = chosen.score
+                    self.current_auto_open_ok = best_auto_ok
                     self._sticky_key = chosen.key
                     self._sticky_ok_at = now_sel
                 elif not hold:

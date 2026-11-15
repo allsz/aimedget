@@ -36,6 +36,8 @@ _CATEGORY_OF = {
     "shadow": "shadow", "background": "background",
     "indicator": "layout", "show_icon": "layout", "label_align": "layout", "label_size": "layout",
     "label_case": "layout",
+    "tilt": "layout", "slider_style": "layout", "slider_height": "layout", "slider_slant": "layout",
+    "plates": "layout", "digits": "layout", "slider_taper": "layout", "header": "layout",
 }
 _CATEGORY_ORDER = ("colors", "corners", "size", "shadow", "background", "layout")
 

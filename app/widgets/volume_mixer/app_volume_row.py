@@ -479,6 +479,7 @@ class AppVolumeRow:
         """Aplica os tokens do tema a esta linha (cores do slider, números e destaques)."""
         self.theme = theme
         self.slider.apply_colors(theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive)
+        self.slider.apply_style(theme.slider_style, theme.slider_height, theme.slider_slant, theme.slider_taper)
         for sw in (*self._output_switches.values(), *self._input_switches.values()):
             sw.accent = QColor(theme.switch_on)
 

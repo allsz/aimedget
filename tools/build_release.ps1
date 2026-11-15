@@ -6,9 +6,11 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\build_release.ps1
   powershell -ExecutionPolicy Bypass -File tools\build_release.ps1 -SkipTests
+  powershell -ExecutionPolicy Bypass -File tools\build_release.ps1 -IncludeSkins   # build com as skins de assets\skins
 #>
 param(
     [switch]$SkipTests,
+    [switch]$IncludeSkins,   # inclui as skins de assets\skins no build (por padrão ficam de fora: são distribuídas à parte)
     [string]$Iscc = ""   # caminho do ISCC.exe; vazio = procura nas pastas padrão do Inno Setup 7 e 6
 )
 
@@ -17,6 +19,8 @@ $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
+
+if ($IncludeSkins) { $env:AIMEDGET_INCLUDE_SKINS = "1" } else { Remove-Item Env:\AIMEDGET_INCLUDE_SKINS -ErrorAction SilentlyContinue }
 
 # 1. Versão: fonte única em app\core\version.py
 $versionLine = Select-String -Path "app\core\version.py" -Pattern '__version__\s*=\s*"([^"]+)"'

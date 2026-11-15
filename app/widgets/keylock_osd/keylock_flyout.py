@@ -1,9 +1,11 @@
 import math
 import time
-from PySide6.QtCore import Qt, QRectF, QTimer, Signal
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal
 from PySide6.QtGui import QPainter, QFont
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 from app.core import osd_anchor
+from app.core.position_glide import PositionGlide, reposition_with_glide
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.theme_art import overflow_margins
 from app.core.typography import get_ui_font
 from app.widgets.keylock_osd.skin import KeyLockState, card_size, paint_keylock
@@ -100,6 +102,10 @@ class KeyLockFlyout(QWidget):
         self._sync_refresh_rate_interval()
         self._anim_timer.timeout.connect(self._on_tick)
 
+        # Troca de posição com o flyout na tela: o card desliza do lugar antigo para o novo (ver set_anchor)
+        self._glide = PositionGlide(self.move, parent=self)
+        self._glide.finished.connect(self._on_glide_finished)
+
         # Timer para ocultar automaticamente após exibição
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -109,9 +115,7 @@ class KeyLockFlyout(QWidget):
         self.position_on_screen()
 
     def _sync_refresh_rate_interval(self):
-        scr = self.screen() or (QApplication.instance().primaryScreen() if QApplication.instance() else None)
-        hz = float(scr.refreshRate()) if scr and scr.refreshRate() > 10.0 else 60.0
-        interval_ms = max(1, int(round(1000.0 / hz)))
+        interval_ms = refresh_interval_ms(self)
         if self._anim_timer.interval() != interval_ms:
             self._anim_timer.setInterval(interval_ms)
 
@@ -165,16 +169,30 @@ class KeyLockFlyout(QWidget):
         return self._popup_target == 1.0
 
     def set_anchor(self, anchor: str, force: bool = False):
-        """Troca a âncora (Hub). Recalcula a janela (o deslize muda de lado) e reposiciona na hora."""
+        """
+        Troca a âncora (Hub). Recalcula a janela (a entrada muda de lado) e reposiciona; com o flyout na tela, o
+        card desliza do lugar antigo até o novo (ver app/core/position_glide.py). `force` recalcula mesmo com a
+        mesma âncora (a coluna pode ter mudado junto com o mixer); se o lugar não mudou, nada anima.
+        """
         anchor = osd_anchor.normalize(anchor)
         if anchor == self._anchor and not force:
             return
-        self._anchor = anchor
-        self._recalculate_size()
+
+        def relayout():
+            self._anchor = anchor
+            self._recalculate_size()
+            self._target_win_y = self._compute_target_win_y()
+            self._current_win_y = self._target_win_y
+            self.move(self._get_centered_x(), int(round(self._current_win_y)))   # a janela vai ao lugar FINAL
+
+        reposition_with_glide(self, self._glide, lambda: QPointF(self._margins[0], self._margins[1]), relayout)
+        self.update()
+
+    def _on_glide_finished(self):
+        """Terminou de deslizar: confere o lugar exato (o empilhamento pode ter mudado no caminho)."""
         self._target_win_y = self._compute_target_win_y()
         self._current_win_y = self._target_win_y
         self.move(self._get_centered_x(), int(round(self._current_win_y)))
-        self.update()
 
     def anchor(self) -> str:
         return self._anchor
@@ -264,7 +282,8 @@ class KeyLockFlyout(QWidget):
             # Move o card no mesmo instante exato em que o topo do mixer se move.
             self._current_win_y = self._target_win_y
             if self.isVisible():
-                self.move(self._get_centered_x(), int(round(self._current_win_y)))
+                if not self._glide.is_running():   # deslizando: o fim do deslize põe no lugar exato
+                    self.move(self._get_centered_x(), int(round(self._current_win_y)))
                 self.update()
         else:
             # Quando o mixer se fecha ou desaparece, o Caps Lock retorna suavemente à posição padrão
@@ -282,6 +301,8 @@ class KeyLockFlyout(QWidget):
         self._target_win_y = self._compute_target_win_y()
         if not self.isVisible() or self._current_win_y <= 0 or self._mixer_active:
             self._current_win_y = self._target_win_y
+        if self._glide.is_running():
+            return   # deslizando para a nova âncora: o fim do deslize põe no lugar exato
         self.move(x, int(round(self._current_win_y)))
 
     def show_osd(self, key_name: str, is_on: bool):
@@ -328,6 +349,7 @@ class KeyLockFlyout(QWidget):
             self._anim_timer.start()
 
     def hideEvent(self, event):
+        self._glide.stop(settle=True)   # escondido no meio do deslize: já fica no lugar final para a próxima vez
         # Garante que o mixer não fique reservando espaço para um Caps Lock que já sumiu (ex.: hide() direto)
         self.stack_presence_changed.emit(0.0, False)
         super().hideEvent(event)
@@ -356,7 +378,7 @@ class KeyLockFlyout(QWidget):
 
         # 3. Interpolação suave do movimento vertical Y ao retornar à posição padrão (quando mixer fecha)
         y_moving = False
-        if not self._mixer_active:
+        if not self._mixer_active and not self._glide.is_running():
             diff_y = self._target_win_y - self._current_win_y
             if abs(diff_y) > 0.4:
                 alpha_y = 1.0 - math.exp(-26.0 * dt)

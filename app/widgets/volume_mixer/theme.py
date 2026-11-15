@@ -27,6 +27,7 @@ e é relido sempre que o flyout aparece. Exemplo (todas as chaves são opcionais
 - `accent` é a cor de ativação: parte preenchida dos sliders, botão do slider, aba ativa (Saída/Entrada)
   e destaque do ícone do app com a gaveta aberta. O botão do slider acompanha o `accent`, a menos que
   você defina `thumb` à parte.
+- Forma própria (`tilt`, `plates`, `digits`, `slider_style`): ver theme_shape.py, neste pacote.
 - Fundo e figurinhas: ver app/core/theme_art.py. O card do Mixer cresce e encolhe com a gaveta; as
   âncoras `bottom-*` acompanham a base do card em movimento.
 """
@@ -36,10 +37,21 @@ from dataclasses import dataclass, replace
 from PySide6.QtGui import QColor
 
 from app.core.theme_art import Background, CardShadow, Sticker
+from app.core.theme_art import issue_scope
 from app.core.theme_loader import ThemeLoader, color_field, parse_tokens
+from app.widgets.volume_mixer.theme_shape import (
+    SLIDER_HEIGHT_RANGE, SLIDER_SLANT_RANGE, SLIDER_TAPER_RANGE, TILT_RANGE, Digits, Header, Plate, parse_digits,
+    parse_header, parse_plates, parse_slider_style,
+)
 
 RADIUS_RANGE = (0.0, 25.0)
-EXTRA_NUMBERS = {"button_radius": (0.0, 13.0)}
+EXTRA_NUMBERS = {
+    "button_radius": (0.0, 13.0),
+    "tilt": TILT_RANGE, "slider_height": SLIDER_HEIGHT_RANGE, "slider_slant": SLIDER_SLANT_RANGE,
+    "slider_taper": SLIDER_TAPER_RANGE,
+}
+# Forma própria do mixer (ver theme_shape.py); as que não são número são lidas em theme_from_dict
+_SHAPE_KEYS = ("tilt", "slider_height", "slider_slant", "slider_taper", "slider_style", "plates", "digits", "header")
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,15 @@ class MixerTheme:
     shadow: CardShadow | None = None                    # sombra suave do card (None = a sombra original)
     background: Background | None = None
     stickers: tuple[Sticker, ...] = ()
+    # Forma própria (theme_shape.py)
+    tilt: float = 0.0                                   # inclinação do card inteiro, em graus
+    slider_style: str = "fluent"                        # "fluent" (trilho fino + botão) ou "bar" (faixa lisa)
+    slider_height: float = 4.0                          # altura do trilho / da faixa
+    slider_slant: float = 0.0                           # pontas inclinadas da faixa (fração da altura)
+    slider_taper: float = 1.0                           # faixa em cunha: altura da ponta direita / da esquerda
+    header: Header | None = None                        # onde ficam a faixa principal e o botão da seta
+    plates: tuple[Plate, ...] = ()                      # placas coloridas atrás do card
+    digits: Digits | None = None                        # número do volume principal desenhado com imagem
 
 
 DEFAULT_THEME = MixerTheme()
@@ -87,7 +108,23 @@ _COLOR_KEYS = (
 
 def theme_from_dict(data: dict, base_dir: str | None = None) -> MixerTheme:
     """Monta um tema a partir de um dict, ignorando chaves desconhecidas e valores inválidos."""
-    changes = parse_tokens(data, base_dir, "mixer", _COLOR_KEYS, RADIUS_RANGE, extra_numbers=EXTRA_NUMBERS)
+    changes = parse_tokens(data, base_dir, "mixer", _COLOR_KEYS, RADIUS_RANGE, extra_numbers=EXTRA_NUMBERS,
+                           extra_keys=("slider_style", "plates", "digits", "header"))
+    with issue_scope(label="mixer"):
+        header = parse_header(data.get("header"))
+        if header is not None:
+            changes["header"] = header
+        if "slider_style" in data:
+            style = parse_slider_style(data["slider_style"])
+            if style is not None:
+                changes["slider_style"] = style
+        plates = parse_plates(data.get("plates"))
+        if plates:
+            changes["plates"] = plates
+        if base_dir is not None:
+            digits = parse_digits(data.get("digits"), base_dir)
+            if digits is not None:
+                changes["digits"] = digits
     # Quem muda só o `accent` espera o botão do slider na mesma cor (o padrão é um azul ligeiramente diferente)
     if "accent" in changes and "thumb" not in changes:
         changes["thumb"] = changes["accent"]

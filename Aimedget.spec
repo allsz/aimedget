@@ -45,9 +45,16 @@ version_info = VSVersionInfo(
 # Arquivos de desenvolvimento dentro de assets/ que não vão para o usuário
 _DEV_ONLY = {"widget-preview.html", "demo.html", "tonearm-animated-demo.svg"}
 
+# Skins com arte própria (assets/skins) não vão para a release: são distribuídas à parte. Para gerar um build que
+# as inclua: AIMEDGET_INCLUDE_SKINS=1 (ou tools/build_release.ps1 -IncludeSkins).
+INCLUDE_SKINS = os.environ.get("AIMEDGET_INCLUDE_SKINS") == "1"
+_SKINS_DIR = os.path.join(ROOT_DIR, "assets", "skins")
+
 datas = []
 for folder, _dirs, files in os.walk(os.path.join(ROOT_DIR, "assets")):
     rel = os.path.relpath(folder, ROOT_DIR)
+    if not INCLUDE_SKINS and os.path.normcase(folder).startswith(os.path.normcase(_SKINS_DIR)):
+        continue
     for name in files:
         if name in _DEV_ONLY or name.endswith(".zip"):
             continue

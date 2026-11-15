@@ -86,7 +86,7 @@ class DocCoverageTests(unittest.TestCase):
         self.assertEqual(documented - expected, set(), "a tabela 3.2 cita chave que não existe")
 
     def test_every_mixer_key_is_documented(self):
-        expected = set(mx_theme._COLOR_KEYS) | {"radius", "button_radius"} | set(COMMON_KEYS)
+        expected = set(mx_theme._COLOR_KEYS) | {"radius", "button_radius"} | set(mx_theme._SHAPE_KEYS) | set(COMMON_KEYS)
         documented = self.keys_in(section("### 3.3"))
         self.assertEqual(expected - documented, set(), "chave sem linha na tabela 3.3")
         self.assertEqual(documented - expected, set(), "a tabela 3.3 cita chave que não existe")

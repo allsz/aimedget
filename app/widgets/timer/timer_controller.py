@@ -6,13 +6,15 @@ from PySide6.QtWidgets import QApplication
 
 from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
+from app.core.widget_animator import AnimatedVisibilityMixin
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
+from app.widgets.timer.skins import timer_skin_classes
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
 
 
-class TimerWidgetController(QObject):
+class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     """
     Controlador central do Timer Widget:
     - Motor de contagem de alta precisão via monotonic `time.perf_counter()`
@@ -28,9 +30,10 @@ class TimerWidgetController(QObject):
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
 
-    AVAILABLE_SKINS: dict[str, Type[BaseTimerSkin]] = {
-        "windows": WindowsTimerSkin,
-    }
+    @staticmethod
+    def available_skins() -> dict[str, Type[BaseTimerSkin]]:
+        """Skins disponíveis agora (a Padrão e os pacotes de skin em disco); relido a cada chamada."""
+        return timer_skin_classes()
 
     def __init__(self, skin_name: Optional[str] = None):
         super().__init__()
@@ -63,14 +66,14 @@ class TimerWidgetController(QObject):
         self.skin: Optional[BaseTimerSkin] = None
         saved_skin = config_manager.get_timer_active_skin("windows")
         initial_skin = skin_name or saved_skin
-        if initial_skin not in self.AVAILABLE_SKINS:
+        if initial_skin not in self.available_skins():
             initial_skin = "windows"
         self.active_skin_name = initial_skin
 
         self.set_skin(initial_skin)
 
     def set_skin(self, skin_name: str):
-        skin_cls = self.AVAILABLE_SKINS.get(skin_name, WindowsTimerSkin)
+        skin_cls = self.available_skins().get(skin_name, WindowsTimerSkin)
         self.active_skin_name = skin_name
         config_manager.set_timer_active_skin(skin_name)
 
@@ -80,7 +83,8 @@ class TimerWidgetController(QObject):
 
         if self.skin is not None:
             old_pos = self.skin.square_origin()   # o quadrado não muda de lugar ao trocar de skin ou de tema
-            was_visible = self.skin.isVisible()
+            was_visible = self._is_shown()   # saindo (fade-out em curso) conta como escondido
+            self.skin.animator.settle()
             try:
                 self.skin.play_pause_clicked.disconnect(self.toggle_play_pause)
                 self.skin.reset_clicked.disconnect(self.reset)
@@ -335,13 +339,14 @@ class TimerWidgetController(QObject):
 
     def show(self):
         if self.skin:
-            self.restore_or_place_at_top()
-            self.skin.show()
+            if not self.skin.animator.is_animating():   # no meio de surgir/sumir a janela já está no lugar: não mexe
+                self.restore_or_place_at_top()
+            self._animate_show()
             self.status_changed.emit(True)
 
     def hide(self):
         if self.skin:
-            self.skin.hide()
+            self._animate_hide()
             self.status_changed.emit(False)
 
     def on_skin_closed(self):

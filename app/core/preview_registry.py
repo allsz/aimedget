@@ -35,6 +35,7 @@ class SkinSpec:
     paint: Callable[[QPainter, QRectF, Any, Any], None]
     mock_state: Callable[[], Any]
     available: bool = True   # False = vaga "TBA": não é selecionável nem reage ao mouse
+    supports_themes: bool = True   # False: a skin tem arte própria e ignora os temas visuais (o Hub esconde a galeria)
 
 
 WIDGET_REGISTRY: dict[str, WidgetSpec] = {}
