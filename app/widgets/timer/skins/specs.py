@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from app.core.i18n import t
 from app.core.preview_registry import SkinSpec, get_skins_for_widget, register_skin
 from app.hub.theme import HubTheme, THEME_DARK
+from app.widgets.timer.skins.shinra_skin import paint_shinra_timer
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
 
 
@@ -57,14 +58,14 @@ def init_timer_skin_specs() -> list[SkinSpec]:
             mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
         ),
         SkinSpec(
-            id="notion",
+            id="shinra",
             widget_id="timer",
-            title="TBA",
-            subtitle="",
+            title="Shinra",
+            subtitle=t("skin_shinra_sub"),
             natural_size=QSizeF(164, 164),
-            paint=_make_paint(paint_tba_timer),
-            mock_state=lambda: TimerState(current_seconds=1500.0, mode="timer"),
-            available=False,
+            paint=_make_paint(paint_shinra_timer),
+            mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
+            supports_themes=False,
         ),
         SkinSpec(
             id="focus_wheel",

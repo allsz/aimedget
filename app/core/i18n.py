@@ -186,8 +186,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "volume_test_title": "Testar flyout de volume",
         "volume_test_sub": "Abre o mixer de volume sobre a barra de tarefas para teste interativo.",
         "volume_test_btn": "Abrir mixer",
-        "volume_opt_mixer_title": "Mixer de aplicativos ativo",
-        "volume_opt_mixer_sub": "Detecta e permite controlar volumes independentes de Discord, Chrome, Spotify, etc.",
         "volume_hotkey_title": "Atalho de teclado",
         "volume_hotkey_sub": "Pressione a combinação para abrir ou alternar o mixer de volume sobre a barra de tarefas.",
         "volume_tab_output": "Saída",
@@ -214,6 +212,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_title": "Atalho de teclado",
         "timer_hotkey_sub": "Pressione a combinação para abrir ou alternar a exibição do temporizador no desktop.",
         "skin_windows_sub": "PIP clássico",
+        "skin_shinra_sub": "Letras e arte da Shinra",
 
         # General Page
         "gen_title": "Geral",
@@ -450,8 +449,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "volume_test_title": "Test volume flyout",
         "volume_test_sub": "Opens the volume mixer above the taskbar for interactive testing.",
         "volume_test_btn": "Open mixer",
-        "volume_opt_mixer_title": "App volume mixer active",
-        "volume_opt_mixer_sub": "Detects and allows controlling individual volume for Discord, Chrome, Spotify, etc.",
         "volume_hotkey_title": "Keyboard shortcut",
         "volume_hotkey_sub": "Press the combination to open or toggle the volume mixer above the taskbar.",
         "volume_tab_output": "Output",
@@ -478,6 +475,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_title": "Keyboard shortcut",
         "timer_hotkey_sub": "Press the combination to open or toggle the timer widget on the desktop.",
         "skin_windows_sub": "Classic PIP",
+        "skin_shinra_sub": "Shinra lettering and art",
 
         # General Page
         "gen_title": "General",

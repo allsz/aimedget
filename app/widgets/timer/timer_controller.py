@@ -9,6 +9,7 @@ from app.core.config_manager import config_manager
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
+from app.widgets.timer.skins.shinra_skin import ShinraTimerSkin
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
 
 
@@ -30,6 +31,7 @@ class TimerWidgetController(QObject):
 
     AVAILABLE_SKINS: dict[str, Type[BaseTimerSkin]] = {
         "windows": WindowsTimerSkin,
+        "shinra": ShinraTimerSkin,
     }
 
     def __init__(self, skin_name: Optional[str] = None):

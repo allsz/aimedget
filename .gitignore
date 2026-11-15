@@ -81,5 +81,7 @@ PRODUCT.md
 tests/snapshots/
 
 #Anotações Pessoais
-Bug_Notes.md
-Future_Feature.md
+thinking
+
+# Arte das skins (Shinra, Persona 5...): distribuída à parte, só a lógica que a aceita fica no repositório
+assets/skins/
