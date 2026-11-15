@@ -212,7 +212,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_title": "Atalho de teclado",
         "timer_hotkey_sub": "Pressione a combinação para abrir ou alternar a exibição do temporizador no desktop.",
         "skin_windows_sub": "PIP clássico",
-        "skin_shinra_sub": "Letras e arte da Shinra",
 
         # General Page
         "gen_title": "Geral",
@@ -475,7 +474,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_title": "Keyboard shortcut",
         "timer_hotkey_sub": "Press the combination to open or toggle the timer widget on the desktop.",
         "skin_windows_sub": "Classic PIP",
-        "skin_shinra_sub": "Shinra lettering and art",
 
         # General Page
         "gen_title": "General",

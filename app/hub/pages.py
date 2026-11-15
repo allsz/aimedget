@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.config_manager import config_manager
-from app.core.i18n import t
+from app.core.i18n import i18n, t
+from app.core.skin_packs import discover as discover_skin_packs
 from app.core.version import __version__
 from app.services.updater_service import UpdateInfo, is_installed_build, updater_service
 from app.hub.components.accent_entry import AccentEntryRow
@@ -1470,7 +1471,7 @@ class TimerPage(BaseHubPage):
             self.bridge.timer_controller.skin.activateWindow()
 
     def _active_skin_supports_themes(self, skin_key: str | None = None) -> bool:
-        """A skin ativa aceita temas visuais? (Skins com arte própria, como a Shinra, não aceitam.)"""
+        """A skin ativa aceita temas visuais? (Skins com arte própria, vindas de pacotes, não aceitam.)"""
         return skin_supports_themes(init_timer_skin_specs(), skin_key or self.bridge.timer_controller.active_skin_name)
 
     def _on_active_timer_skin_changed(self, skin_key: str):
@@ -1478,7 +1479,7 @@ class TimerPage(BaseHubPage):
         self.theme_section.set_open(self._active_skin_supports_themes(skin_key))
 
     def _on_skin_selected(self, skin_key: str):
-        if skin_key in self.bridge.timer_controller.AVAILABLE_SKINS:
+        if skin_key in self.bridge.timer_controller.available_skins():
             self.bridge.set_timer_skin(skin_key)
             if hasattr(self, "_skin_cards"):
                 for k, card in self._skin_cards.items():
@@ -1532,10 +1533,9 @@ class TimerPage(BaseHubPage):
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         # O título e o subtítulo da skin ficam na spec (criada na inicialização): refaz no idioma novo
-        timer_skin_texts = {
-            "windows": (t("theme_default_timer"), t("skin_windows_sub")),
-            "shinra": ("Shinra", t("skin_shinra_sub")),
-        }
+        timer_skin_texts = {"windows": (t("theme_default_timer"), t("skin_windows_sub"))}
+        for pack in discover_skin_packs("timer"):
+            timer_skin_texts[pack.id] = pack.texts(i18n.current_language)
         if hasattr(self, "_skin_cards"):
             for s_id, card in self._skin_cards.items():
                 if s_id in timer_skin_texts:

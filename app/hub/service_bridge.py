@@ -390,7 +390,7 @@ class HubServiceBridge(QObject):
         return self._states.get("timer", True)
 
     def set_timer_skin(self, skin_name: str):
-        if skin_name in self.timer_controller.AVAILABLE_SKINS:
+        if skin_name in self.timer_controller.available_skins():
             self.timer_controller.set_skin(skin_name)
 
     def _on_timer_status_changed(self, is_active: bool):

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from app.hub.components import collapsible_section as cs
 from app.hub.components.collapsible_section import CollapsibleSection
+from skin_pack_fixture import fake_skin_pack
 
 
 def _finish(section, timeout_ms=3000):
@@ -117,9 +118,16 @@ class CollapsibleSectionTests(unittest.TestCase):
 
 
 class TimerPageThemeGalleryTests(unittest.TestCase):
+    """Roda com um pacote de skin sintético (uma skin com arte própria, que não aceita temas) em vez de uma arte real."""
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        ctx = fake_skin_pack("art-skin")
+        self.pack = ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
 
     def test_gallery_follows_the_active_skin(self):
         from app.hub.pages import TimerPage
@@ -131,7 +139,7 @@ class TimerPageThemeGalleryTests(unittest.TestCase):
         original = ctrl.active_skin_name
         self.addCleanup(ctrl.set_skin, original)
         with mock.patch.object(cs, "animations_enabled", return_value=False):
-            ctrl.set_skin("shinra")
+            ctrl.set_skin(self.pack.id)
             self.assertFalse(page.theme_section.isVisible())
             self.assertFalse(page.theme_picker.isVisible())
             ctrl.set_skin("windows")
@@ -156,7 +164,7 @@ class TimerPageThemeGalleryTests(unittest.TestCase):
             rest = page.sk_header.mapTo(page, QPoint(0, 0)).y()
             seen = []
             with mock.patch.object(cs, "animations_enabled", return_value=True):
-                for skin in ("shinra", "windows"):
+                for skin in (self.pack.id, "windows"):
                     ctrl.set_skin(skin)
                     while page.theme_section.is_animating():
                         QTest.qWait(8)
@@ -206,7 +214,7 @@ class TimerPageThemeGalleryTests(unittest.TestCase):
             rest = card.height()
             seen = []
             with mock.patch.object(cs, "animations_enabled", return_value=True):
-                for skin in ("shinra", "windows"):
+                for skin in (self.pack.id, "windows"):
                     ctrl.set_skin(skin)
                     while page.theme_section.is_animating():
                         QTest.qWait(5)
@@ -219,7 +227,7 @@ class TimerPageThemeGalleryTests(unittest.TestCase):
         from app.widgets.timer.skins import init_timer_skin_specs
         flags = {s.id: s.supports_themes for s in init_timer_skin_specs()}
         self.assertTrue(flags["windows"])
-        self.assertFalse(flags["shinra"])
+        self.assertFalse(flags[self.pack.id])
 
 
 if __name__ == "__main__":

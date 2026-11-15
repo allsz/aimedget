@@ -9,7 +9,7 @@ from app.core.config_manager import config_manager
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
-from app.widgets.timer.skins.shinra_skin import ShinraTimerSkin
+from app.widgets.timer.skins import timer_skin_classes
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
 
 
@@ -29,10 +29,10 @@ class TimerWidgetController(QObject):
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
 
-    AVAILABLE_SKINS: dict[str, Type[BaseTimerSkin]] = {
-        "windows": WindowsTimerSkin,
-        "shinra": ShinraTimerSkin,
-    }
+    @staticmethod
+    def available_skins() -> dict[str, Type[BaseTimerSkin]]:
+        """Skins disponíveis agora (a Padrão e os pacotes de skin em disco); relido a cada chamada."""
+        return timer_skin_classes()
 
     def __init__(self, skin_name: Optional[str] = None):
         super().__init__()
@@ -65,14 +65,14 @@ class TimerWidgetController(QObject):
         self.skin: Optional[BaseTimerSkin] = None
         saved_skin = config_manager.get_timer_active_skin("windows")
         initial_skin = skin_name or saved_skin
-        if initial_skin not in self.AVAILABLE_SKINS:
+        if initial_skin not in self.available_skins():
             initial_skin = "windows"
         self.active_skin_name = initial_skin
 
         self.set_skin(initial_skin)
 
     def set_skin(self, skin_name: str):
-        skin_cls = self.AVAILABLE_SKINS.get(skin_name, WindowsTimerSkin)
+        skin_cls = self.available_skins().get(skin_name, WindowsTimerSkin)
         self.active_skin_name = skin_name
         config_manager.set_timer_active_skin(skin_name)
 
