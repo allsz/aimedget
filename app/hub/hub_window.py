@@ -394,10 +394,10 @@ class AimedgetHubWindow(QMainWindow):
         self._icons_pending = self._icons_pending or refresh_icons
         animate = self._can_wipe()
         entry = self.page_gen.accent_entry
-        # Sem a pintura animada (arrasto ao vivo), reaplicar o estilo do Hub inteiro (~70 ms) no meio da animação do
-        # campo de cor congelaria alguns quadros: espera o movimento terminar (o pedido mais recente vence). Com a
-        # pintura, o campo e o seletor ficam fora da foto e continuam vivos, então não há o que esperar.
-        if entry.is_animating() and not animate:
+        # Reaplicar o estilo do Hub inteiro (~70 ms, mais a foto) trava a thread da interface: no meio da animação do
+        # campo de cor congelaria alguns quadros (um clique no seletor liga o "Redefinir" e solta o botão em seguida).
+        # Então espera o movimento terminar (o pedido mais recente vence); a pintura começa logo depois.
+        if entry.is_animating():
             entry.when_idle(self._flush_accent)
             return
         refresh_icons, self._icons_pending = self._icons_pending, False

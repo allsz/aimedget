@@ -1717,8 +1717,8 @@ class GeneralPage(BaseHubPage):
         row_acc.setAlignment(info_acc, Qt.AlignmentFlag.AlignVCenter)
 
         self._accent_spec = config_manager.get_hub_accent()   # None | matiz | "#RRGGBB"
-        # Um só controle: a barra ocupa a largura do bloco; o campo e o "Restaurar" se alinham às pontas
-        # visíveis da trilha (a barra reserva SLIDER_MARGIN de cada lado para o botão e o anel de foco).
+        # Um só controle: a barra ocupa a largura do bloco; sem cor personalizada, o campo fica alinhado à direita
+        # da trilha; com ela, desliza para a esquerda formando um par centralizado com o "Redefinir".
         accent_box = QWidget()
         accent_box.setFixedWidth(ACCENT_BOX_W)
         right = QVBoxLayout(accent_box)
@@ -1747,7 +1747,7 @@ class GeneralPage(BaseHubPage):
         self.btn_accent_reset.setProperty("class", "Chip")
         self.btn_accent_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_accent_reset.clicked.connect(self._reset_accent)
-        # Campo sozinho à direita; com cor personalizada, desliza para a esquerda e o "Restaurar" aparece
+        # Campo sozinho à direita; com cor personalizada, desliza e o "Redefinir" sai de trás dele (par centralizado)
         self.accent_entry = AccentEntryRow(self.accent_edit, self.btn_accent_reset, inset=int(SLIDER_MARGIN),
                                            shown=spec is not None)
         right.addWidget(self.accent_entry)
@@ -2027,9 +2027,11 @@ class GeneralPage(BaseHubPage):
 
     def _emit_accent(self, accent, committed: bool):
         self._accent_spec = accent
-        self.accent_entry.set_reset_shown(accent is not None)
+        # O trabalho pesado (snapshot + reaplicar o estilo, ~70 ms) roda ANTES de a animação do "Redefinir" começar:
+        # se rodasse depois, congelaria os primeiros quadros do movimento (parece travado).
         if self._on_accent_change:
             self._on_accent_change(accent, committed)
+        self.accent_entry.set_reset_shown(accent is not None)
 
     def _accent_moved(self, hue: int, committed: bool):
         self._emit_accent(hue, committed)

@@ -33,7 +33,7 @@ def _get_headless_volume_mixer():
         flyout.on_sessions_updated([s1])
         flyout.is_expanded = True
         flyout._expand_t = 1.0
-        flyout._apply_window_canvas_size(expanded_canvas=True)
+        flyout._apply_window_canvas_size()
         flyout._anim_card_h = flyout._target_expanded_height()
         flyout._hide_timer.stop()
         flyout._anim_timer.stop()

@@ -10,6 +10,7 @@ from app.services.audio_endpoint_service import AudioEndpoint
 from app.services.win_app_icon_extractor import is_glyph_icon
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme
+from app.widgets.volume_mixer.theme_shape import hairline
 from app.ui_components.pill_switch import PillSwitch
 
 
@@ -117,6 +118,12 @@ class AppVolumeRow:
         if self._scaled_icon.isNull() and not icon.isNull():
             self._scaled_icon = self._prepare_icon(icon)
             self._is_glyph = is_glyph_icon(icon)
+
+    def display_name(self) -> str:
+        """Nome mostrado ao usuário (traduzido para Sons do Sistema), usado na gaveta e no tooltip do ícone."""
+        if self.name == "Sons do Sistema":
+            return t("volume_system_sounds")
+        return self.name.capitalize() if self.name.islower() else self.name
 
     def _icon_for_theme(self) -> QImage:
         """O ícone a desenhar: apps usam o ícone deles; o glifo de Sons do Sistema é pintado com a cor `icon` do tema
@@ -498,19 +505,23 @@ class AppVolumeRow:
         p.save()
         # Recorte suave para o conteúdo não vazar enquanto a gaveta anima sua altura
         clip_rect = QRectF(drawer_x, drawer_y, drawer_w, current_drawer_h)
+        if self.theme.tilt:
+            # recorte girado tem borda dura (sem antialiasing): se cortar o traço da borda, ela serrilha.
+            # Folga para a borda inteira passar; o recorte do card já segura o que vazar mais longe.
+            clip_rect = clip_rect.adjusted(-2.0, -2.0, 2.0, 2.0)
         p.setClipRect(clip_rect, Qt.ClipOperation.IntersectClip)
         p.setOpacity(min(1.0, self._expand_t * 1.25))
 
         # Fundo da gaveta (#242424 com borda fina #363636) acompanhando a altura dinâmica
         bg_rect = QRectF(drawer_x, drawer_y, drawer_w, self._current_drawer_h)
-        p.setPen(QPen(self.theme.drawer_border, 1.0))
+        p.setPen(QPen(self.theme.drawer_border, hairline(self.theme)))
         p.setBrush(self.theme.drawer_bg)
         p.drawRoundedRect(bg_rect, 6.0, 6.0)
 
         # A) Cabeçalho: Nome do Aplicativo formatado (sem a palavra ROTEAMENTO)
         p.setFont(get_ui_font(12, QFont.Weight.DemiBold))
         p.setPen(QColor(248, 248, 248))
-        disp_name = self.name.capitalize() if self.name.islower() else self.name
+        disp_name = self.display_name()
         title_rect = QRectF(drawer_x + 9.0, drawer_y + 4.0, drawer_w - 38.0, 20.0)
         p.drawText(
             title_rect,
@@ -536,12 +547,16 @@ class AppVolumeRow:
 
         # B) Abas Segmentadas (Fluent Segmented Pivot): [ Saída ]  [ Entrada ]
         tabs_track = QRectF(x0 + 17.0, drawer_y + 27.0, 206.0, 26.0)
-        p.setPen(QPen(self.theme.tabs_border, 1.0))
+        p.setPen(QPen(self.theme.tabs_border, hairline(self.theme)))
         p.setBrush(self.theme.tabs_bg)
         p.drawRoundedRect(tabs_track, 5.0, 5.0)
 
         tab_out_r = self._tab_rect(x0, y_top, "output")
         tab_in_r = self._tab_rect(x0, y_top, "input")
+        if self.theme.tilt:
+            # a fresta de ~1px entre a borda do trilho e a aba ativa serrilha com a rotação: alarga um pouco
+            tab_out_r = tab_out_r.adjusted(0.75, 0.75, -0.75, -0.75)
+            tab_in_r = tab_in_r.adjusted(0.75, 0.75, -0.75, -0.75)
 
         # Aba Saída
         is_out = (self.active_flow == "output")
@@ -605,7 +620,8 @@ class AppVolumeRow:
             p.setPen(QColor(255, 255, 255) if is_active else QColor(175, 175, 175))
 
             avail_w = item_r.width() - 44.0
-            elided_name = fm.elidedText(ep.name, Qt.TextElideMode.ElideRight, avail_w)
+            elided_name = fm.elidedText(t("volume_windows_default") if ep.is_default and ep.device_id == "__default__" else ep.name,
+                                       Qt.TextElideMode.ElideRight, avail_w)
             text_r = QRectF(item_r.left() + 7.0, item_r.top(), avail_w, item_r.height())
             p.drawText(
                 text_r,

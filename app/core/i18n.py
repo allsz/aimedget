@@ -190,6 +190,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "volume_hotkey_sub": "Pressione a combinação para abrir ou alternar o mixer de volume sobre a barra de tarefas.",
         "volume_tab_output": "Saída",
         "volume_tab_input": "Entrada",
+        "volume_system_sounds": "Sons do Sistema",
+        "volume_windows_default": "Padrão do Windows",
 
         # Timer Page
         "timer_title": "Timer & Foco",
@@ -453,6 +455,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "volume_hotkey_sub": "Press the combination to open or toggle the volume mixer above the taskbar.",
         "volume_tab_output": "Output",
         "volume_tab_input": "Input",
+        "volume_system_sounds": "System Sounds",
+        "volume_windows_default": "Windows Default",
 
         # Timer Page
         "timer_title": "Timer & Focus",
