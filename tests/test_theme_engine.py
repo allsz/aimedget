@@ -465,7 +465,7 @@ class MixerFlyoutGeometryTests(_Dir):
                 before = (m.x() + r0.left(), m.y() + r0.bottom())
                 m._apply_theme(art)                                    # com o flyout VISÍVEL
                 ml, mt, mr, mb = m._margins
-                max_h = m.EXPANDED_MAX_H if expanded else m.COLLAPSED_H
+                max_h = m.EXPANDED_MAX_H   # a janela fica sempre com espaço para a gaveta (evita o flash ao expandir)
                 self.assertEqual(m.width(), int(m.CARD_W + ml + mr), expanded)
                 self.assertEqual(m.height(), int(max_h + mt + mb + m.SLIDE_TRAVEL_PX), expanded)
                 r = m._card_rect()
