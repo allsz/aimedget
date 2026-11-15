@@ -42,7 +42,7 @@ class ClassifyBrowserTests(unittest.TestCase):
         session = SimpleNamespace(source_app_user_model_id=app_id)
         props = SimpleNamespace(title=title, artist=artist, album_title="", track_number=0)
         info = SimpleNamespace(playback_status=mw.PlaybackStatus.PLAYING)
-        return worker._classify_session(session, props, info, thumb)
+        return worker._classify_session(session, props, info)
 
     def test_video_with_widescreen_cover_is_visible_but_does_not_auto_open(self):
         ok, provider, _, auto_open = self._classify(

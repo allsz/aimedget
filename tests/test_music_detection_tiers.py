@@ -30,7 +30,7 @@ class TierTests(unittest.TestCase):
         props = SimpleNamespace(title=title, artist=artist, album_title=album, track_number=track)
         status = mw.PlaybackStatus.PLAYING if playing else mw.PlaybackStatus.PAUSED
         info = SimpleNamespace(playback_status=status)
-        return worker._classify_session(session, props, info, b"")
+        return worker._classify_session(session, props, info)
 
     def assertAutoOpens(self, *args, **kwargs):
         ok, _, _, auto_open = self._classify(*args, **kwargs)

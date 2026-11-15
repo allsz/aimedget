@@ -637,9 +637,9 @@ class WindowsMediaWorker(QObject):
 
     async def _candidate_thumbnail(self, key: str, props) -> bytes:
         """
-        Thumbnail de uma sessão candidata, só onde ele muda a decisão: a classificação usa a
-        proporção da capa apenas em navegadores. Nos demais players devolve b"" (a capa da sessão
-        escolhida é lida mais adiante, e só se ainda não estiver travada em cache).
+        Thumbnail de uma sessão candidata de navegador (a classificação não usa a capa: serve ao diagnóstico e a
+        pré-carrega para a sessão escolhida). Nos demais players devolve b"" (a capa da sessão escolhida é lida mais
+        adiante, e só se ainda não estiver travada em cache).
         Em navegadores, a leitura (cara) é reaproveitada enquanto a faixa não muda.
         """
         if not is_browser_app_id(key):
@@ -691,7 +691,6 @@ class WindowsMediaWorker(QObject):
         session,
         props,
         info,
-        thumb_bytes: bytes,
     ) -> tuple[bool, str, int, bool]:
         """
         Classifica a sessão em: (é_música, provedor, pontuação_de_prioridade, abre_sozinho).
@@ -775,7 +774,7 @@ class WindowsMediaWorker(QObject):
                 return False, "browser_video_rejected", -1, False
 
             # 6b. Artista é o próprio navegador e o título não tem o formato "Artista - Título"
-            if artist.lower() in ("youtube", "google chrome", "chrome", "microsoft edge", "firefox", "navegador") and " - " not in title:
+            if artist.lower() in ("youtube", "google chrome", "chrome", "microsoft edge", "firefox", "navegador") and not looks_like_song:
                 return False, "browser_video_rejected", -1, False
 
             # 6c. Canal oficial de música do YouTube (termina com "- Topic")
@@ -874,7 +873,7 @@ class WindowsMediaWorker(QObject):
                         s_props = await s.try_get_media_properties_async()
                         s_info = s.get_playback_info()
                         s_thumb = await self._candidate_thumbnail(key, s_props)
-                        is_m, p_name, score, auto_ok = self._classify_session(s, s_props, s_info, s_thumb)
+                        is_m, p_name, score, auto_ok = self._classify_session(s, s_props, s_info)
                         _diag_record(s, s_props, s_info, s_thumb, (is_m, p_name, score, auto_ok))
                         candidates.append(
                             SessionCandidate(
