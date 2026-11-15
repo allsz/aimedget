@@ -260,7 +260,9 @@ class MusicWidgetController(QObject):
             # Se uma música tocou, a abertura manual cumpriu seu papel de espera
             self._manually_opened = False
 
-            if auto_launch and self.skin and not self._is_shown() and not self._dismissal.active:
+            # Nível C (Work Adventure, Kick, vídeos...): aparece se o usuário abrir o widget, mas nunca o abre sozinho
+            auto_open_ok = getattr(self.media_worker, "current_auto_open_ok", True)
+            if auto_launch and auto_open_ok and self.skin and not self._is_shown() and not self._dismissal.active:
                 if not self.is_hiding():
                     self.restore_or_center_position()
                 self.show()

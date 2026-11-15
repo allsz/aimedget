@@ -79,6 +79,39 @@ class TestMusicAutoLaunch(unittest.TestCase):
         # Cleanup
         controller.skin.close()
 
+    def test_ambiguous_media_never_opens_the_widget_on_its_own(self):
+        """Nível C (Work Adventure, Kick, vídeos): tocando, mas a sessão não é de música confirmada: não abre sozinho."""
+        config_manager.set_auto_launch_enabled(True)
+        config_manager.set_music_enabled(True)
+
+        worker = DummyMediaWorker()
+        worker._last_title = "Nenhuma mídia ativa"
+        worker.current_auto_open_ok = False
+        controller = MusicWidgetController(skin_name="capa_empilhada")
+        self._stop_worker_after_test(controller.media_worker)
+        controller.media_worker = worker
+        controller.start()
+
+        controller._handle_auto_launch_lifecycle(
+            title="WorkAdventure VIRTUAL WORKPLACES", artist="WorkAdventure",
+            is_playing=True, pos=0.0, dur=0.0, thumb_bytes=b"")
+        self.assertFalse(controller.skin.isVisible())
+
+        # Já com o widget aberto manualmente, a mesma sessão continua sendo exibida normalmente
+        controller.skin.show()
+        controller._handle_auto_launch_lifecycle(
+            title="WorkAdventure VIRTUAL WORKPLACES", artist="WorkAdventure",
+            is_playing=True, pos=0.0, dur=0.0, thumb_bytes=b"")
+        self.assertTrue(controller.skin.isVisible())
+
+        # E uma sessão confirmada como música volta a abrir sozinha
+        controller.skin.hide()
+        worker.current_auto_open_ok = True
+        controller._handle_auto_launch_lifecycle(
+            title="Blinding Lights", artist="The Weeknd", is_playing=True, pos=0.0, dur=200.0, thumb_bytes=b"")
+        self.assertTrue(controller.skin.isVisible())
+        controller.skin.close()
+
     def test_manual_mode_shows_on_start(self):
         """No modo manual, ao iniciar o controller, o widget deve abrir imediatamente."""
         config_manager.set_auto_launch_enabled(False)
