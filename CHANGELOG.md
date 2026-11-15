@@ -4,6 +4,29 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.0.5] - 2026-11-15
+
+### Adicionado
+- **Cor de destaque do Hub** com seletor em onda: a colina acompanha o botão ao arrastar e a cor nova é "pintada"
+  pela janela, como uma barra de progresso. O ícone do app e da bandeja seguem a cor escolhida.
+- **Mixer de volume com tema**: temas podem mudar a forma do painel (inclinação, placas, barras e algarismos em
+  imagem), e as miniaturas da galeria ficam mais nítidas.
+- Movimento mais suave: widgets deslizam ao mudar de posição, o Timer aparece e some com fade e os efeitos
+  usam a taxa de atualização do monitor.
+
+### Alterado
+- **Music Player**: só música confirmada abre o widget sozinha. Vídeos, lives e abas ambíguas ainda aparecem se
+  você abrir o widget, mas não o abrem por conta própria.
+- Botões de ação do Hub mais curtos (só o verbo), com a frase completa na dica e na acessibilidade.
+- A galeria de temas expande e recolhe de forma mais lenta e suave.
+- Skins do Timer agora são pacotes genéricos encontrados na pasta, não uma skin embutida com nome fixo.
+
+### Corrigido
+- **Mixer de volume**: sem o flash ao expandir, a roda do mouse funciona sobre os controles dos apps e clicar
+  fora recolhe o painel. O nome "Sons do Sistema" na dica do ícone agora segue o idioma.
+- **Seletor de cor**: a onda continuava parada se você pausasse o mouse no meio do arrasto.
+- **Music Player**: um sinal atrasado da capa não causa mais erro depois de o visual ser trocado.
+
 ## [1.0.4] - 2026-11-11
 
 ### Corrigido

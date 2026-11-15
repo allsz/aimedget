@@ -301,7 +301,7 @@ class ThemeSelectionTests(unittest.TestCase):
         self.assertEqual(config_manager.get_theme_choice("keylock"), "lavanda")
         self.assertEqual(kl_theme.load_user_theme().on_color, QColor("#b46cff"))
         kl_theme.loader.set_active("default")
-        self.assertIs(kl_theme.load_user_theme(), kl_theme.DEFAULT_THEME)  # "padrão" vence o tema solto
+        self.assertIs(kl_theme.load_user_theme(), kl_theme.default_theme())  # "padrão" vence o tema solto
         with open(config_manager.config_path, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["themes"]["keylock"], "default")
 
@@ -313,7 +313,7 @@ class ThemeSelectionTests(unittest.TestCase):
         for bad in ("nao_existe", "../fora", "..", "a/b", ".oculto"):
             config_manager.set_theme_choice("keylock", bad)
             kl_theme.reset_cache()
-            self.assertIs(kl_theme.load_user_theme(), kl_theme.DEFAULT_THEME, bad)
+            self.assertIs(kl_theme.load_user_theme(), kl_theme.default_theme(), bad)
 
     def test_theme_folder_assets_and_hot_reload(self):
         self.theme("lavanda", {"stickers": [{"image": "a.svg", "width": 10}]})
