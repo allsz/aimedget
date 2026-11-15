@@ -10,7 +10,8 @@ desenhada, então figurinhas e sombra aparecem sem sobras.
 import math
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSizeF
-from PySide6.QtGui import QRegion
+from PySide6.QtGui import QImage, QPainter, QRegion
+from PySide6.QtCore import Qt
 
 from app.core.preview_registry import SkinSpec
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme
@@ -39,8 +40,30 @@ def _paint(p, rect: QRectF, theme: MixerTheme, _hub_theme=None):
         pl, pt, pr, pb = _pads(theme, card)
         source = QRect(int(card.left() - pl), int(card.top() - pt),
                        int(card.width() + pl + pr), int(card.height() + pt + pb))
+        # A miniatura é bem menor que o card. Desenhar o card direto nessa escala reduz as imagens do tema (logo,
+        # algarismos) de uma vez só pelo filtro bilinear, que serrilha, e os traços finos viram fração de pixel.
+        # Então: desenha o card num buffer em escala >= 2x e reduz UMA vez com filtro suave (média de área).
+        tf = p.transform()
+        dpr = p.device().devicePixelRatioF()
+        final = math.hypot(tf.m11(), tf.m12()) * dpr            # pixels do dispositivo por px lógico do card
+        if final >= 1.0:                                         # sem redução: desenho direto, igual ao do mixer
+            p.save()
+            flyout.render(p, QPoint(int(rect.x()), int(rect.y())), QRegion(source))
+            p.restore()
+            return
+        k = 2.0
+        w, h = source.width(), source.height()
+        buf = QImage(max(1, round(w * k)), max(1, round(h * k)), QImage.Format.Format_ARGB32_Premultiplied)
+        buf.fill(0)
+        q = QPainter(buf)
+        q.scale(k, k)
+        flyout.render(q, QPoint(0, 0), QRegion(source))
+        q.end()
+        buf = buf.scaled(max(1, round(w * final)), max(1, round(h * final)),
+                         Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
         p.save()
-        flyout.render(p, QPoint(int(rect.x()), int(rect.y())), QRegion(source))
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawImage(QRectF(rect.x(), rect.y(), float(w), float(h)), buf)
         p.restore()
     finally:
         flyout._apply_theme(DEFAULT_THEME)

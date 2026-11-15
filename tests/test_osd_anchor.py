@@ -131,7 +131,7 @@ class TopAnchorTests(_FlyoutPair):
 
     def test_drawer_grows_down_keeping_the_top_still(self):
         _l, top_collapsed, _r, _b = self.mixer_card(50.0)
-        self.mixer._apply_window_canvas_size(expanded_canvas=True)
+        self.mixer._apply_window_canvas_size()
         _l, top_expanded, _r, bottom_expanded = self.mixer_card(260.0)
         self.assertAlmostEqual(top_expanded, top_collapsed, delta=1.0)
         self.assertAlmostEqual(bottom_expanded - top_expanded, 260.0, delta=1.0)
@@ -149,7 +149,7 @@ class TopAnchorTests(_FlyoutPair):
     def test_caps_follows_the_mixer_drawer_down(self):
         self.show_mixer()
         _l, first_top, _r, _b = self.caps_card()
-        self.mixer._apply_window_canvas_size(expanded_canvas=True)
+        self.mixer._apply_window_canvas_size()
         self.mixer._anim_card_h = 200.0
         self.mixer._notify_card_top()
         _l, caps_top, _r, _b = self.caps_card()
@@ -214,7 +214,7 @@ class MiddleAnchorTests(_FlyoutPair):
         self.assertAlmostEqual((t + b) / 2, self.center_y, delta=1.0)
 
     def test_drawer_grows_both_ways(self):
-        self.mixer._apply_window_canvas_size(expanded_canvas=True)
+        self.mixer._apply_window_canvas_size()
         _l, t, _r, b = self.mixer_card(300.0)
         self.assertAlmostEqual((t + b) / 2, self.center_y, delta=1.0)
 

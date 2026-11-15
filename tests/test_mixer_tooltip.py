@@ -24,7 +24,7 @@ class MixerTooltipTests(unittest.TestCase):
         self.m.on_sessions_updated([AppAudioSession("a", "Alfa", 50, False, img),
                                     AppAudioSession("b", "Beta", 50, False, img)])
         self.m.is_expanded = True                       # gaveta aberta, sem esperar a animação
-        self.m._apply_window_canvas_size(expanded_canvas=True)
+        self.m._apply_window_canvas_size()
         self.m._expand_t = 1.0
         self.m._anim_card_h = self.m._target_expanded_height()
         p = mock.patch.object(mf, "QToolTip")

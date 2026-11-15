@@ -499,7 +499,7 @@ class MixerFlyoutGeometryTests(_Dir):
                           {"image": "a.svg", "width": 40, "anchor": "bottom-left", "x": 20, "y": 16}]}, self.dir)
         for expanded in (False, True):
             m = self._flyout(mx_theme.DEFAULT_THEME)
-            m._apply_window_canvas_size(expanded_canvas=expanded)
+            m._apply_window_canvas_size()
             m._anim_card_h = float(m.EXPANDED_MAX_H if expanded else m.COLLAPSED_H)
             m.show()
             try:

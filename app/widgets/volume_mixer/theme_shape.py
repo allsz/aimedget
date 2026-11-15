@@ -220,6 +220,15 @@ def parse_digits(data, base_dir: str) -> Digits | None:
 
 # --- Geometria -------------------------------------------------------------------------------
 
+TILT_HAIRLINE = 1.5
+
+
+def hairline(theme) -> float:
+    """Espessura dos traços finos. Com `tilt`, 1px vira 1.5px: uma linha de 1px quase horizontal divide o brilho
+    entre duas fileiras de pixels (mistura em sRGB) e parece tracejada."""
+    return TILT_HAIRLINE if theme.tilt else 1.0
+
+
 def tilt_transform(card: QRectF, tilt: float, vertical: str) -> QTransform | None:
     """Rotação do card em volta do meio da borda ANCORADA (ela fica parada quando a gaveta abre)."""
     if not tilt:

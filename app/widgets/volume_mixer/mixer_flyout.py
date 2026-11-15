@@ -21,7 +21,7 @@ from app.core.theme_art import (
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_theme
 from app.widgets.volume_mixer.theme_shape import (
-    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, paint_digits, paint_plates, pop_amount, tilt_transform,
+    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, hairline, paint_digits, paint_plates, pop_amount, tilt_transform,
 )
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow
 
@@ -92,7 +92,6 @@ class VolumeMixerFlyout(QWidget):
         self._art_bottom = 0.0
         self._art_left = 0.0
         self._art_right = 0.0
-        self._canvas_expanded = False   # tamanho de janela em uso (recolhido ou com espaço para a gaveta)
         # Número em imagem (tema com `digits`): último valor desenhado e quando ele mudou (o "pulo")
         self._digits_value: int | None = None
         self._digits_pop_start = 0.0
@@ -178,7 +177,7 @@ class VolumeMixerFlyout(QWidget):
         self._tip_hide_timer.setInterval(self.TOOLTIP_HIDE_DELAY_MS)
         self._tip_hide_timer.timeout.connect(self._hide_app_tooltip)
 
-        self._apply_window_canvas_size(expanded_canvas=False)
+        self._apply_window_canvas_size()
 
     def _sync_refresh_rate_interval(self):
         """Ajusta o intervalo do timer para a taxa de atualização nativa do monitor onde o OSD aparece."""
@@ -236,15 +235,14 @@ class VolumeMixerFlyout(QWidget):
         self._start_anim_timer()
         self.update()
 
-    def _apply_window_canvas_size(self, expanded_canvas: bool):
+    def _apply_window_canvas_size(self):
         """
-        Ajusta o tamanho da janela e a reposiciona pela âncora. A janela fica SEMPRE com espaço para a gaveta
-        (`expanded_canvas` é ignorado): expandir/recolher só muda o que é pintado dentro dela. Redimensionar uma
+        Ajusta o tamanho da janela e a reposiciona pela âncora. A janela fica SEMPRE com espaço para a gaveta:
+        expandir/recolher só muda o que é pintado dentro dela. Redimensionar uma
         janela translúcida a cada clique mostrava, por um quadro, o bitmap antigo (o card recolhido) no topo da
         janela nova antes de o conteúdo certo chegar: era o flash do card "pulando" antes da animação. Os pixels
         transparentes da janela deixam o clique passar, então a área extra não bloqueia nada.
         """
-        self._canvas_expanded = True
         ml, mt, mr, mb = self._margins
         win_w = int(self.CARD_W + ml + mr)
         win_h = int(self._slot_height() + mt + mb + self.SLIDE_TRAVEL_PX)
@@ -267,7 +265,7 @@ class VolumeMixerFlyout(QWidget):
 
     def _slot_height(self) -> float:
         """Altura máxima que o card pode ter com o tamanho de janela em uso."""
-        return float(self.EXPANDED_MAX_H if self._canvas_expanded else self.COLLAPSED_H)
+        return float(self.EXPANDED_MAX_H)
 
     def _vertical(self) -> str:
         return osd_anchor.vertical(self._anchor)
@@ -361,7 +359,7 @@ class VolumeMixerFlyout(QWidget):
             self._anchor = anchor
             self._update_stack_offset_target()
             self._stack_offset = self._stack_offset_target
-            self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)   # a janela vai ao lugar FINAL
+            self._apply_window_canvas_size()   # a janela vai ao lugar FINAL
 
         gliding = reposition_with_glide(self, self._glide, lambda: self._card_rect().topLeft(), relayout)
         if self.isVisible() and not gliding:
@@ -417,7 +415,7 @@ class VolumeMixerFlyout(QWidget):
         self._update_margins()
         # A janela SEMPRE acompanha as margens (mesmo com o flyout na tela, ex.: trocar de tema no Hub): o card
         # fica no mesmo ponto da tela por construção, então não há salto; sem isso o card sairia cortado.
-        self._apply_window_canvas_size(expanded_canvas=self._canvas_expanded)
+        self._apply_window_canvas_size()
 
     def _update_margins(self):
         """Folga da janela para sombra e figurinhas que passam da borda (senão a janela transparente as corta)."""
@@ -580,7 +578,7 @@ class VolumeMixerFlyout(QWidget):
                 self._expand_target_t = 0.0
                 self._anim_card_h = float(self.COLLAPSED_H)
                 self._stack_offset = self._stack_offset_target   # já nasce no lugar certo do par
-                self._apply_window_canvas_size(expanded_canvas=False)
+                self._apply_window_canvas_size()
                 self._slide_t = 0.0
                 for r in self._rows:
                     r.reset_routing()
@@ -604,7 +602,7 @@ class VolumeMixerFlyout(QWidget):
         self.is_expanded = not self.is_expanded
         if self.is_expanded:
             self.refresh_requested.emit()
-            self._apply_window_canvas_size(expanded_canvas=True)
+            self._apply_window_canvas_size()
         else:
             self._scrollbar_opacity = 0.0
             self._scrollbar_target_opacity = 0.0
@@ -686,7 +684,7 @@ class VolumeMixerFlyout(QWidget):
             if raw_e >= 1.0 and not self.is_expanded:
                 self._expand_t = 0.0
                 self._anim_card_h = float(self.COLLAPSED_H)
-                self._apply_window_canvas_size(expanded_canvas=False)
+                self._apply_window_canvas_size()
                 for r in self._rows:
                     r.reset_routing()
                 self._target_scroll_y = 0.0
@@ -696,7 +694,7 @@ class VolumeMixerFlyout(QWidget):
                 self._expand_t = self._expand_target_t
                 if not self.is_expanded:
                     self._anim_card_h = float(self.COLLAPSED_H)
-                    self._apply_window_canvas_size(expanded_canvas=False)
+                    self._apply_window_canvas_size()
                     for r in self._rows:
                         r.reset_routing()
                     self._target_scroll_y = 0.0
@@ -819,7 +817,7 @@ class VolumeMixerFlyout(QWidget):
         # 2. Fundo do Card (#1e1e1e) e Borda 1px (#373737)
         bg_rect = card_rect.adjusted(0.5, 0.5, -0.5, -0.5)
         p.setBrush(th.card_bg)
-        p.setPen(QPen(th.border, 1.0))
+        p.setPen(QPen(th.border, hairline(th)))
         p.drawRoundedRect(bg_rect, th.radius, th.radius)
 
         # 2.1 Imagem de fundo (sobre o fundo liso, sob o conteúdo) e figurinhas "below"
@@ -858,7 +856,7 @@ class VolumeMixerFlyout(QWidget):
 
             # Linha divisória horizontal em y0 + 48.5 (#313131)
             sep_y = y0 + self.HEADER_H
-            p.setPen(QPen(th.divider, 1.0))
+            p.setPen(QPen(th.divider, hairline(th)))
             p.drawLine(QPointF(x0 + 1.0, sep_y), QPointF(x0 + self.CARD_W - 1.0, sep_y))
 
             # Recorte exclusivo para a área da lista de aplicativos (abaixo do divisor)
@@ -940,7 +938,7 @@ class VolumeMixerFlyout(QWidget):
             bg = th.button_bg
 
         p.setBrush(bg)
-        p.setPen(QPen(th.button_border, 1.0))
+        p.setPen(QPen(th.button_border, hairline(th)))
         p.drawRoundedRect(btn_rect, th.button_radius, th.button_radius)
 
         # Chevron centralizado em (bx + 13, by + 13)
@@ -1287,7 +1285,7 @@ class VolumeMixerFlyout(QWidget):
             row.icon_hovered = ic_hov
             row.slider.is_hovered = sl_hov
             if ic_hov and not row.is_routing_open:
-                hovered_app_name = row.name
+                hovered_app_name = row.display_name()
 
             if row.is_routing_open and visible:
                 if row.handle_mouse_move(pt, x0, curr_y):
