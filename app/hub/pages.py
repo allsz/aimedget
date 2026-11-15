@@ -1742,7 +1742,8 @@ class GeneralPage(BaseHubPage):
         self.accent_edit.editingFinished.connect(self._accent_text_committed)
         # Amostra da cor APLICADA dentro do campo (mostra o ajuste de legibilidade, se houver)
         self._accent_swatch = self.accent_edit.addAction(QIcon(), QLineEdit.ActionPosition.LeadingPosition)
-        self.btn_accent_reset = QPushButton(t("gen_accent_reset"))
+        self.btn_accent_reset = QPushButton()
+        self._apply_accent_reset_texts()
         self.btn_accent_reset.setProperty("class", "Chip")
         self.btn_accent_reset.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_accent_reset.clicked.connect(self._reset_accent)
@@ -1997,6 +1998,12 @@ class GeneralPage(BaseHubPage):
             self.accent_edit.setText(self._shown_accent())
             self._set_accent_invalid(False)
 
+    def _apply_accent_reset_texts(self):
+        """Rótulo curto ("Redefinir"); a dica e o nome acessível dizem o que ele redefine (criar e trocar de idioma)."""
+        self.btn_accent_reset.setText(t("gen_accent_reset"))
+        self.btn_accent_reset.setToolTip(t("gen_accent_reset_tip"))
+        self.btn_accent_reset.setAccessibleName(t("gen_accent_reset_tip"))
+
     def _style_accent_field(self):
         th = self._theme
         border = warning_color(th) if self._accent_invalid else th.line
@@ -2092,7 +2099,7 @@ class GeneralPage(BaseHubPage):
             self.t_acc.setText(t("gen_accent_title"))
             self.d_acc.setText(t("gen_accent_invalid") if self._accent_invalid else t("gen_accent_sub"))
             self.accent_edit.setAccessibleName(t("gen_accent_title"))
-            self.btn_accent_reset.setText(t("gen_accent_reset"))
+            self._apply_accent_reset_texts()
             self.accent_entry.relayout()   # largura do botão muda com o idioma
             self.hue_slider.setAccessibleName(t("gen_accent_title"))
         if hasattr(self, "t4"):

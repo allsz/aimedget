@@ -188,6 +188,27 @@ class GalleryCardTests(_Isolated):
         card.resize(900, 300)
         return card, applied
 
+    def test_action_buttons_show_only_the_verb_and_keep_the_full_phrase_for_accessibility(self):
+        from app.core.i18n import i18n
+        card, _ = self.build()
+        old_lang = i18n.current_language if hasattr(i18n, "current_language") else None
+        try:
+            for lang, labels, names, folder in (
+                ("pt", ("Importar", "Exportar", "Excluir"), ("Importar tema", "Exportar tema", "Excluir tema"), "Abrir pasta de temas"),
+                ("en", ("Import", "Export", "Delete"), ("Import theme", "Export theme", "Delete theme"), "Open themes folder"),
+            ):
+                i18n.set_language(lang)
+                card.retranslate_ui()
+                buttons = (card.btn_import, card.btn_export, card.btn_delete)
+                self.assertEqual(tuple(b.text() for b in buttons), labels, lang)        # só a função, sem "tema" nem "…"
+                self.assertEqual(tuple(b.accessibleName() for b in buttons), names, lang)   # leitor de tela: frase completa
+                self.assertEqual(card.btn_folder.text(), folder, lang)                  # este fica por extenso
+                self.assertEqual(card.btn_folder.accessibleName(), folder)
+                self.assertTrue(card.btn_import.toolTip())                              # a dica diz do que se trata
+                self.assertTrue(card.btn_export.toolTip() and card.btn_delete.toolTip())
+        finally:
+            i18n.set_language(old_lang or "pt")
+
     def test_one_card_per_theme_without_menu_toggle(self):
         self.make_theme(kl_theme.loader, "a", {"name": "Alfa"})
         self.make_theme(kl_theme.loader, "b", {"name": "Beta"})

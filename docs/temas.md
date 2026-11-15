@@ -24,8 +24,8 @@ Como ler este guia:
 1. Crie uma pasta com um arquivo `theme.json` e as imagens ao lado dele.
 2. Teste: `python tools/validate_theme.py <sua-pasta> --container keylock` (ou `mixer`, `music`, `timer`). Ele diz o que
    está errado.
-3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar tema** na página daquela parte do app.
-4. Para compartilhar: use **Exportar tema** (gera o `.aimskin`) e envie o arquivo.
+3. Para ver no app: junte as pastas num arquivo `.aimskin` (um zip) e use **Importar** na página daquela parte do app.
+4. Para compartilhar: use **Exportar** (gera o `.aimskin`) e envie o arquivo.
 
 Exemplo mínimo (muda só as cores do Caps/Num Lock):
 
@@ -67,7 +67,7 @@ Cada tema é uma **pasta** dentro da pasta de temas do usuário:
 
 - No Hub, em **Lock keys**, **Volume & mixer**, **Música** e **Timer**, cada tema vira um cartão com miniatura. Clique para usar.
 - O botão **Abrir pasta de temas** abre essa pasta no Explorer.
-- O botão **Excluir tema…** apaga o tema **em uso** daquela parte do app (depois de pedir confirmação, com a opção de
+- O botão **Excluir** apaga o tema **em uso** daquela parte do app (depois de pedir confirmação, com a opção de
   **exportar antes**). Se ele estava em uso, o visual volta ao Padrão. Os visuais que já vêm com o app (Padrão, Windows e
   os temas de fábrica, como o Keycap Digital) não podem ser excluídos. Se o mesmo tema existir em outras partes do app,
   ele continua instalado lá. Também dá para apagar a pasta do tema à mão: o app volta ao padrão na próxima abertura.
@@ -581,13 +581,13 @@ demais, tamanho demais ou zip corrompido.
 
 ### Exportar
 
-**Exportar tema** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
+**Exportar** (na página de cada parte do app) gera um `.aimskin` do tema **em uso** (marcado "EM USO"). Se existir um tema
 de mesmo id em outros destinos, ele vai junto no mesmo pacote: exportar a "Lavanda" de qualquer página leva a Lavanda de todos
 os destinos que a tiverem. Os visuais que já vêm com o app (Padrão, Windows, Cores da capa) não se exportam.
 
 ### Excluir
 
-**Excluir tema…** age sobre o tema **em uso** da página onde você está, como o Exportar. A janela de confirmação lista onde o
+**Excluir** age sobre o tema **em uso** da página onde você está, como o Exportar. A janela de confirmação lista onde o
 mesmo tema continua instalado e oferece **Exportar e excluir**: o tema só é apagado depois de o arquivo ser salvo. Enter e Esc
 cancelam. Os visuais que vêm com o app não se excluem.
 
@@ -682,7 +682,7 @@ ignorar nada. Você **não vê o app**, então use o validador para as regras e 
    tabela da seção 7 e rode de novo. Repita até `"ok": true` em todos os alvos. Não entregue com `issues` pendentes.
 5. Gere o `.aimskin` com `python tools/pack_theme.py <pasta> -o <saida>.aimskin` (ele valida de novo, recusa se sobrar
    qualquer `issue` e confere que o pacote importa). Se precisar montar o zip à mão, as pastas de destino ficam **na raiz do zip**.
-6. Entregue e peça ao humano: *Importar tema → conferir a aparência → dizer o que ajustar*.
+6. Entregue e peça ao humano: *Importar → conferir a aparência → dizer o que ajustar*.
 
 Saída do `--json` (uma lista, um item por destino):
 
