@@ -137,38 +137,105 @@ class TestAccentUi(unittest.TestCase):
         slider.set_hue(300)   # programático: não emite
         self.assertEqual((live, done), ([20], [20]))
 
-    def test_entry_row_slides_the_field_and_reveals_reset(self):
+    def _entry_row(self, text="Redefinir"):
+        from unittest import mock
         from PySide6.QtWidgets import QLineEdit, QPushButton
-        from app.hub.components.accent_entry import AccentEntryRow
-        field, reset = QLineEdit(), QPushButton("Restaurar")
+        from app.hub.components import accent_entry as ae
+        patcher = mock.patch.object(ae, "animations_enabled", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        field, reset = QLineEdit(), QPushButton(text)
         field.setFixedWidth(112)
-        row = AccentEntryRow(field, reset, inset=12, shown=False)
+        row = ae.AccentEntryRow(field, reset, inset=12, shown=False)
         row.resize(272, row.height())
         row.show()
-        self.assertEqual(field.x(), 272 - 12 - 112)          # sozinho, encostado à direita da trilha
+        self.addCleanup(row.hide)
+        return ae, row, field, reset
+
+    def test_entry_row_keeps_the_field_alone_and_the_pair_centered(self):
+        ae, row, field, reset = self._entry_row()
+        self.assertEqual(field.x(), 272 - 12 - 112)                    # sozinho: alinhado à direita da trilha
         self.assertFalse(reset.isVisibleTo(row))
 
         row.set_reset_shown(True, animated=False)
-        self.assertEqual(field.x(), 12)                       # à esquerda
-        self.assertEqual(reset.geometry().right() + 1, 272 - 12)
+        rw = reset.width()
+        group = 112 + ae.GAP_PX + rw
+        self.assertAlmostEqual(field.x(), (272 - group) / 2, delta=1)   # o par inteiro centralizado
+        self.assertEqual(reset.x() - (field.x() + field.width()), ae.GAP_PX)   # colados: só o espaço entre eles
+        self.assertAlmostEqual(field.x(), 272 - (reset.x() + rw), delta=1.5)   # margens iguais dos dois lados
         self.assertTrue(reset.isVisibleTo(row) and reset.isEnabled())
 
-        # Interromper no meio da animação parte do quadro atual (sem salto)
+        row.set_reset_shown(False, animated=False)
+        self.assertEqual(field.x(), 272 - 12 - 112)                    # e volta à direita, sozinho
+        self.assertFalse(reset.isVisibleTo(row))
+
+    def test_entry_row_animates_in_two_voices_with_a_little_overshoot(self):
+        ae, row, field, reset = self._entry_row()
+        row.set_reset_shown(True)
+        anim = row._anim
+        self.assertTrue(row.is_animating())
+        rw = reset.sizeHint().width()
+        final_field = (272 - (112 + ae.GAP_PX + rw)) / 2
+        final_reset = final_field + 112 + ae.GAP_PX
+        xs_field, xs_reset, fades = [], [], []
+        for ms in range(0, anim.duration() + 1, 15):
+            anim.setCurrentTime(ms)
+            xs_field.append(field.x())
+            xs_reset.append(reset.x())
+            fades.append(row._fade.opacity())
+        self.assertEqual(xs_field[0], 272 - 12 - 112)                  # parte da direita
+        self.assertAlmostEqual(xs_field[-1], final_field, delta=1)       # e termina no par centralizado
+        self.assertLess(min(xs_field), final_field - 1.0)                 # o campo passa um pouco do alvo (vivo)...
+        self.assertGreater(max(xs_reset), final_reset + 1.0)              # ...e o botão também, com mais folga
+        self.assertEqual(fades[0], 0.0)                                   # o botão nasce transparente
+        self.assertEqual(fades[-1], 1.0)
+        # os dois entram em momentos diferentes: o campo já se mexeu enquanto o botão ainda está invisível
+        i = next(k for k, v in enumerate(xs_field) if v != xs_field[0])
+        self.assertEqual(fades[i], 0.0)
+        # o botão sai de trás do campo: começa sobreposto a ele, depois fica ao lado
+        self.assertLess(xs_reset[0], xs_field[0] + 112)
+        self.assertEqual(xs_reset[-1] - (xs_field[-1] + 112), ae.GAP_PX)
+
+    def test_entry_row_exit_goes_back_the_same_way(self):
+        ae, row, field, reset = self._entry_row()
+        row.set_reset_shown(True, animated=False)
         row.set_reset_shown(False)
-        row._anim.setCurrentTime(80)
+        row._anim.setCurrentTime(row._anim.duration())
+        self.assertEqual(field.x(), 272 - 12 - 112)
+        self.assertFalse(reset.isVisibleTo(row))                          # escondido de verdade ao terminar
+        self.assertFalse(reset.isEnabled())
+
+    def test_entry_row_interrupting_mid_animation_starts_from_the_current_frame(self):
+        ae, row, field, reset = self._entry_row()
+        row.set_reset_shown(True, animated=False)
+        row.set_reset_shown(False)
+        row._anim.setCurrentTime(100)
         mid = row._progress
         self.assertTrue(0.0 < mid < 1.0)
         row.set_reset_shown(True)
-        self.assertAlmostEqual(row._anim.startValue(), mid)
+        self.assertAlmostEqual(row._anim.startValue(), mid)               # sem salto
+        self.assertLess(row._anim.duration(), ae.DURATION_MS)             # o trecho parcial é proporcional
         row._anim.stop()
-        row.hide()
+
+    def test_entry_row_without_windows_animations_is_instant(self):
+        from unittest import mock
+        ae, row, field, reset = self._entry_row()
+        with mock.patch.object(ae, "animations_enabled", return_value=False):
+            row.set_reset_shown(True)
+        self.assertFalse(row.is_animating())
+        self.assertTrue(reset.isVisibleTo(row))
+
+    def test_entry_row_relayout_recenters_when_the_button_text_changes(self):
+        ae, row, field, reset = self._entry_row("Redefinir")
+        row.set_reset_shown(True, animated=False)
+        before = field.x()
+        reset.setText("Restaurar cor padrão")
+        row.relayout()
+        self.assertLess(field.x(), before)                                # par maior: começa mais à esquerda
+        self.assertAlmostEqual(field.x(), 272 - (reset.x() + reset.width()), delta=1.5)
 
     def test_heavy_work_waits_for_the_animation_to_finish(self):
-        from PySide6.QtWidgets import QLineEdit, QPushButton
-        from app.hub.components.accent_entry import AccentEntryRow
-        row = AccentEntryRow(QLineEdit(), QPushButton("Restaurar"), inset=12, shown=False)
-        row.resize(272, row.height())
-        row.show()
+        ae, row, field, reset = self._entry_row()
         ran = []
         row.when_idle(lambda: ran.append("parado"))          # sem animação: roda já
         self.assertEqual(ran, ["parado"])
@@ -181,7 +248,6 @@ class TestAccentUi(unittest.TestCase):
         self.assertEqual(ran, ["parado"])
         row._anim.setCurrentTime(row._anim.duration())       # fim do movimento
         self.assertEqual(ran, ["parado", "adiado"])
-        row.hide()
 
     def test_hub_applies_the_accent_and_typed_color_flow(self):
         from app.hub.hub_window import AimedgetHubWindow

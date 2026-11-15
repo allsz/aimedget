@@ -126,47 +126,6 @@ class HueSliderWaveTests(unittest.TestCase):
         xs = [track.left() + i * 0.5 for i in range(int(track.width() * 2) + 1)]
         return max(xs, key=lambda x: -self.slider._wave_offset(x))
 
-    def test_the_knob_is_always_on_top_of_the_crest_and_follows_when_it_goes_back(self):
-        """O pico é exatamente o botão (sem atraso), inclusive ao voltar com ele depois de a animação ter parado."""
-        self._press(60)
-        QTest.mouseMove(self.slider, QPoint(220, self.y))
-        _settle(self.slider, 1.0)                                      # colina inteira, timer já parado
-        self.assertFalse(self.slider._timer.isActive())
-        self.assertAlmostEqual(self._hill_peak_x(), self.slider._knob_x(), delta=1.0)
-
-        for x in (150, 90, 40, 180):                                   # vai e volta, sem nenhuma animação rodando
-            QTest.mouseMove(self.slider, QPoint(x, self.y))
-            self.assertAlmostEqual(self._hill_peak_x(), self.slider._knob_x(), delta=1.0, msg=x)
-        self._release(180)
-
-    def test_the_knob_sits_at_the_crest_height_everywhere_including_the_extremes(self):
-        for x in (0, 3, 40, 150, 260, 297, 299):
-            self.slider._hue = self.slider._hue_at(x)
-            self.slider._lift = 1.0
-            self.slider._wave_drag = True
-            img = self.slider.grab().toImage()
-            self.assertFalse(img.isNull())
-            self.assertAlmostEqual(self.slider._crest_height(), hs.LIFT_PX, delta=0.01)
-        self.slider._lift = 0.0
-        self.slider._wave_drag = False
-
-    def test_the_hill_ends_in_a_rounded_shoulder_and_a_straight_wall_at_the_bar_end(self):
-        """O esboço: nas pontas a colina não achata nem quebra: ombro arredondado e parede reta rente ao fim da barra."""
-        track = self.slider._track_rect()
-        for hue, end, sign in ((359, track.right(), -1), (0, track.left(), 1)):
-            self.slider._hue = hue
-            self.slider._lift = 1.0
-            h_end = -self.slider._wave_offset(end)
-            h_top = -self.slider._wave_offset(end + sign * hs.SHOULDER_W)
-            self.assertGreater(h_end, hs.LIFT_PX * 0.4)                 # há parede (a colina não some na ponta)
-            self.assertGreater(h_top, h_end + 2.0)                      # e o ombro desce até ela
-            xs = [end + sign * i for i in range(0, int(hs.SHOULDER_W * 2) + 1)]
-            ys = [-self.slider._wave_offset(x) for x in xs]
-            top = ys.index(max(ys))
-            self.assertLessEqual(top, hs.SHOULDER_W + 2, "o ponto mais alto fica junto da ponta, no fim do ombro")
-            self.assertTrue(all(b >= a - 1e-6 for a, b in zip(ys[:top], ys[1:top + 1])), "do fim da barra até o topo só sobe")
-        self.slider._lift = 0.0
-
     def test_no_step_in_the_hill_except_the_wall_at_the_very_end(self):
         track = self.slider._track_rect()
         for knob_x in (track.left() + 2, track.left() + 30, track.center().x(), track.right() - 30, track.right() - 2):
@@ -179,25 +138,119 @@ class HueSliderWaveTests(unittest.TestCase):
             self.assertTrue(all(y <= 0.0 for y in ys))                   # nunca abaixo da base
         self.slider._lift = 0.0
 
+    def test_the_wall_grows_continuously_as_the_knob_approaches_the_end(self):
+        """A parede nas pontas "enche" aos poucos: sem salto entre posições vizinhas do botão, em qualquer largura."""
+        for width in (180, 272, 360):
+            self.slider.resize(width, self.slider.height())
+            self.slider._lift = 1.0
+            left, right = self.slider._flat_ends()
+            prev = None
+            for hue in range(0, 361):
+                self.slider._hue = hue
+                wall = -self.slider._wave_offset(right)
+                if prev is not None:
+                    self.assertLess(abs(wall - prev), 1.0, f"parede saltou: largura={width} hue={hue}")
+                prev = wall
+        self.slider._lift = 0.0
+
+    def test_no_wall_until_the_fall_reaches_the_end_and_full_crest_at_the_extreme(self):
+        self.slider._lift = 1.0
+        left, right = self.slider._flat_ends()
+        self.slider._hue = self.slider._hue_at(right - hs.WAVE_HALF_W - 2)
+        self.assertAlmostEqual(self.slider._wave_offset(right), 0.0, delta=0.01)      # longe: sem parede
+        self.slider._hue = self.slider._hue_at(right)
+        self.assertGreater(-self.slider._wave_offset(right), hs.LIFT_PX * 0.95)       # na ponta: parede quase cheia
+        self.slider._lift = 0.0
+
+    def test_the_knob_is_always_on_the_crest_even_at_the_extremes(self):
+        self.slider._lift = 1.0
+        rest = self.slider._center_y() - hs.LIFT_PX - hs.KNOB_RISE
+        for hue in (0, 1, 90, 180, 270, 359, 360):
+            self.slider._hue = hue
+            self.assertAlmostEqual(self.slider._knob_y(), rest, delta=0.01, msg=hue)
+            self.assertAlmostEqual(self._hill_peak_x(), self.slider._knob_x(), delta=1.0, msg=hue)
+        self.slider._lift = 0.0
+
+    def test_the_rounded_bar_ends_are_not_covered_even_with_the_knob_at_the_extremes(self):
+        for x_press, x_move in ((200, 299), (100, 0)):
+            self._press(x_press)
+            QTest.mouseMove(self.slider, QPoint(x_move, self.y))
+            _settle(self.slider, 1.0)
+            img = self.slider.grab().toImage()
+            track = self.slider._track_rect()
+            # o canto da extremidade OPOSTA ao botão (o botão cobre o da ponta onde ele está)
+            corner_x = int(track.left()) + 1 if x_move > 100 else int(track.right()) - 1
+            self.assertLess(img.pixelColor(corner_x, int(track.top())).saturation(), 60, "canto de cima redondo (vazio)")
+            self.assertGreater(img.pixelColor(corner_x, int(track.top()) + 5).saturation(), 120)
+            self._release(x_move)
+            _settle(self.slider, 1.0)
+
     def test_mid_bar_peak_keeps_its_full_height(self):
         self.slider._hue = self.slider._hue_at(self.slider._track_rect().center().x())
         self.slider._lift = 1.0
         self.assertAlmostEqual(self.slider._wave_offset(self.slider._knob_x()), -hs.LIFT_PX, delta=0.01)
         self.slider._lift = 0.0
 
-    def test_at_the_extremes_nothing_sticks_out_past_the_bar_end(self):
-        for press, move in ((200, 299), (200, 0)):                      # arrasta até a ponta direita e até a esquerda
-            self._press(press)
-            QTest.mouseMove(self.slider, QPoint(move, self.y))
+    def test_the_bar_keeps_its_rounded_ends_while_the_hill_is_up(self):
+        """Regressão: a base da colina preenchia os cantos arredondados de cima da barra quando a onda ligava."""
+        self._press(150)
+        QTest.mouseMove(self.slider, QPoint(160, self.y))              # botão no meio: as pontas da colina estão em zero
+        _settle(self.slider, 1.0)
+        self.assertGreater(self.slider.lift(), 0.95)
+        img = self.slider.grab().toImage()
+        track = self.slider._track_rect()
+        top = int(track.top())
+        for x in (int(track.left()) + 1, int(track.right()) - 2):
+            corner = img.pixelColor(x, top)                            # o canto de cima de cada ponta: vazio (redondo)
+            self.assertLess(corner.saturation(), 60, f"canto quadrado em x={x}")
+            self.assertGreater(img.pixelColor(x, top + 5).saturation(), 120)   # e o meio da ponta segue colorido
+        self._release(160)
+
+    def test_with_the_knob_at_the_end_the_wall_is_filled_next_to_the_knob(self):
+        self._press(200)
+        QTest.mouseMove(self.slider, QPoint(299, self.y))              # botão na ponta direita: parede cheia
+        _settle(self.slider, 1.0)
+        img = self.slider.grab().toImage()
+        left, right = self.slider._flat_ends()
+        track = self.slider._track_rect()
+        self.assertGreater(img.pixelColor(int(right) - 3, int(track.top()) - 6).saturation(), 120)   # parede preenchida
+        self._release(299)
+
+    def test_the_wall_meets_the_end_of_the_bar_with_a_rounded_top(self):
+        """A parede sobe do FIM da barra (não antes) e arredonda para dentro da onda: sem quina nem degrau."""
+        track = self.slider._track_rect()
+        cy = self.slider._center_y()
+        self.slider._lift = 1.0
+        for hue in (0, 20, 340, 359):
+            self.slider._hue = hue
+            for end, sign in ((track.left(), 1.0), (track.right(), -1.0)):
+                self.assertAlmostEqual(self.slider._top_y(end), cy, delta=0.01)      # nasce no fim da barra, no centro
+                r = self.slider._end_radius(end)
+                ys = [self.slider._top_y(end + sign * i * 0.25) for i in range(int(r * 4) + 12)]
+                self.assertLess(max(abs(b - a) for a, b in zip(ys[1:], ys[2:])), 3.0, f"degrau: hue={hue}")
+                # a borda encontra a onda sem mudar de altura: fora do canto é só trilha + onda
+                x_in = end + sign * (r + 1.0)
+                self.assertAlmostEqual(self.slider._top_y(x_in), track.top() + self.slider._wave_offset(x_in), delta=0.01)
+        self.slider._hue = 180                                                     # sem onda na ponta: o canto da barra
+        self.assertAlmostEqual(self.slider._end_radius(track.right()), hs.TRACK_H / 2.0, delta=0.01)
+        self.slider._lift = 0.0
+
+    def test_the_knob_ring_is_never_clipped_at_the_ends_of_the_bar(self):
+        """Regressão: o anel branco de foco do botão (já crescido) era cortado pela borda do slider nas extremidades."""
+        self.slider.setFocus()
+        for x_press, x_move in ((200, 0), (100, 299)):                  # botão na ponta esquerda e na direita
+            self._press(x_press)
+            QTest.mouseMove(self.slider, QPoint(x_move, self.y))
             _settle(self.slider, 1.0)
             img = self.slider.grab().toImage()
-            track = self.slider._track_rect()
+            ring_r = (hs.KNOB_R + 1.5) * (1.0 + hs.KNOB_GROW)
             kx = self.slider._knob_x()
-            beside = int(kx - 22) if move > 100 else int(kx + 22)       # ao lado do botão: aqui há colina
-            self.assertGreater(img.pixelColor(beside, int(track.top()) - 3).saturation(), 120)
-            outside = int(track.right()) + 3 if move > 100 else int(track.left()) - 3   # além do fim da barra
-            self.assertLess(img.pixelColor(outside, int(track.top()) - 5).saturation(), 60)
-            self._release(move)
+            self.assertGreaterEqual(kx - ring_r - 0.75, 0.0, "o anel cabe à esquerda")
+            self.assertLessEqual(kx + ring_r + 0.75, self.slider.width(), "o anel cabe à direita")
+            col = self.slider.width() - 1 if kx > 100 else 0              # a coluna de pixels da borda do widget
+            for y in range(img.height()):
+                self.assertLess(img.pixelColor(col, y).lightness(), 90, f"anel tocando a borda em y={y}")
+            self._release(x_move)
             _settle(self.slider, 1.0)
 
     def test_timer_follows_the_monitor_refresh_rate(self):
