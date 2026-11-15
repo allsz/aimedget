@@ -9,7 +9,7 @@ Design refinado com integração nativa ao Windows 11 DWM:
 
 import sys
 import time
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QPoint, QRect, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
+from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
+from app.hub.components.accent_wipe import AccentWipe
 from app.hub.components.message_dialog import confirm
 from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
@@ -31,6 +33,12 @@ from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, Ti
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
 from app.hub.tray_manager import AimedgetTrayIcon
+
+
+# Trocar a cor do Hub inteiro leva ~70 ms de interface congelada. Aplicar isso a cada passo do arrasto derrubava o
+# slider (e a onda) para 30-40 quadros por segundo. Por padrão a cor só é aplicada (e pintada) ao SOLTAR; o botão do
+# seletor já mostra a cor escolhida durante o arrasto. True volta ao comportamento antigo (ao vivo, com travadas).
+LIVE_APPLY_WHILE_DRAGGING = False
 
 
 class AimedgetHubWindow(QMainWindow):
@@ -56,6 +64,7 @@ class AimedgetHubWindow(QMainWindow):
 
         self._pending_accent = config_manager.get_hub_accent()
         self._icons_pending = False
+        self._gesture_dragged = False   # o gesto atual no seletor foi um ARRASTO (ao vivo, sem a animação de pintura)
         self._accent_timer = QTimer(self)
         self._accent_timer.setSingleShot(True)
         self._accent_timer.setInterval(30)
@@ -70,6 +79,7 @@ class AimedgetHubWindow(QMainWindow):
         self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
         self._build_ui()
+        self._accent_wipe = AccentWipe(self.shell)
         self._apply_theme(self._current_theme)
         self.retranslate_ui()
         self._apply_asymmetric_windows_icons()
@@ -297,6 +307,7 @@ class AimedgetHubWindow(QMainWindow):
         self.sidebar.set_badge_count("music", len(active_skins))
 
     def _on_navigation(self, page_key: str):
+        self._stop_wipe()   # a foto é da página antiga
         if page_key in self._page_map:
             self.stack.setCurrentIndex(self._page_map[page_key])
 
@@ -316,6 +327,7 @@ class AimedgetHubWindow(QMainWindow):
         self.retranslate_ui()
 
     def retranslate_ui(self):
+        self._stop_wipe()
         self.sidebar.retranslate_ui()
         self.page_overview.retranslate_ui()
         self.page_music.retranslate_ui()
@@ -327,6 +339,7 @@ class AimedgetHubWindow(QMainWindow):
             self.tray_icon.retranslate_ui()
 
     def _change_theme_mode(self, mode: str):
+        self._stop_wipe()
         self._theme_preference = mode
         config_manager.set_hub_theme(mode)
         resolved = resolve_theme(mode)
@@ -341,21 +354,57 @@ class AimedgetHubWindow(QMainWindow):
             config_manager.set_hub_accent(accent)
             self._accent_timer.stop()
             self._flush_accent(refresh_icons=True)
-        elif not self._accent_timer.isActive():
-            self._accent_timer.start()   # agrupa os eventos do arrasto (~33 por segundo)
+            self._gesture_dragged = False
+        elif LIVE_APPLY_WHILE_DRAGGING:
+            if self.page_gen.hue_slider.is_wave_dragging():
+                self._gesture_dragged = True   # ao vivo: a cor segue o dedo, sem a animação de pintura
+            if not self._accent_timer.isActive():
+                self._accent_timer.start()   # agrupa os eventos do arrasto (~33 por segundo)
+        # Sem aplicação ao vivo: só guarda a cor pedida; ela é aplicada, pintada, ao soltar (commit)
+
+    def _stop_wipe(self):
+        wipe = getattr(self, "_accent_wipe", None)   # ainda não existe durante a montagem da janela
+        if wipe is not None:
+            wipe.stop()
+
+    def _can_wipe(self) -> bool:
+        """A pintura animada só vale com a janela à vista, no tamanho final e com os efeitos do Windows ligados."""
+        return animations_enabled() and self.isVisible() and not self._gesture_dragged and self.shell.width() > 1
+
+    def _wipe_excluded_rects(self) -> list[QRect]:
+        """Controles que ficam AO VIVO durante a pintura (respondem na hora ao clique): o seletor e o campo de cor."""
+        rects = []
+        for w in (self.page_gen.hue_slider, self.page_gen.accent_entry):
+            if w.isVisible():
+                rects.append(QRect(w.mapTo(self.shell, QPoint(0, 0)), w.size()).adjusted(-6, -6, 6, 6))
+        return rects
+
+    def _apply_accent_theme(self, resolved: HubTheme, animate: bool):
+        """Aplica a cor nova. Animado: foto da janela antiga, troca por baixo e a cor nova é "pintada" da esquerda
+        para a direita por cima (a troca em si, ~70 ms, fica escondida atrás da foto)."""
+        if animate:
+            snapshot = self.shell.grab()
+            excluded = self._wipe_excluded_rects()
+        self._apply_theme(resolved)
+        get_service_bridge().on_theme_changed(resolved)
+        if animate:
+            self._accent_wipe.start(snapshot, excluded)
 
     def _flush_accent(self, refresh_icons: bool = False):
-        # Reaplicar o estilo do Hub inteiro leva ~70 ms; no meio da animação do campo de cor isso congelaria
-        # alguns quadros. Espera o movimento terminar (o pedido mais recente vence).
         self._icons_pending = self._icons_pending or refresh_icons
+        animate = self._can_wipe()
         entry = self.page_gen.accent_entry
-        if entry.is_animating():
+        # Sem a pintura animada (arrasto ao vivo), reaplicar o estilo do Hub inteiro (~70 ms) no meio da animação do
+        # campo de cor congelaria alguns quadros: espera o movimento terminar (o pedido mais recente vence). Com a
+        # pintura, o campo e o seletor ficam fora da foto e continuam vivos, então não há o que esperar.
+        if entry.is_animating() and not animate:
             entry.when_idle(self._flush_accent)
             return
         refresh_icons, self._icons_pending = self._icons_pending, False
         resolved = resolve_theme(self._theme_preference, self._pending_accent)
-        self._apply_theme(resolved)
-        get_service_bridge().on_theme_changed(resolved)
+        if resolved != self._current_theme:   # soltar o seletor depois de arrastar repete a cor já aplicada ao vivo
+            self._accent_wipe.stop()
+            self._apply_accent_theme(resolved, animate)
         if refresh_icons:
             self._refresh_icons()
 
