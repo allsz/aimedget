@@ -13,15 +13,15 @@ from PySide6.QtCore import QPoint, QRect, QRectF, QSizeF
 from PySide6.QtGui import QRegion
 
 from app.core.preview_registry import SkinSpec
-from app.core.theme_art import overflow_margins
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme
+from app.widgets.volume_mixer.theme_shape import art_overflow
 
 WIDGET_ID = "mixer_theme"
 MIN_PAD = 14.0   # mesmo respiro da miniatura do mixer na Visão geral
 
 
 def _pads(theme: MixerTheme, card: QRectF) -> tuple[float, float, float, float]:
-    ov = overflow_margins(theme.stickers, theme.shadow, card.width(), card.height())
+    ov = art_overflow(theme, card.width(), (card.height(),))
     return tuple(max(MIN_PAD, math.ceil(v)) for v in ov)
 
 

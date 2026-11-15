@@ -9,7 +9,6 @@ from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
 from app.services.audio_mixer_service import AppAudioSession
 from app.core.theme_art import (
-    overflow_margins,
     paint_background,
     paint_card_shadow,
     paint_stickers,
@@ -17,6 +16,9 @@ from app.core.theme_art import (
 )
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_theme
+from app.widgets.volume_mixer.theme_shape import (
+    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, paint_digits, paint_plates, pop_amount, tilt_transform,
+)
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow
 
 
@@ -87,6 +89,9 @@ class VolumeMixerFlyout(QWidget):
         self._art_left = 0.0
         self._art_right = 0.0
         self._canvas_expanded = False   # tamanho de janela em uso (recolhido ou com espaço para a gaveta)
+        # Número em imagem (tema com `digits`): último valor desenhado e quando ele mudou (o "pulo")
+        self._digits_value: int | None = None
+        self._digits_pop_start = 0.0
 
         # Âncora na tela e empilhamento com o Caps Lock no meio da tela: o mixer desce metade da altura do
         # Caps Lock (+ o espaço entre eles) para o PAR ficar centralizado; animado para os dois se afastarem juntos
@@ -278,6 +283,29 @@ class VolumeMixerFlyout(QWidget):
             y0 = base_bottom + slide_offset - card_h
         return QRectF(x0, y0, float(self.CARD_W), card_h)
 
+    def _header(self) -> Header:
+        """Onde ficam a faixa do volume principal e o botão da seta (o tema pode mudar; o padrão é o original)."""
+        return self.theme.header or DEFAULT_HEADER
+
+    def _master_span(self, x0: float) -> tuple[float, float]:
+        """(x inicial, x final) da faixa do volume principal na tela do card."""
+        a, b = self._header().slider
+        return x0 + a, x0 + b
+
+    def _tilt_transform(self):
+        """Rotação do card pedida pelo tema (`tilt`), ou None. Vale para a pintura e, invertida, para o mouse."""
+        if not self.theme.tilt:
+            return None
+        return tilt_transform(self._card_rect(), self.theme.tilt, self._vertical())
+
+    def _card_point(self, pos: QPointF) -> QPointF:
+        """Ponto do mouse no sistema do card (desfaz a inclinação do tema)."""
+        tf = self._tilt_transform()
+        if tf is None:
+            return pos
+        inverse, ok = tf.inverted()
+        return inverse.map(pos) if ok else pos
+
     # --- Âncora e empilhamento com o Caps Lock ---
 
     def set_anchor(self, anchor: str):
@@ -329,6 +357,8 @@ class VolumeMixerFlyout(QWidget):
         self.master_slider.apply_colors(
             theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive
         )
+        self.master_slider.apply_style(theme.slider_style, theme.slider_height, theme.slider_slant, theme.slider_taper)
+        self._digits_value = None   # o primeiro número do tema novo aparece sem pulo
         for row in self._rows:
             row.apply_theme(theme)
         self._update_margins()
@@ -339,8 +369,8 @@ class VolumeMixerFlyout(QWidget):
     def _update_margins(self):
         """Folga da janela para sombra e figurinhas que passam da borda (senão a janela transparente as corta)."""
         base = float(self.SHADOW_MARGIN)
-        ov_l, ov_t, ov_r, ov_b = overflow_margins(
-            self.theme.stickers, self.theme.shadow, float(self.CARD_W), float(self.EXPANDED_MAX_H)
+        ov_l, ov_t, ov_r, ov_b = art_overflow(
+            self.theme, float(self.CARD_W), (float(self.COLLAPSED_H), float(self.EXPANDED_MAX_H))
         )
         grow = lambda ov: max(base, math.ceil(ov) + 2.0) if ov else base
         self._margins = (grow(ov_l), grow(ov_t), grow(ov_r), grow(ov_b))
@@ -612,6 +642,10 @@ class VolumeMixerFlyout(QWidget):
         else:
             self._scrollbar_opacity = self._scrollbar_target_opacity
 
+        # 5.1 Pulo do número em imagem (tema com `digits`)
+        if self.theme.digits is not None and now - self._digits_pop_start < POP_DURATION_S:
+            needs_update = True
+
         # 6. Deslocamento do par no meio da tela (Caps Lock chegou/saiu): os dois se afastam/reaproximam do centro
         diff_off = self._stack_offset_target - self._stack_offset
         if abs(diff_off) > 0.3:
@@ -666,6 +700,9 @@ class VolumeMixerFlyout(QWidget):
         card_rect = self._card_rect()
         x0 = card_rect.left()
         y0 = card_rect.top()
+        tilt = self._tilt_transform()
+        if tilt is not None:
+            p.setTransform(tilt, True)
 
         # 1. Sombra externa: a do tema (suave, colorida) ou a multicamada original
         if th.shadow is not None:
@@ -680,6 +717,8 @@ class VolumeMixerFlyout(QWidget):
         # 1.1 Figurinhas "behind": atrás do card (só a parte que sai pelas bordas aparece)
         if th.stickers:
             paint_stickers_behind(p, card_rect, th.stickers)
+        if th.plates:
+            paint_plates(p, card_rect, th.plates)
 
         # 2. Fundo do Card (#1e1e1e) e Borda 1px (#373737)
         bg_rect = card_rect.adjusted(0.5, 0.5, -0.5, -0.5)
@@ -697,21 +736,22 @@ class VolumeMixerFlyout(QWidget):
         header_cy = y0 + 24.5
         self._draw_speaker_icon(p, x0 + 23.0, header_cy)
 
-        self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, header_cy)
+        self.master_slider.set_geometry(*self._master_span(x0), header_cy)
         self.master_slider.draw(p)
 
-        # Número do Volume Master (ex: "40", "44")
-        p.setFont(get_ui_font(14, QFont.Weight.Normal))
-        p.setPen(th.muted_text if self.master_muted else th.text)
-        num_rect = QRectF(x0 + 167.0, header_cy - 11.0, 31.0, 22.0)
-        p.drawText(
-            num_rect,
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            str(self.master_slider.value),
-        )
+        # Número do Volume Master (ex: "40", "44"); com `digits` no tema ele é desenhado no fim, por cima de tudo
+        if th.digits is None:
+            p.setFont(get_ui_font(14, QFont.Weight.Normal))
+            p.setPen(th.muted_text if self.master_muted else th.text)
+            num_rect = QRectF(x0 + 167.0, header_cy - 11.0, 31.0, 22.0)
+            p.drawText(
+                num_rect,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                str(self.master_slider.value),
+            )
 
         # Botão Retrátil (^ / v) em x0 + 203, y0 + 11 (26x26px)
-        self._draw_chevron_button(p, x0 + 203.0, y0 + 11.0)
+        self._draw_chevron_button(p, x0 + self._header().chevron_x, y0 + 11.0)
 
         # 4. Seção Retrátil: Mixer de Volumes por Aplicativo
         if self._expand_t > 0.01 and card_rect.height() > 52.0:
@@ -743,6 +783,18 @@ class VolumeMixerFlyout(QWidget):
         # 5. Figurinhas "above" (por cima de tudo, fora do recorte da lista)
         if th.stickers:
             paint_stickers(p, card_rect, th.stickers, above=True)
+
+        # 6. Número do volume em imagem (tema com `digits`), com o pulo ao mudar
+        if th.digits is not None:
+            value = self.master_slider.value
+            now = time.perf_counter()
+            if value != self._digits_value:
+                if self._digits_value is not None and th.digits.pop:
+                    self._digits_pop_start = now
+                    self._start_anim_timer()
+                self._digits_value = value
+            paint_digits(p, card_rect, th.digits, value, self.master_muted,
+                         pop_amount(now - self._digits_pop_start))
 
     def _draw_speaker_icon(self, p: QPainter, cx: float, cy: float):
         """Desenha o ícone vetorial de alto-falante fiel ao Windows 11 (com ondas dinâmicas ou mudo)."""
@@ -931,12 +983,12 @@ class VolumeMixerFlyout(QWidget):
         return QRectF(x0 + 11.0, y0 + 11.0, 25.0, 26.0)
 
     def _chevron_hit_rect(self, x0: float, y0: float) -> QRectF:
-        return QRectF(x0 + 202.0, y0 + 10.0, 28.0, 28.0)
+        return QRectF(x0 + self._header().chevron_x - 1.0, y0 + 10.0, 28.0, 28.0)
 
     def mousePressEvent(self, event):
         if event.button() not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
             return
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
         self._restart_hide_timer()
@@ -955,7 +1007,7 @@ class VolumeMixerFlyout(QWidget):
                 return
 
             # 3. Clique/Arrasto no Slider Master
-            self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, y0 + 24.5)
+            self.master_slider.set_geometry(*self._master_span(x0), y0 + 24.5)
             if self.master_slider.contains(pt):
                 self.master_slider.is_dragging = True
                 new_val = self.master_slider.value_from_x(pt.x())
@@ -1048,7 +1100,7 @@ class VolumeMixerFlyout(QWidget):
                 curr_y += row_h
 
     def mouseMoveEvent(self, event):
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
         self._restart_hide_timer()
@@ -1091,7 +1143,7 @@ class VolumeMixerFlyout(QWidget):
         changed = False
         spk_hov = self._speaker_hit_rect(x0, y0).contains(pt)
         chv_hov = self._chevron_hit_rect(x0, y0).contains(pt)
-        self.master_slider.set_geometry(x0 + 45.0, x0 + 162.0, y0 + 24.5)
+        self.master_slider.set_geometry(*self._master_span(x0), y0 + 24.5)
         ms_hov = self.master_slider.contains(pt)
 
         # Hover na scrollbar
@@ -1172,7 +1224,7 @@ class VolumeMixerFlyout(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         x0, y0 = card_rect.left(), card_rect.top()
 
@@ -1217,7 +1269,7 @@ class VolumeMixerFlyout(QWidget):
         self.update()
 
     def wheelEvent(self, event: QWheelEvent):
-        pt = event.position()
+        pt = self._card_point(event.position())
         card_rect = self._card_rect()
         y0 = card_rect.top()
         delta = event.angleDelta().y()
