@@ -23,7 +23,9 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.core.widget_animator import animations_enabled
 
-DURATION_MS = 280
+DURATION_MS = 420
+SLIDE_PX = 28          # quanto a foto "desce" para o lugar enquanto a seção abre (e sobe ao fechar)
+FADE_DELAY = 0.2       # o conteúdo só começa a aparecer depois que o espaço já abriu um pouco
 QWIDGETSIZE_MAX = 16777215
 
 
@@ -88,7 +90,8 @@ class CollapsibleSection(QWidget):
         self._anim.setStartValue(start)
         self._anim.setEndValue(end)
         self._anim.blockSignals(False)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic if opened else QEasingCurve.Type.InOutCubic)
+        # Abre com cauda longa (OutQuint: arranca e assenta devagar); fecha mais enxuto
+        self._anim.setEasingCurve(QEasingCurve.Type.OutQuint if opened else QEasingCurve.Type.InOutCubic)
         self._anim.setDuration(max(1, int(DURATION_MS * abs(end - start))))
         self._anim.start()
 
@@ -155,8 +158,12 @@ class CollapsibleSection(QWidget):
         if self._snapshot is None:
             return
         p = QPainter(self)
-        p.setOpacity(max(0.0, min(1.0, self._progress)))
-        p.drawPixmap(QPoint(0, self._gap), self._snapshot)   # o que passa da altura da seção é cortado
+        prog = max(0.0, min(1.0, self._progress))
+        fade = max(0.0, min(1.0, (prog - FADE_DELAY) / (1.0 - FADE_DELAY)))
+        p.setOpacity(fade)
+        # A foto desliza de cima para o lugar: parece cair na posição em vez de ser revelada por uma cortina
+        offset = -int(round(SLIDE_PX * (1.0 - prog)))
+        p.drawPixmap(QPoint(0, self._gap + offset), self._snapshot)   # o que passa da altura da seção é cortado
         p.end()
 
     def _on_finished(self):
