@@ -25,11 +25,14 @@ from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
 from app.hub.components.accent_wipe import AccentWipe
+from app.hub.components.page_transition import PageTransition
 from app.hub.components.message_dialog import confirm
 from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
 from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
+from app.hub.performance_page import PerformancePage
+from app.hub.weather_page import WeatherPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
 from app.hub.tray_manager import AimedgetTrayIcon
@@ -192,6 +195,11 @@ class AimedgetHubWindow(QMainWindow):
         self.show_and_activate()
         self.sidebar.select_page("music")
 
+    def show_weather_cities(self):
+        """Abre o Hub direto na página do Clima (gerenciar cidades, pelo menu do cartão)."""
+        self.show_and_activate()
+        self.sidebar.select_page("weather")
+
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_asymmetric_windows_icons()
@@ -254,6 +262,7 @@ class AimedgetHubWindow(QMainWindow):
         # Stack de páginas
         self.stack = QStackedWidget(self.shell)
         main_layout.addWidget(self.stack, stretch=1)
+        self._page_transition = PageTransition(self.stack)
 
         # Instanciar as páginas
         self.page_overview = OverviewPage(theme=self._current_theme, parent=self.stack)
@@ -263,6 +272,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys = LockKeysPage(theme=self._current_theme, parent=self.stack)
         self.page_vol = VolumePage(theme=self._current_theme, parent=self.stack)
         self.page_timer = TimerPage(theme=self._current_theme, parent=self.stack)
+        self.page_weather = WeatherPage(theme=self._current_theme, parent=self.stack)
+        self.page_performance = PerformancePage(theme=self._current_theme, parent=self.stack)
         self.page_gen = GeneralPage(
             on_theme_change=self._change_theme_mode,
             on_language_change=self._change_language,
@@ -273,12 +284,14 @@ class AimedgetHubWindow(QMainWindow):
             parent=self.stack,
         )
 
-        self.stack.addWidget(self.page_overview)  # index 0: ov
-        self.stack.addWidget(self.page_music)     # index 1: music
-        self.stack.addWidget(self.page_keys)      # index 2: keys
-        self.stack.addWidget(self.page_vol)       # index 3: vol
-        self.stack.addWidget(self.page_timer)     # index 4: timer
-        self.stack.addWidget(self.page_gen)       # index 5: gen
+        self.stack.addWidget(self.page_overview)     # index 0: ov
+        self.stack.addWidget(self.page_music)        # index 1: music
+        self.stack.addWidget(self.page_keys)         # index 2: keys
+        self.stack.addWidget(self.page_vol)          # index 3: vol
+        self.stack.addWidget(self.page_timer)        # index 4: timer
+        self.stack.addWidget(self.page_weather)      # index 5: weather
+        self.stack.addWidget(self.page_performance)  # index 6: performance
+        self.stack.addWidget(self.page_gen)          # index 7: gen
 
         self._page_map = {
             "ov": 0,
@@ -286,7 +299,9 @@ class AimedgetHubWindow(QMainWindow):
             "keys": 2,
             "vol": 3,
             "timer": 4,
-            "gen": 5,
+            "weather": 5,
+            "performance": 6,
+            "gen": 7,
         }
 
         # Inicializar contadores na sidebar
@@ -298,6 +313,8 @@ class AimedgetHubWindow(QMainWindow):
         self.sidebar.set_badge_count("keys", 0)
         self.sidebar.set_badge_count("vol", 0)
         self.sidebar.set_badge_count("timer", 0)
+        self.sidebar.set_badge_count("weather", 0)
+        self.sidebar.set_badge_count("performance", 0)
         self.sidebar.set_badge_count("gen", 0)
 
         get_service_bridge().active_skins_changed.connect(self._on_active_skins_changed)
@@ -308,8 +325,17 @@ class AimedgetHubWindow(QMainWindow):
 
     def _on_navigation(self, page_key: str):
         self._stop_wipe()   # a foto é da página antiga
-        if page_key in self._page_map:
-            self.stack.setCurrentIndex(self._page_map[page_key])
+        if page_key not in self._page_map:
+            return
+        index = self._page_map[page_key]
+        old = self.stack.currentIndex()
+        animate = (index != old and animations_enabled() and self.isVisible() and self.stack.width() > 1)
+        if animate:
+            self._page_transition.stop()
+            snapshot = self.stack.grab()   # a página antiga, antes da troca
+        self.stack.setCurrentIndex(index)
+        if animate:
+            self._page_transition.start(snapshot, 1 if index > old else -1)
 
     def _on_customize_requested(self, widget_id: str):
         target_map = {
@@ -317,6 +343,8 @@ class AimedgetHubWindow(QMainWindow):
             "keys_osd": "keys",
             "vol_mixer": "vol",
             "timer": "timer",
+            "weather": "weather",
+            "performance": "performance",
         }
         target_page = target_map.get(widget_id, "ov")
         self.sidebar.select_page(target_page)
@@ -334,6 +362,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys.retranslate_ui()
         self.page_vol.retranslate_ui()
         self.page_timer.retranslate_ui()
+        self.page_weather.retranslate_ui()
+        self.page_performance.retranslate_ui()
         self.page_gen.retranslate_ui()
         if hasattr(self, "tray_icon") and self.tray_icon:
             self.tray_icon.retranslate_ui()
@@ -426,6 +456,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys.set_theme(theme)
         self.page_vol.set_theme(theme)
         self.page_timer.set_theme(theme)
+        self.page_weather.set_theme(theme)
+        self.page_performance.set_theme(theme)
         self.page_gen.set_theme(theme)
 
         # Atualiza a paleta do menu do Tray em tempo real

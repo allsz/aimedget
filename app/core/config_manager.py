@@ -568,6 +568,29 @@ class ConfigManager:
         hub_cfg["geometry"] = [int(x), int(y), int(w), int(h)]
         self._save()
 
+    # --- Helpers de Configuração: Weather Widget ---
+    # Seção "weather_widget": enabled, show_on_startup, remember_position, position [x, y], scale, skin, units ('c'/'f'),
+    # location_mode ('auto'/'manual'), location / auto_location ({name, lat, lon, detail}), auto_location_at,
+    # cache (última previsão), hotkey.
+
+    def get_weather(self, key: str, default: Any = None) -> Any:
+        return self._data.get("weather_widget", {}).get(key, default)
+
+    def set_weather(self, key: str, value: Any):
+        self._data.setdefault("weather_widget", {})[key] = value
+        self._save()
+
+    # --- Helpers de Configuração: Performance Widget ---
+    # Seção "performance_widget": enabled, show_on_startup, remember_position, position [x, y], scale,
+    # desktop_mode, selected_metric ('cpu'/'gpu'/'vram'/'ram'), hotkey.
+
+    def get_performance(self, key: str, default: Any = None) -> Any:
+        return self._data.get("performance_widget", {}).get(key, default)
+
+    def set_performance(self, key: str, value: Any):
+        self._data.setdefault("performance_widget", {})[key] = value
+        self._save()
+
     # --- Atalhos Globais de Teclado (Hotkeys) ---
 
     def get_music_hotkey(self, default: str = "Win+Alt+M") -> str:

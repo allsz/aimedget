@@ -61,6 +61,7 @@ def main():
     # Janela Hub Central com System Tray
     hub_window = AimedgetHubWindow()
     bridge.manage_music_skins_requested.connect(hub_window.show_music_skins)
+    bridge.manage_weather_cities_requested.connect(hub_window.show_weather_cities)
 
     instance.show_requested.connect(hub_window.show_and_activate)
     if not start_minimized:

@@ -30,6 +30,7 @@ from app.services.updater_service import UpdateInfo, is_installed_build, updater
 from app.hub.components.accent_entry import AccentEntryRow
 from app.hub.components.collapsible_section import skin_and_theme_block, skin_supports_themes
 from app.hub.components.help_badge import HelpBadge
+from app.hub.components.tab_pill import ChipGroup
 from app.hub.components.hue_slider import MARGIN as SLIDER_MARGIN, HueSlider
 from app.hub.components.theme_import_dialog import warning_color
 from app.hub.components.pill_switch import PillSwitch
@@ -55,6 +56,8 @@ from app.widgets.timer.theme import loader as timer_theme_loader
 from app.widgets.timer.theme_specs import make_theme_spec as make_timer_theme_spec
 from app.widgets.timer import init_timer_spec, init_timer_skin_specs
 from app.widgets.volume_mixer import init_volume_spec
+from app.widgets.performance import init_performance_spec
+from app.widgets.weather import init_weather_skin_specs
 
 
 class HubScrollArea(QScrollArea):
@@ -212,16 +215,12 @@ class OverviewPage(BaseHubPage):
         tools_layout.addWidget(self.search_box, stretch=1)
 
         # Chips de filtro de categoria
-        self._filter_chips: dict[str, QPushButton] = {}
-        for cat_key, i18n_key in [("All", "overview_filter_all"), ("Widget", "overview_filter_widget"), ("Flyout", "overview_filter_flyout")]:
-            chip = QPushButton(t(i18n_key))
-            chip.setProperty("class", "Chip")
-            chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            if cat_key == "All":
-                chip.setProperty("selected", "true")
-            chip.clicked.connect(lambda checked=False, c=cat_key: self._set_filter(c))
-            self._filter_chips[cat_key] = chip
-            tools_layout.addWidget(chip)
+        self._filter_group = ChipGroup(
+            [(k, t(i)) for k, i in [("All", "overview_filter_all"), ("Widget", "overview_filter_widget"),
+                                    ("Flyout", "overview_filter_flyout")]],
+            self._set_filter, self._theme, selected="All")
+        self._filter_chips = self._filter_group.buttons
+        tools_layout.addWidget(self._filter_group)
 
         self.content_layout.addLayout(tools_layout)
 
@@ -308,7 +307,38 @@ class OverviewPage(BaseHubPage):
         self.timer_card.customize.connect(self.customize_requested.emit)
         self._cards.append(self.timer_card)
 
+        # 5. Weather Widget Card
+        weather_spec = self._active_weather_spec()
+        self.weather_card = WidgetCard(
+            widget_id="weather",
+            name=t("overview_card_weather"),
+            category="Widget",
+            skin_label=weather_spec.title,
+            spec=weather_spec,
+            is_active=self.bridge.is_weather_enabled(),
+            theme=self._theme,
+        )
+        self.weather_card.toggled.connect(self._on_card_toggled)
+        self.weather_card.customize.connect(self.customize_requested.emit)
+        self._cards.append(self.weather_card)
+
+        # 6. Performance Widget Card
+        perf_spec = init_performance_spec()
+        self.performance_card = WidgetCard(
+            widget_id="performance",
+            name=t("overview_card_performance"),
+            category="Widget",
+            skin_label=t("perf_skin_label"),
+            spec=perf_spec,
+            is_active=self.bridge.is_performance_enabled(),
+            theme=self._theme,
+        )
+        self.performance_card.toggled.connect(self._on_card_toggled)
+        self.performance_card.customize.connect(self.customize_requested.emit)
+        self._cards.append(self.performance_card)
+
         self.bridge.status_changed.connect(self._on_bridge_status_changed)
+        self.bridge.weather_skin_changed.connect(self._on_weather_skin_changed)
         self.bridge.music_skin_changed.connect(self._on_music_skin_changed)
         self.bridge.timer_skin_changed.connect(self._on_timer_skin_changed)
 
@@ -343,10 +373,7 @@ class OverviewPage(BaseHubPage):
 
     def _set_filter(self, category: str):
         self._current_filter = category
-        for cat, chip in self._filter_chips.items():
-            chip.setProperty("selected", "true" if cat == category else "false")
-            chip.style().unpolish(chip)
-            chip.style().polish(chip)
+        self._filter_group.set_selected(category)
         self._refresh_grid()
 
     def _on_search_changed(self, text: str):
@@ -362,6 +389,10 @@ class OverviewPage(BaseHubPage):
             self.bridge.set_volume_mixer_enabled(is_active)
         elif widget_id == "timer":
             self.bridge.set_timer_enabled(is_active)
+        elif widget_id == "weather":
+            self.bridge.set_weather_enabled(is_active)
+        elif widget_id == "performance":
+            self.bridge.set_performance_enabled(is_active)
 
     def _on_bridge_status_changed(self, widget_id: str, is_active: bool):
         for card in self._cards:
@@ -392,10 +423,16 @@ class OverviewPage(BaseHubPage):
             self.vol_card.retranslate_ui(name=t("overview_card_volume"), skin_label=self._active_flyout_spec("mixer")[1])
         if hasattr(self, "timer_card"):
             self.timer_card.retranslate_ui(name=t("overview_card_timer"), skin_label=t("theme_default_timer"))
+        if hasattr(self, "weather_card"):
+            self._on_weather_skin_changed(self.bridge.weather_controller.active_skin_name)
+            self.weather_card.retranslate_ui(name=t("overview_card_weather"), skin_label=self.weather_card.skin_label)
+        if hasattr(self, "performance_card"):
+            self.performance_card.retranslate_ui(name=t("overview_card_performance"), skin_label=t("perf_skin_label"))
         self._refresh_grid()
 
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
+        self._filter_group.set_theme(theme)
         for card in self._cards:
             card.set_theme(theme)
 
@@ -410,6 +447,16 @@ class OverviewPage(BaseHubPage):
         spec = next((s for s in timer_specs if s.id == skin_key), None)
         if spec and hasattr(self, "timer_card"):
             self.timer_card.set_spec(spec, spec.title)
+
+    def _active_weather_spec(self):
+        specs = init_weather_skin_specs()
+        active = self.bridge.weather_controller.active_skin_name
+        return next((s for s in specs if s.id == active), specs[0])
+
+    def _on_weather_skin_changed(self, _skin_key: str):
+        if hasattr(self, "weather_card"):
+            spec = self._active_weather_spec()
+            self.weather_card.set_spec(spec, spec.title)
 
     def _active_flyout_spec(self, container: str) -> tuple:
         """(spec, rótulo) do tema em uso no flyout ("keylock"/"mixer"). O Padrão usa a miniatura original do
@@ -547,10 +594,6 @@ class MusicPage(BaseHubPage):
         scale_info.addWidget(self.s_scale)
         scale_layout.addLayout(scale_info, stretch=1)
 
-        scale_buttons_layout = QHBoxLayout()
-        scale_buttons_layout.setSpacing(6)
-        self._scale_chips: dict[str, QPushButton] = {}
-
         self._scale_options = [
             ("auto", t("music_scale_auto")),
             ("0.375", "75%"),
@@ -559,15 +602,9 @@ class MusicPage(BaseHubPage):
             ("0.75", "150%"),
         ]
 
-        for opt_key, opt_label in self._scale_options:
-            btn = QPushButton(opt_label)
-            btn.setProperty("class", "Chip")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda checked=False, k=opt_key: self._on_scale_selected(k))
-            self._scale_chips[opt_key] = btn
-            scale_buttons_layout.addWidget(btn)
-
-        scale_layout.addLayout(scale_buttons_layout)
+        self._scale_group = ChipGroup(self._scale_options, self._on_scale_selected, self._theme)
+        self._scale_chips = self._scale_group.buttons
+        scale_layout.addWidget(self._scale_group)
         self.content_layout.addWidget(scale_card)
 
         self.update_scale_selection()
@@ -773,11 +810,7 @@ class MusicPage(BaseHubPage):
                 except (ValueError, TypeError):
                     continue
 
-        for k, btn in self._scale_chips.items():
-            is_sel = (k == matching_key)
-            btn.setProperty("selected", "true" if is_sel else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        self._scale_group.set_selected(matching_key)
 
     def _on_scale_selected(self, opt_key: str):
         if opt_key == "auto":
@@ -891,6 +924,7 @@ class MusicPage(BaseHubPage):
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
         self.pos_picker.set_theme(theme)
+        self._scale_group.set_theme(theme)
         if hasattr(self, "web_help"):
             self.web_help.set_theme(theme)
         if hasattr(self, "s_scale"):
@@ -1671,27 +1705,16 @@ class GeneralPage(BaseHubPage):
         info3.addWidget(self.d3)
         row3.addLayout(info3, stretch=1)
 
-        theme_buttons_layout = QHBoxLayout()
-        theme_buttons_layout.setSpacing(6)
-        self._theme_chips: dict[str, QPushButton] = {}
-
         self._theme_modes = [
             ("light", "gen_theme_light"),
             ("dark", "gen_theme_dark"),
             ("true_dark", "gen_theme_true_dark"),
             ("system", "gen_theme_system"),
         ]
-        for mode_key, i18n_key in self._theme_modes:
-            btn = QPushButton(t(i18n_key))
-            btn.setProperty("class", "Chip")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            if mode_key == self._current_pref:
-                btn.setProperty("selected", "true")
-            btn.clicked.connect(lambda checked=False, m=mode_key: self._set_theme_mode(m))
-            self._theme_chips[mode_key] = btn
-            theme_buttons_layout.addWidget(btn)
-
-        row3.addLayout(theme_buttons_layout)
+        self._theme_group = ChipGroup([(k, t(i)) for k, i in self._theme_modes], self._set_theme_mode, self._theme,
+                                      selected=self._current_pref)
+        self._theme_chips = self._theme_group.buttons
+        row3.addWidget(self._theme_group)
         c_layout.addLayout(row3)
 
         sep3 = QFrame()
@@ -1775,20 +1798,10 @@ class GeneralPage(BaseHubPage):
         info4.addWidget(self.d4)
         row4.addLayout(info4, stretch=1)
 
-        lang_buttons_layout = QHBoxLayout()
-        lang_buttons_layout.setSpacing(6)
-        self._lang_chips: dict[str, QPushButton] = {}
-
-        for lang_key, lang_label in [("pt", "Português"), ("en", "English")]:
-            btn = QPushButton(lang_label)
-            btn.setProperty("class", "Chip")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setProperty("selected", "true" if lang_key == self._current_lang else "false")
-            btn.clicked.connect(lambda checked=False, lk=lang_key: self._set_language(lk))
-            self._lang_chips[lang_key] = btn
-            lang_buttons_layout.addWidget(btn)
-
-        row4.addLayout(lang_buttons_layout)
+        self._lang_group = ChipGroup([("pt", "Português"), ("en", "English")], self._set_language, self._theme,
+                                     selected=self._current_lang)
+        self._lang_chips = self._lang_group.buttons
+        row4.addWidget(self._lang_group)
         c_layout.addLayout(row4)
 
         self.content_layout.addWidget(card)
@@ -1953,10 +1966,7 @@ class GeneralPage(BaseHubPage):
 
     def _set_theme_mode(self, mode: str):
         self._current_pref = mode
-        for k, btn in self._theme_chips.items():
-            btn.setProperty("selected", "true" if k == mode else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        self._theme_group.set_selected(mode)
         if self._on_theme_change:
             self._on_theme_change(mode)
 
@@ -2070,10 +2080,7 @@ class GeneralPage(BaseHubPage):
         if lang_code == self._current_lang:
             return
         self._current_lang = lang_code
-        for k, btn in self._lang_chips.items():
-            btn.setProperty("selected", "true" if k == lang_code else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        self._lang_group.set_selected(lang_code)
         from app.core.i18n import i18n
         i18n.set_language(lang_code)
         if self._on_language_change:
@@ -2115,10 +2122,7 @@ class GeneralPage(BaseHubPage):
         if hasattr(self, "_lang_chips"):
             from app.core.i18n import i18n
             self._current_lang = i18n.current_language
-            for k, btn in self._lang_chips.items():
-                btn.setProperty("selected", "true" if k == self._current_lang else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+            self._lang_group.set_selected(self._current_lang, animated=False)
         if hasattr(self, "t_update"):
             self.t_update.setText(t("gen_updates_title"))
         if hasattr(self, "d_update"):
@@ -2171,10 +2175,5 @@ class GeneralPage(BaseHubPage):
                     border-radius: 3px;
                 }}
             """)
-        for btn in self._theme_chips.values():
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-        if hasattr(self, "_lang_chips"):
-            for btn in self._lang_chips.values():
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+        self._theme_group.set_theme(theme)
+        self._lang_group.set_theme(theme)
