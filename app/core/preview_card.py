@@ -53,6 +53,9 @@ class PreviewCard(QWidget):
         self._state = state if state is not None else spec.mock_state()
         self._theme = theme
         self._is_selected = is_selected
+        # 0..1 que persegue o estado "selecionado": borda, texto, selo e ponto entram/saem com movimento
+        from app.hub.components.tab_pill import Blend
+        self._sel = Blend(1.0 if is_selected else 0.0, self.update, self)
         self._is_hovered = False
         self._show_active_toggle = show_active_toggle
         self._is_active_in_menu = is_active_in_menu
@@ -152,6 +155,7 @@ class PreviewCard(QWidget):
     def set_selected(self, selected: bool):
         if self._is_selected != selected:
             self._is_selected = selected
+            self._sel.set(1.0 if selected else 0.0, animated=self.isVisible())
             self.update()
 
     def is_selected(self) -> bool:
@@ -268,15 +272,18 @@ class PreviewCard(QWidget):
 
         # Cores de container e borda baseadas no estado
         bg_color = QColor(self._theme.panel2)
-        if self._is_selected:
-            border_color = QColor(self._theme.accent)
-            border_width = 1.6
-        elif self._is_hovered:
-            border_color = QColor(self._theme.mute)
-            border_width = 1.0
+        sel = max(0.0, min(1.0, self._sel.value))
+        if self._is_hovered:
+            base_color = QColor(self._theme.mute)
         else:
-            border_color = QColor(self._theme.line)
-            border_width = 1.0
+            base_color = QColor(self._theme.line)
+        accent = QColor(self._theme.accent)
+        border_color = QColor(
+            round(base_color.red() + (accent.red() - base_color.red()) * sel),
+            round(base_color.green() + (accent.green() - base_color.green()) * sel),
+            round(base_color.blue() + (accent.blue() - base_color.blue()) * sel),
+        )
+        border_width = 1.0 + 0.6 * sel
 
         # Fundo do cartão
         path = QPainterPath()
@@ -332,13 +339,17 @@ class PreviewCard(QWidget):
         text_rect = QRectF(text_x, foot_y, w - text_x - right_reserved, label_area_h)
 
         is_disabled = (self._show_active_toggle and not self._is_active_in_menu) or not self._available
-        text_color = (
-            self._theme.mute
-            if is_disabled
-            else (self._theme.accent if self._is_selected else self._theme.text)
-        )
-        p.setFont(get_ui_font(12, QFont.Weight.DemiBold if self._is_selected else QFont.Weight.Medium))
-        p.setPen(QColor(text_color))
+        if is_disabled:
+            text_color = QColor(self._theme.mute)
+        else:
+            plain = QColor(self._theme.text)
+            text_color = QColor(
+                round(plain.red() + (accent.red() - plain.red()) * sel),
+                round(plain.green() + (accent.green() - plain.green()) * sel),
+                round(plain.blue() + (accent.blue() - plain.blue()) * sel),
+            )
+        p.setFont(get_ui_font(12, QFont.Weight.DemiBold if sel > 0.5 else QFont.Weight.Medium))
+        p.setPen(text_color)
         p.drawText(
             text_rect,
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
@@ -346,7 +357,7 @@ class PreviewCard(QWidget):
         )
 
         # Badge elegante "EM USO" no palco se for a skin selecionada
-        if (self._show_active_toggle or self._show_badge) and self._is_selected:
+        if (self._show_active_toggle or self._show_badge) and sel > 0.01:
             from app.core.i18n import t
 
             badge_w = 52.0
@@ -356,14 +367,18 @@ class PreviewCard(QWidget):
             b_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
             b_path = QPainterPath()
             b_path.addRoundedRect(b_rect, 4.0, 4.0)
+            p.save()
+            p.setOpacity(p.opacity() * sel)
+            p.translate(0.0, (1.0 - sel) * 4.0)   # o selo sobe ao entrar
             p.fillPath(b_path, QColor(self._theme.accent))
             p.setFont(get_ui_font(9.0, QFont.Weight.Bold))
             p.setPen(QColor(self._theme.ink))
             p.drawText(b_rect, Qt.AlignmentFlag.AlignCenter, t("music_skin_active_badge"))
+            p.restore()
 
         # Ponto indicador tradicional quando selecionado (somente para escolha única sem toggle)
-        if not self._show_active_toggle and not self._show_badge and self._is_selected:
-            dot_r = 3.5
+        if not self._show_active_toggle and not self._show_badge and sel > 0.01:
+            dot_r = 3.5 * sel
             dot_cx = w - 16.0
             dot_cy = foot_y + label_area_h * 0.5
             p.setPen(Qt.PenStyle.NoPen)
