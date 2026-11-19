@@ -18,6 +18,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 from app.core import desktop_layer
+from app.core.anchor_manager import anchor_manager
 from app.core.desktop_pin_guard import DesktopPinGuard
 from app.core.position_glide import glide_widget_to
 from app.core.refresh_rate import refresh_interval_ms
@@ -163,6 +164,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
 
+    ANCHOR_KEY: Optional[str] = None   # chave do widget na ancoragem ("weather", "performance"); ver anchor_manager
+
     def __init__(
         self,
         scale: float = 1.0,
@@ -243,6 +246,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._shadows = {}
         if origin is not None:
             self.move_card_to(origin.x(), origin.y())
+            anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
 
     def _to_card(self, pos) -> QPointF:
@@ -298,6 +302,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         desktop_layer.apply_layer(int(self.winId()), self._desktop_mode)
         self._sync_pin_guard()
         self._sync_show_desktop()
+        anchor_manager().register(self)
         self.kick()
 
     def hideEvent(self, event):
@@ -545,7 +550,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             self.set_scale(start_scale + grow)
             return
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            anchor_manager().drag_to(self, event.globalPosition().toPoint() - self._drag_offset)   # grupo + ímã
             self._dragged = True
             return
         card_pos = self._to_card(event.position())
@@ -568,8 +573,13 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         if self._on_card_release(self._to_card(event.position())):
             return
         if self._drag_offset is not None and self._dragged:
+            anchor_manager().drag_end(self)
             self._on_drag_finished(self.card_origin())
         self._drag_offset = None
+
+    def anchor_position_committed(self):
+        """Num grupo, este cartão foi movido junto com outro: grava a posição como se tivesse sido arrastado."""
+        self._on_drag_finished(self.card_origin())
 
     def enterEvent(self, event):
         self._hovered = True

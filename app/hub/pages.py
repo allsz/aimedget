@@ -202,6 +202,84 @@ class OverviewPage(BaseHubPage):
 
         self._build_tools()
         self._build_gallery()
+        self._build_anchor_card()
+
+    # Ancoragem de widgets: estilo da rede e efeito ao juntar (o resto é fixo; ver app/core/anchor_manager.py)
+    _ANCHOR_NET_CHIPS = (("dots", "anchor_net_dots"), ("lines", "anchor_net_lines"), ("both", "anchor_net_both"))
+    _ANCHOR_BOOM_CHIPS = (("ring", "anchor_boom_ring"), ("sweep", "anchor_boom_sweep"))
+
+    def _build_anchor_card(self):
+        from app.core.anchor_manager import boom_style, net_style
+
+        card = QFrame()
+        card.setProperty("class", "HubCard")
+        self.anchor_card = card
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(12)
+
+        self.t_anchor = QLabel(t("anchor_card_title"))
+        self.t_anchor.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self.s_anchor = QLabel(t("anchor_card_sub"))
+        self.s_anchor.setWordWrap(True)
+        head = QVBoxLayout()
+        head.setSpacing(3)
+        head.addWidget(self.t_anchor)
+        head.addWidget(self.s_anchor)
+        lay.addLayout(head)
+
+        def option_row(title_key, sub_key, chips, selected, on_pick):
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setProperty("class", "HubDivider")
+            lay.addWidget(sep)
+            row = QHBoxLayout()
+            row.setSpacing(16)
+            info = QVBoxLayout()
+            info.setSpacing(2)
+            title = QLabel(t(title_key))
+            title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+            sub = QLabel(t(sub_key))
+            sub.setWordWrap(True)
+            info.addWidget(title)
+            info.addWidget(sub)
+            row.addLayout(info, stretch=1)
+            row.setAlignment(info, Qt.AlignmentFlag.AlignVCenter)
+            group = ChipGroup([(k, t(i)) for k, i in chips], on_pick, self._theme, selected=selected)
+            row.addWidget(group)
+            lay.addLayout(row)
+            return title, sub, group
+
+        def pick_net(key):
+            config_manager.set_anchor("net_style", key)
+            self._anchor_net_group.set_selected(key)
+
+        def pick_boom(key):
+            config_manager.set_anchor("boom", key)
+            self._anchor_boom_group.set_selected(key)
+
+        self.t_anchor_net, self.s_anchor_net, self._anchor_net_group = option_row(
+            "anchor_net_title", "anchor_net_sub", self._ANCHOR_NET_CHIPS, net_style(), pick_net)
+        self.t_anchor_boom, self.s_anchor_boom, self._anchor_boom_group = option_row(
+            "anchor_boom_title", "anchor_boom_sub", self._ANCHOR_BOOM_CHIPS, boom_style(), pick_boom)
+        self._style_anchor_card(self._theme)
+        self.content_layout.insertWidget(self.content_layout.count() - 1, card)   # antes do espaçador final
+
+    def _style_anchor_card(self, theme: HubTheme):
+        for lbl in (self.s_anchor, self.s_anchor_net, self.s_anchor_boom):
+            lbl.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+
+    def _retranslate_anchor_card(self):
+        self.t_anchor.setText(t("anchor_card_title"))
+        self.s_anchor.setText(t("anchor_card_sub"))
+        self.t_anchor_net.setText(t("anchor_net_title"))
+        self.s_anchor_net.setText(t("anchor_net_sub"))
+        self.t_anchor_boom.setText(t("anchor_boom_title"))
+        self.s_anchor_boom.setText(t("anchor_boom_sub"))
+        for group, chips in ((self._anchor_net_group, self._ANCHOR_NET_CHIPS),
+                             (self._anchor_boom_group, self._ANCHOR_BOOM_CHIPS)):
+            for key, i18n_key in chips:
+                group.button(key).setText(t(i18n_key))
 
     def _build_tools(self):
         tools_layout = QHBoxLayout()
@@ -428,6 +506,8 @@ class OverviewPage(BaseHubPage):
             self.weather_card.retranslate_ui(name=t("overview_card_weather"), skin_label=self.weather_card.skin_label)
         if hasattr(self, "performance_card"):
             self.performance_card.retranslate_ui(name=t("overview_card_performance"), skin_label=t("perf_skin_label"))
+        if hasattr(self, "anchor_card"):
+            self._retranslate_anchor_card()
         self._refresh_grid()
 
     def set_theme(self, theme: HubTheme):
@@ -435,6 +515,10 @@ class OverviewPage(BaseHubPage):
         self._filter_group.set_theme(theme)
         for card in self._cards:
             card.set_theme(theme)
+        if hasattr(self, "anchor_card"):
+            self._anchor_net_group.set_theme(theme)
+            self._anchor_boom_group.set_theme(theme)
+            self._style_anchor_card(theme)
 
     def _on_music_skin_changed(self, skin_key: str):
         music_specs = init_music_skin_specs()

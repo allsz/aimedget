@@ -617,7 +617,7 @@ class VinylMusicSkin(BaseMusicSkin):
 
         # Movimentação da janela na área de trabalho
         if (event.buttons() & Qt.MouseButton.LeftButton) and not self._drag_pos.isNull():
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            self._drag_window_to(event.globalPosition().toPoint() - self._drag_pos)
             return
 
         # Atualização dinâmica de hover e cursores

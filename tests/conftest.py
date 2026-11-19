@@ -29,3 +29,15 @@ if _weather_service is not None:
         raise OSError("rede desligada nos testes")
 
     _weather_service._http_get_json = _no_network
+
+# A ancoragem (grupos de widgets salvos) nunca lê nem grava a configuração do usuário nos testes: com grupos salvos
+# no PC, um cartão mostrado num teste qualquer seria puxado para a pilha dele e as posições conferidas mudariam.
+try:
+    from app.core.config_manager import config_manager as _config_manager
+except ModuleNotFoundError:
+    _config_manager = None
+
+if _config_manager is not None:
+    _anchor_store: dict = {}
+    _config_manager.get_anchor = lambda key, default=None: _anchor_store.get(key, default)
+    _config_manager.set_anchor = lambda key, value: _anchor_store.__setitem__(key, value)

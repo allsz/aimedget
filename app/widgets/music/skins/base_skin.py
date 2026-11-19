@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
 from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import QWidget, QMenu
 from app.core.typography import init_app_font
+from app.core.anchor_manager import add_anchor_actions, anchor_manager
 from app.core.config_manager import config_manager
 from app.core.widget_animator import AnimatedSkinMixin
 from app.core.position_glide import glide_widget_to
@@ -46,6 +47,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         return "capa_empilhada" if skin_id in ("stacked", "capaEmpilhada") else skin_id
     scale_changed = Signal(float)
 
+    ANCHOR_KEY = "music"          # chave na ancoragem: a mesma em todas as skins (trocar de skin mantém o grupo)
     MIN_SAFE_SCALE: float = 0.35  # ~70% do baseline 0.50 (tamanho seguro e legível)
     MAX_SAFE_SCALE: float = 0.80  # ~160% do baseline 0.50 (proporção segura sem estourar limites)
     CARD_RADIUS: float = 44.0
@@ -238,6 +240,16 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
             p.drawRoundedRect(QRectF(5, 5, 22, 22), 4, 4)
             p.setPen(QPen(c_sub, 1.4))
             p.drawRoundedRect(QRectF(11, 11, 10, 10), 2, 2)
+        elif kind == "anchor":
+            # Âncora: argola no topo, haste e braços curvos embaixo
+            pen = QPen(c, 1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(16, 7.5), 2.6, 2.6)
+            p.drawLine(QPointF(16, 10.2), QPointF(16, 26))
+            p.drawLine(QPointF(11.5, 14), QPointF(20.5, 14))
+            p.drawArc(QRectF(7, 13, 18, 13), 200 * 16, 140 * 16)
         elif kind == "close":
             # X de pontas arredondadas, no mesmo traço (1,8-2 px) dos demais ícones do menu
             pen = QPen(c, 2.0)
@@ -312,6 +324,8 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         self._update_hitboxes()
         if save_preference:
             config_manager.set_music_scale(new_scale)
+        if self.isVisible():
+            anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.scale_changed.emit(new_scale)
         self.update()
 
@@ -452,6 +466,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
                 self.last_tick = time.perf_counter()  # evita um dt grande no primeiro frame
             timer.start()
         super().showEvent(event)
+        anchor_manager().register(self)   # num grupo, volta ao lugar dele em relação aos outros widgets
 
     def hideEvent(self, event):
         """Pausa o loop de animação enquanto oculto: zero wakeups de CPU em segundo plano."""
@@ -580,6 +595,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         menu.set_trailing_check(act_remember_pos, is_remembered)
         act_remember_pos.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
         menu.addAction(act_remember_pos)
+        add_anchor_actions(menu, self, self._build_minimal_skin_icon("anchor", is_dark))
 
         # Fechar o widget (como no Timer): última opção, separada das preferências
         menu.addSeparator()
@@ -620,8 +636,19 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         else:
             config_manager.set_music_position_remembered(False)
 
+    def _drag_window_to(self, pos: QPoint):
+        """Arraste da janela (todas as skins): move o grupo ancorado inteiro e aplica o ímã de alinhamento."""
+        anchor_manager().drag_to(self, pos)
+
+    def anchor_position_committed(self):
+        """Num grupo, este widget foi movido junto com outro: grava a posição se ela é lembrada."""
+        if config_manager.is_music_position_remembered():
+            origin = self.card_origin()
+            config_manager.save_music_position(origin.x(), origin.y())
+
     def _on_window_drag_finished(self):
         """Atualiza a posição memorizada e ajusta escala automática se trocou de tela."""
+        anchor_manager().drag_end(self)   # firma o ímã (e junta ao grupo, se estava travado) antes de salvar
         if config_manager.is_music_position_remembered():
             origin = self.card_origin()
             config_manager.save_music_position(origin.x(), origin.y())

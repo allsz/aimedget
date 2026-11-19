@@ -139,6 +139,18 @@ class SlideFadeAnimator(QObject):
             self._rest = w.pos()
         self._run(0.0, duration_ms)
 
+    def move_rest(self, pos: QPoint):
+        """
+        Muda a posição de repouso. Com a janela surgindo/sumindo, o deslocamento da animação continua por cima do
+        lugar novo (sem salto e sem a animação devolver a janela ao lugar antigo); parada, a janela só vai para lá.
+        """
+        if self._rest is None:
+            self._widget.move(pos)
+            return
+        offset = self._widget.pos() - self._rest
+        self._rest = QPoint(pos)
+        self._widget.move(self._rest + offset)
+
     def settle(self):
         """Conclui a animação em curso no estado final, imediatamente."""
         if not self.is_animating():

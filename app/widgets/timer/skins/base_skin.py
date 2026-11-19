@@ -3,6 +3,7 @@ from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QWidget
 
+from app.core.anchor_manager import add_anchor_actions, anchor_manager
 from app.core.config_manager import config_manager
 from app.core.i18n import i18n, t
 from app.core.position_glide import glide_widget_to
@@ -93,6 +94,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
     close_requested = Signal()
     skin_switch_requested = Signal(str)
 
+    ANCHOR_KEY = "timer"   # chave na ancoragem (ver anchor_manager)
     DEFAULT_SIZE = 164
     MIN_SCALE_RATIO = 0.75
     MAX_SCALE_RATIO = 1.55
@@ -186,7 +188,23 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         self.art_margin = self._wanted_art_margin(side)
         full = side + 2 * self.art_margin
         self.setGeometry(origin.x() - self.art_margin, origin.y() - self.art_margin, full, full)
+        if self.isVisible():
+            anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
+
+    def _drag_window_to(self, pos: QPoint):
+        """Arraste da janela: move o grupo ancorado inteiro e aplica o ímã de alinhamento."""
+        anchor_manager().drag_to(self, pos)
+
+    def _drag_window_end(self):
+        """Ao soltar o arraste: firma o ímã (e junta ao grupo, se estava travado)."""
+        anchor_manager().drag_end(self)
+
+    def anchor_position_committed(self):
+        """Num grupo, este widget foi movido junto com outro: grava a posição se ela é lembrada."""
+        if config_manager.is_timer_position_remembered():
+            origin = self.square_origin()
+            config_manager.save_timer_position(origin.x(), origin.y())
 
     def _resolve_active_theme(self) -> HubTheme:
         hub_pref = config_manager.get_hub_theme("system")
@@ -211,6 +229,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
     def showEvent(self, event):
         self.reload_skin_theme()
         super().showEvent(event)
+        anchor_manager().register(self)   # num grupo, volta ao lugar dele em relação aos outros widgets
 
     def set_time_state(self, current_seconds: float, is_running: bool, mode: str):
         """Atualiza o estado de contagem vindo do TimerController."""
@@ -331,6 +350,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         act_reset_size = QAction(t("timer_menu_reset_size"), self)
         act_reset_size.triggered.connect(self._reset_default_size)
         menu.addAction(act_reset_size)
+        add_anchor_actions(menu, self)
 
         menu.addSeparator()
 

@@ -8,6 +8,7 @@ fixação na área de trabalho com onda de pontos e suporte ao Win+D.
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QPainter
 
+from app.core.anchor_manager import add_anchor_actions
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
@@ -19,6 +20,7 @@ from app.widgets.performance.card_state import ALL_METRICS, PerformanceState
 
 
 class PerformanceCard(FloatingCard):
+    ANCHOR_KEY = "performance"
     metric_selected = Signal(str)
 
     def __init__(
@@ -125,6 +127,7 @@ class PerformanceCard(FloatingCard):
         menu.set_trailing_check(act_desktop, self._desktop_mode)
         act_desktop.triggered.connect(lambda: self.desktop_mode_changed.emit(not self._desktop_mode))
         menu.addAction(act_desktop)
+        add_anchor_actions(menu, self)
 
         menu.addSeparator()
         act_close = QAction(t("menu_close_widget"), self)

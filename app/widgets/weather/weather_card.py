@@ -14,6 +14,7 @@ import time
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QPainter
 
+from app.core.anchor_manager import add_anchor_actions
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
@@ -48,6 +49,7 @@ def dev_tools_enabled() -> bool:
 
 
 class WeatherCard(FloatingCard):
+    ANCHOR_KEY = "weather"
     refresh_requested = Signal()
     units_changed = Signal(str)            # 'c' / 'f'
     day_selected = Signal(int)
@@ -213,6 +215,7 @@ class WeatherCard(FloatingCard):
         menu.set_trailing_check(act_desktop, self._desktop_mode)
         act_desktop.triggered.connect(lambda: self.desktop_mode_changed.emit(not self._desktop_mode))
         menu.addAction(act_desktop)
+        add_anchor_actions(menu, self)
 
         if dev_tools_enabled() and self.state.days:
             menu.addSeparator()

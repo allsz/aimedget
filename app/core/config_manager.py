@@ -591,6 +591,17 @@ class ConfigManager:
         self._data.setdefault("performance_widget", {})[key] = value
         self._save()
 
+    # --- Helpers de Configuração: Ancoragem de widgets ---
+    # Seção "anchor": net_style ('dots'/'lines'/'both'), boom ('ring'/'sweep'), groups (árvores de junção salvas,
+    # ver app/core/anchor_geometry.py), sizes ({chave: [w, h]} do último tamanho visto de cada membro).
+
+    def get_anchor(self, key: str, default: Any = None) -> Any:
+        return self._data.get("anchor", {}).get(key, default)
+
+    def set_anchor(self, key: str, value: Any):
+        self._data.setdefault("anchor", {})[key] = value
+        self._save()
+
     # --- Atalhos Globais de Teclado (Hotkeys) ---
 
     def get_music_hotkey(self, default: str = "Win+Alt+M") -> str:
