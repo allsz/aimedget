@@ -6,7 +6,7 @@ Páginas de conteúdo do Aimedget Hub revisadas com a skill Impeccable:
 """
 
 from typing import List, Optional
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -181,6 +181,21 @@ class BaseHubPage(QWidget):
         if hasattr(self, "osd_pos_picker"):
             self.osd_pos_picker.set_theme(theme)
             self.s_osd_pos.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+
+    def scroll_to_widget(self, target: QWidget, focus_widget: Optional[QWidget] = None):
+        """Rola a página até a seção alvo, aguardando o layout estabilizar após exibir/trocar de aba."""
+        def _apply():
+            if not target.isVisible():
+                return
+            self.content_widget.adjustSize()
+            y = target.mapTo(self.content_widget, QPoint(0, 0)).y()
+            bar = self.scroll.verticalScrollBar()
+            bar.setValue(max(0, min(bar.maximum(), y - 20)))
+            if focus_widget is not None and focus_widget.isEnabled() and focus_widget.isVisible():
+                focus_widget.setFocus()
+
+        _apply()
+        QTimer.singleShot(0, _apply)
 
 
 class OverviewPage(BaseHubPage):
@@ -696,6 +711,7 @@ class MusicPage(BaseHubPage):
 
         # 3. Card de Skins Disponíveis
         skin_card = QFrame()
+        self.skins_card = skin_card
         skin_card.setProperty("class", "HubCard")
         sk_layout = QVBoxLayout(skin_card)
         sk_layout.setContentsMargins(22, 20, 22, 22)
@@ -1026,6 +1042,11 @@ class MusicPage(BaseHubPage):
         if hasattr(self, "_skin_cards"):
             for card in self._skin_cards.values():
                 card.set_theme(theme)
+
+    def focus_skins(self):
+        """Rola a página diretamente para a seção de skins (usado pelo menu de contexto do Music Widget)."""
+        if hasattr(self, "skins_card"):
+            self.scroll_to_widget(self.skins_card)
 
 
 class LockKeysPage(BaseHubPage):

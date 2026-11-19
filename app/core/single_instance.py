@@ -10,6 +10,7 @@ O canal só transporta uma palavra fixa ("show" ou "quiet"); nada mais é lido o
 
 import getpass
 import hashlib
+import sys
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -39,6 +40,12 @@ class SingleInstance(QObject):
         sock.connectToServer(self._name)
         if not sock.waitForConnected(_CONNECT_TIMEOUT_MS):
             return False
+        if show and sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.AllowSetForegroundWindow(0xFFFFFFFF)   # ASFW_ANY
+            except Exception:
+                pass
         sock.write(b"show" if show else b"quiet")
         sock.flush()
         sock.waitForBytesWritten(_CONNECT_TIMEOUT_MS)

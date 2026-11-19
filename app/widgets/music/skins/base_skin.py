@@ -440,13 +440,15 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
             self.setCursor(Qt.CursorShape.SizeFDiagCursor)
             if not self._resize_hovered:
                 self._resize_hovered = True
+                if getattr(self, "hovered_btn", None) is not None:
+                    self.hovered_btn = None
                 self.update()
             return True
-        else:
-            if self._resize_hovered:
-                self._resize_hovered = False
-                self.update()
-            return False
+        if self._resize_hovered:
+            self._resize_hovered = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+        return False
 
     def handle_resize_release(self, event) -> bool:
         """Finaliza o redimensionamento e persiste a escala customizada."""

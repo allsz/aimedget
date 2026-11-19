@@ -9,8 +9,8 @@ Design refinado com integração nativa ao Windows 11 DWM:
 
 import sys
 import time
-from PySide6.QtCore import QPoint, QRect, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QEasingCurve, QPoint, QRect, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QCloseEvent, QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -72,6 +72,16 @@ class AimedgetHubWindow(QMainWindow):
         self._accent_timer.setSingleShot(True)
         self._accent_timer.setInterval(30)
         self._accent_timer.timeout.connect(self._flush_accent)
+
+        # Fade-in sutil ao exibir/restaurar o Hub: esconde o 1º frame branco do Win32/DWM
+        self._reveal_anim = QVariantAnimation(self)
+        self._reveal_anim.setDuration(170)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._reveal_anim.valueChanged.connect(lambda v: self.setWindowOpacity(float(v)))
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.setInterval(16)
+        self._reveal_timer.timeout.connect(self._start_reveal_anim)
 
         # Inicializar Tray Icon
         self._quitting = False
@@ -183,22 +193,69 @@ class AimedgetHubWindow(QMainWindow):
             self.show_and_activate()
             self._offer_update()
 
-    def show_and_activate(self):
-        """Traz a janela do Hub para o primeiro plano."""
-        self.show()
+    def _bring_to_front(self):
+        """Garante restauração, foco e Z-order no Windows (inclusive após fechar um QMenu de widget flutuante)."""
+        if not self.isVisible():
+            return
+        if self.isMinimized():
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         self.raise_()
         self.activateWindow()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                user32 = ctypes.windll.user32
+                if user32.IsIconic(hwnd):
+                    user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+    def _start_reveal_anim(self):
+        """Inicia o fade-in suave após o primeiro frame pintado (evitando o flash branco do Win32/DWM)."""
+        if not self.isVisible():
+            self.setWindowOpacity(1.0)
+            return
+        if not animations_enabled():
+            self.setWindowOpacity(1.0)
+            return
+        self._reveal_anim.stop()
+        self._reveal_anim.setStartValue(self.windowOpacity())
+        self._reveal_anim.setEndValue(1.0)
+        self._reveal_anim.start()
+
+    def show_and_activate(self):
+        """Traz a janela do Hub para o primeiro plano com fade-in suave (sem flash branco do Windows)."""
+        needs_reveal = (not self.isVisible()) or self.isMinimized()
+        self._reveal_timer.stop()
+        self._reveal_anim.stop()
+        if needs_reveal:
+            self.setWindowOpacity(0.0)
+        if self.isMinimized():
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
+        self.show()
+        self._bring_to_front()
         self._apply_asymmetric_windows_icons()
+        # Quando disparado de dentro de um QMenu.exec() de widget flutuante, o fechamento do popup pode devolver
+        # o foco ao widget logo após `triggered`: reforça a ativação no próximo tick do loop de eventos.
+        QTimer.singleShot(0, self._bring_to_front)
+        if needs_reveal:
+            self._reveal_timer.start()
+        elif self.windowOpacity() < 1.0:
+            self.setWindowOpacity(1.0)
 
     def show_music_skins(self):
-        """Abre o Hub direto na página do Music Player (gerenciamento de skins)."""
-        self.show_and_activate()
+        """Abre o Hub direto na seção de skins da página do Music Player."""
         self.sidebar.select_page("music")
+        self.show_and_activate()
+        self.page_music.focus_skins()
 
     def show_weather_cities(self):
-        """Abre o Hub direto na página do Clima (gerenciar cidades, pelo menu do cartão)."""
-        self.show_and_activate()
+        """Abre o Hub direto na seção de cidades da página do Clima (pelo menu do cartão)."""
         self.sidebar.select_page("weather")
+        self.show_and_activate()
+        self.page_weather.focus_cities()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -240,6 +297,8 @@ class AimedgetHubWindow(QMainWindow):
 
     def hideEvent(self, event):
         """Garante que a geometria seja salva mesmo ao ocultar a janela."""
+        self._reveal_timer.stop()
+        self._reveal_anim.stop()
         if not self.isMaximized() and not self.isMinimized():
             geo = self.geometry()
             config_manager.save_hub_geometry(geo.x(), geo.y(), geo.width(), geo.height())
@@ -329,7 +388,7 @@ class AimedgetHubWindow(QMainWindow):
             return
         index = self._page_map[page_key]
         old = self.stack.currentIndex()
-        animate = (index != old and animations_enabled() and self.isVisible() and self.stack.width() > 1)
+        animate = (index != old and animations_enabled() and self.isVisible() and not self.isMinimized() and self.stack.width() > 1)
         if animate:
             self._page_transition.stop()
             snapshot = self.stack.grab()   # a página antiga, antes da troca
@@ -449,6 +508,9 @@ class AimedgetHubWindow(QMainWindow):
 
     def _apply_theme(self, theme: HubTheme):
         self._current_theme = theme
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(theme.bg))
+        self.setPalette(pal)
         self.setStyleSheet(get_hub_stylesheet(theme))
         self.sidebar.update_theme(theme)
         self.page_overview.set_theme(theme)

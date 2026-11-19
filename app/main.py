@@ -65,7 +65,7 @@ def main():
 
     instance.show_requested.connect(hub_window.show_and_activate)
     if not start_minimized:
-        hub_window.show()
+        hub_window.show_and_activate()
 
     sys.exit(app.exec())
 

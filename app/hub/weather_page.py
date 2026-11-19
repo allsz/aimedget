@@ -129,6 +129,7 @@ class WeatherPage(BaseHubPage):
         # Tudo o que aparece/some aqui fica num Fold que abre/fecha junto com as linhas da lista (sem o cartão
         # encolher e crescer de novo). O espaço entre os itens fica dentro de cada Fold, para fechar junto.
         card, col = self._card(vertical=True)
+        self.cities_card = card
         col.setSpacing(0)
         head = QHBoxLayout()
         head.addLayout(self._info("weather_cities_title", "weather_cities_sub", 14), stretch=1)
@@ -401,3 +402,8 @@ class WeatherPage(BaseHubPage):
         for w in (self._size_group, self._unit_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)
+
+    def focus_cities(self):
+        """Rola a página diretamente para a seção de cidades e foca a busca (menu de contexto do Weather Widget)."""
+        if hasattr(self, "cities_card"):
+            self.scroll_to_widget(self.cities_card, focus_widget=self.search_box)
