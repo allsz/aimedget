@@ -10,12 +10,18 @@ Posições: tl, tc, tr, bl, bc, br (widgets). Com `with_middle_row=True` ganha m
 """
 
 import math
+import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from app.hub.components import tab_pill
+from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
+
+FRAME_MS = 16
+SUBSTEPS = 4
 
 
 class PositionPicker(QWidget):
@@ -40,6 +46,16 @@ class PositionPicker(QWidget):
         self._theme = theme
         self._hover: str | None = None
 
+        # O destaque (pílula + brilho) desliza entre as posições: uma mola por borda do retângulo, a que vai na
+        # frente é dura e a de trás é mole (o mesmo esticar da Tab pill, nos dois eixos).
+        r = self._pill_rect(self._current_pos)
+        self._edges = {"l": Spring(r.left(), tab_pill.TRAIL), "r": Spring(r.right(), tab_pill.TRAIL),
+                       "t": Spring(r.top(), tab_pill.TRAIL), "b": Spring(r.bottom(), tab_pill.TRAIL)}
+        self._last = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(FRAME_MS)
+        self._timer.timeout.connect(self._tick)
+
         self.setFixedSize(int(self.SCREEN_W) + 2, int(self.SCREEN_H) + 2)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -52,15 +68,56 @@ class PositionPicker(QWidget):
     def set_position(self, pos_key: str):
         if pos_key not in self._positions:
             return
-        self._current_pos = pos_key
-        self.update()
+        self._move_highlight(pos_key)
         self.position_changed.emit(pos_key)
 
     def select(self, pos_key: str):
         """Marca a posição sem emitir o sinal (sincronização vinda de fora)."""
         if pos_key in self._positions and pos_key != self._current_pos:
-            self._current_pos = pos_key
+            self._move_highlight(pos_key)
+
+    def is_animating(self) -> bool:
+        return self._timer.isActive()
+
+    def highlight_rect(self) -> QRectF:
+        e = self._edges
+        return QRectF(QPointF(e["l"].x, e["t"].x), QPointF(max(e["l"].x, e["r"].x), max(e["t"].x, e["b"].x)))
+
+    def _move_highlight(self, pos_key: str):
+        old = self._pill_rect(self._current_pos)
+        new = self._pill_rect(pos_key)
+        self._current_pos = pos_key
+        targets = {"l": new.left(), "r": new.right(), "t": new.top(), "b": new.bottom()}
+        if not (tab_pill.animations_enabled() and self.isVisible()):
+            for k, v in targets.items():
+                self._edges[k].x = self._edges[k].t = v
+                self._edges[k].v = 0.0
+            self._timer.stop()
             self.update()
+            return
+        # eixo X: indo para a direita a borda direita lidera; eixo Y: indo para baixo a borda de baixo lidera
+        for (lo, hi), forward in ((("l", "r"), new.left() >= old.left()), (("t", "b"), new.top() >= old.top())):
+            lead, trail = (hi, lo) if forward else (lo, hi)
+            self._edges[lead].k, self._edges[lead].c = tab_pill.LEAD
+            self._edges[trail].k, self._edges[trail].c = tab_pill.TRAIL
+        for k, v in targets.items():
+            self._edges[k].t = v
+        self._last = time.monotonic()
+        self._timer.start()
+        self.update()
+
+    def _tick(self):
+        now = time.monotonic()
+        dt = min(now - self._last, 1 / 30) / SUBSTEPS
+        self._last = now
+        for _ in range(SUBSTEPS):
+            for spring in self._edges.values():
+                spring.step(dt)
+        if all(s.settled() for s in self._edges.values()):
+            for s in self._edges.values():
+                s.x, s.v = s.t, 0.0
+            self._timer.stop()
+        self.update()
 
     def get_position(self) -> str:
         return self._current_pos
@@ -139,20 +196,23 @@ class PositionPicker(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawPath(frame)
 
-        # Pílulas de posição
+        # Pílulas de posição (a escolhida é o destaque abaixo, que desliza)
         p.setPen(Qt.PenStyle.NoPen)
         for key in self._positions:
+            if key == self._current_pos and not self._timer.isActive():
+                continue
             rect = self._pill_rect(key)
-            if key == self._current_pos:
-                glow = QColor(th.accent)
-                glow.setAlphaF(0.22)
-                p.setBrush(glow)
-                p.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), 6.0, 6.0)
-                p.setBrush(QColor(th.accent))
-            elif key == self._hover:
+            if key == self._hover and key != self._current_pos:
                 p.setBrush(QColor(th.mute))
             else:
                 idle = QColor(th.mute)
                 idle.setAlphaF(0.35)
                 p.setBrush(idle)
             p.drawRoundedRect(rect, self.PILL_H / 2.0, self.PILL_H / 2.0)
+        rect = self.highlight_rect()
+        glow = QColor(th.accent)
+        glow.setAlphaF(0.22)
+        p.setBrush(glow)
+        p.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), 6.0, 6.0)
+        p.setBrush(QColor(th.accent))
+        p.drawRoundedRect(rect, self.PILL_H / 2.0, self.PILL_H / 2.0)

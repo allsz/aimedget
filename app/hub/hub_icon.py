@@ -7,7 +7,7 @@ Suporta múltiplas resoluções nítidas para qualquer escala de DPI do Windows.
 import colorsys
 import os
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtGui import QIcon, QPainter, QPixmap
+from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import APP_ICON_CLEAN_SVG, APP_ICON_ICO, APP_ICON_PNG
@@ -52,6 +52,16 @@ def _tinted_svg(accent) -> QByteArray | None:
     return QByteArray(svg.encode("utf-8"))
 
 
+def _draws_something(renderer: QSvgRenderer) -> bool:
+    """Um SVG "válido" pode estar vazio (já aconteceu: o arquivo foi regravado sem o desenho). Aí cai no .ico."""
+    img = QImage(32, 32, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
+    renderer.render(p)
+    p.end()
+    return any(img.pixelColor(x, y).alpha() > 0 for y in range(0, 32, 2) for x in range(0, 32, 2))
+
+
 def create_aimedget_icon(size: int = 64) -> QIcon:
     """
     Retorna o QIcon oficial do Aimedget (sem fundo / transparente).
@@ -66,7 +76,7 @@ def create_aimedget_icon(size: int = 64) -> QIcon:
 
     if os.path.exists(APP_ICON_CLEAN_SVG):
         renderer = QSvgRenderer(_tinted_svg(_current_accent()))
-        if renderer.isValid():
+        if renderer.isValid() and _draws_something(renderer):
             for s in _ICON_SIZES:
                 pm = QPixmap(s, s)
                 pm.fill(Qt.GlobalColor.transparent)

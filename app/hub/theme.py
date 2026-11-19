@@ -317,13 +317,14 @@ def get_hub_stylesheet(t: HubTheme) -> str:
         border-radius: 6px;
     }}
 
-    QPushButton.NavButton:hover {{
+    QPushButton.NavButton[active="false"]:hover {{
         background-color: {t.panel2};
         color: {t.text};
     }}
 
+    /* O fundo do item ativo é a pílula deslizante (TabPill) atrás dele */
     QPushButton.NavButton[active="true"] {{
-        background-color: {t.panel2};
+        background-color: transparent;
         color: {t.text};
         font-weight: 600;
     }}
