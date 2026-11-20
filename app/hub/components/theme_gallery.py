@@ -119,6 +119,10 @@ def _loader_for(container: str) -> ThemeLoader:
         from app.widgets.music.skins.stack_theme import loader
     elif container == "timer":
         from app.widgets.timer.theme import loader
+    elif container == "weather":
+        from app.widgets.weather.theme import loader
+    elif container == "performance":
+        from app.widgets.performance.theme import loader
     else:
         raise ValueError(f"destino desconhecido: {container!r}")
     return loader

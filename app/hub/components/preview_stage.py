@@ -7,12 +7,15 @@ PreviewStage - Palco de renderização vetorial sob demanda para miniaturas de w
 """
 
 from typing import Any
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import QEasingCurve, Qt, QRectF, QVariantAnimation
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget, QSizePolicy
 
 from app.core.preview_registry import WidgetSpec, SkinSpec
+from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme, THEME_LIGHT
+
+PREVIEW_SWAP_MS = 160
 
 
 class PreviewStage(QWidget):
@@ -34,12 +37,50 @@ class PreviewStage(QWidget):
 
         self._cached_pixmap: QPixmap | None = None
         self._cache_key: tuple | None = None
+        self._prev_pixmap: QPixmap | None = None
+        self._swap_progress: float = 1.0
+
+        self._swap_anim = QVariantAnimation(self)
+        self._swap_anim.setStartValue(0.0)
+        self._swap_anim.setEndValue(1.0)
+        self._swap_anim.setDuration(PREVIEW_SWAP_MS)
+        self._swap_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._swap_anim.valueChanged.connect(self._on_swap_step)
+        self._swap_anim.finished.connect(self._on_swap_done)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
+    def _on_swap_step(self, value):
+        self._swap_progress = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def _on_swap_done(self):
+        self._prev_pixmap = None
+        self._swap_progress = 1.0
+        self.update()
+
     def set_spec(self, spec: WidgetSpec | SkinSpec, state: Any = None):
         if self._spec != spec or state is not None:
+            old_id = self._spec.id if self._spec else None
+            new_id = spec.id if spec else None
+            should_fade = (
+                old_id is not None
+                and new_id != old_id
+                and self.isVisible()
+                and animations_enabled()
+                and self._cached_pixmap is not None
+                and not self._cached_pixmap.isNull()
+            )
+            if should_fade:
+                self._prev_pixmap = self._cached_pixmap
+                self._swap_progress = 0.0
+                self._swap_anim.stop()
+                self._swap_anim.start()
+            else:
+                self._swap_anim.stop()
+                self._prev_pixmap = None
+                self._swap_progress = 1.0
             self._spec = spec
             self._state = state if state is not None else spec.mock_state()
             self._invalidate_cache()
@@ -134,5 +175,27 @@ class PreviewStage(QWidget):
             self._cached_pixmap = self._render_preview_pixmap(w, h, dpr)
             self._cache_key = cache_key
 
-        if self._cached_pixmap and not self._cached_pixmap.isNull():
+        if self._prev_pixmap is not None and not self._prev_pixmap.isNull() and self._swap_progress < 1.0:
+            t = self._swap_progress
+            cx, cy = w * 0.5, h * 0.5
+            # Antiga sai suavemente com leve redução (1.0 -> 0.96)
+            p.save()
+            p.setOpacity(1.0 - t)
+            s_out = 1.0 - 0.04 * t
+            p.translate(cx, cy)
+            p.scale(s_out, s_out)
+            p.translate(-cx, -cy)
+            p.drawPixmap(0, 0, self._prev_pixmap)
+            p.restore()
+            # Nova entra suavemente com leve expansão (0.96 -> 1.0)
+            if self._cached_pixmap and not self._cached_pixmap.isNull():
+                p.save()
+                p.setOpacity(t)
+                s_in = 0.96 + 0.04 * t
+                p.translate(cx, cy)
+                p.scale(s_in, s_in)
+                p.translate(-cx, -cy)
+                p.drawPixmap(0, 0, self._cached_pixmap)
+                p.restore()
+        elif self._cached_pixmap and not self._cached_pixmap.isNull():
             p.drawPixmap(0, 0, self._cached_pixmap)

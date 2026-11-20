@@ -11,7 +11,9 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPaint
 
 from app.core.i18n import t
 from app.core import typography
+from app.ui_components.dot_matrix import NOTHING_BG, NOTHING_RED, draw_dot_text, draw_dot_weather_icon, measure_dot_text
 from app.widgets.weather import conditions as cond
+from app.widgets.weather import font_skins
 from app.widgets.weather import motion as mo
 from app.widgets.weather.card_state import CardState
 from app.widgets.weather.icons import DROPS_TOP_UNITS, DROPS_WIDTH_UNITS, icon_pixmap
@@ -79,7 +81,14 @@ def card_path(w: float = CARD_W, h: float = CARD_H) -> QPainterPath:
 SOFT_LAYER_SCALE = 0.5   # px da camada suave do céu por px lógico do cartão (é só gradiente: ampliar não perde nada)
 
 
-def paint_card(p: QPainter, rect: QRectF, state: CardState, now: float, cache: dict | None = None):
+def paint_card(
+    p: QPainter,
+    rect: QRectF,
+    state: CardState,
+    now: float,
+    cache: dict | None = None,
+    nothing_theme=None,
+):
     """
     Desenha o cartão em `rect` (proporção 300:262).
 
@@ -101,6 +110,28 @@ def paint_card(p: QPainter, rect: QRectF, state: CardState, now: float, cache: d
     p.scale(s, s)
     p.setClipPath(card_path())
 
+    if font_skins.is_nothing_skin(state.skin_id):
+        from app.widgets.weather.theme import load_user_theme as _load_weather_theme
+        nt = nothing_theme if nothing_theme is not None else _load_weather_theme()
+        _paint_nothing_dot_card(p, state, now, nt)
+        p.setClipping(False)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(nt.border, 1.0 / s))
+        inset = 0.5 / s
+        p.drawRoundedRect(QRectF(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset), RADIUS, RADIUS)
+        p.restore()
+        return
+
+    if state.skin_id == font_skins.MIDNIGHT_SKIN:
+        _paint_midnight_card(p, state, now, s, dpr)
+        p.setClipping(False)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(_white(0.10), 1.0 / s))
+        inset = 0.5 / s
+        p.drawRoundedRect(QRectF(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset), RADIUS, RADIUS)
+        p.restore()
+        return
+
     _paint_backdrop(p, state, now, cache)
     if cache is not None:
         # Sempre pelo mesmo caminho (pixmap): trocar entre pixmap parado e desenho direto durante as animações
@@ -117,6 +148,424 @@ def paint_card(p: QPainter, rect: QRectF, state: CardState, now: float, cache: d
     inset = 0.5 / s
     p.drawRoundedRect(QRectF(inset, inset, CARD_W - 2 * inset, CARD_H - 2 * inset), RADIUS, RADIUS)
     p.restore()
+
+
+# --- Skin Midnight (gradiente atmosférico dinâmico por condição + barra fosca com animações) ---
+
+_MIDNIGHT_SKIES = {
+    cond.SUNNY:         ("#244c80", "#2f6199", "#1d3352"),
+    cond.PARTLY_CLOUDY: ("#2a476b", "#385980", "#213146"),
+    cond.CLOUDY:        ("#323d4c", "#404c5c", "#262d39"),
+    cond.FOG:           ("#3c4650", "#4b5661", "#2d343d"),
+    cond.LIGHT_RAIN:    ("#22364d", "#2d4662", "#192636"),
+    cond.HEAVY_RAIN:    ("#1a273a", "#24354c", "#121b28"),
+    cond.THUNDERSTORM:  ("#1c1e36", "#282b4a", "#121424"),
+    cond.SNOW:          ("#37506a", "#4a6886", "#293c50"),
+    cond.CLEAR_NIGHT:   ("#1d2e4a", "#263d5e", "#1a2234"),
+}
+
+
+def _paint_midnight_sky_layer(p: QPainter, condition: str, now: float, animated: bool, opacity: float):
+    from PySide6.QtGui import QLinearGradient
+
+    if opacity <= 0.005:
+        return
+    c0, c1, c2 = _MIDNIGHT_SKIES.get(condition, _MIDNIGHT_SKIES[cond.CLEAR_NIGHT])
+    card_r = QRectF(0.0, 0.0, CARD_W, CARD_H)
+    p.save()
+    p.setOpacity(p.opacity() * opacity)
+    grad = QLinearGradient(0.0, 0.0, CARD_W * 0.35, CARD_H)
+    grad.setColorAt(0.0, QColor(c0))
+    grad.setColorAt(0.45, QColor(c1))
+    grad.setColorAt(1.0, QColor(c2))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(grad)
+    p.drawRect(card_r)
+    scene = cond.SCENES.get(condition)
+    if scene is not None:
+        paint_sky_particles(p, scene, now, animated, opacity=0.45)
+    p.restore()
+
+
+def _draw_midnight_icon(p: QPainter, icon_key: str, icon_rect: QRectF, s: float, dpr: float, opacity: float, scale: float):
+    from PySide6.QtGui import QRadialGradient
+
+    if opacity <= 0.01:
+        return
+    p.save()
+    p.setOpacity(p.opacity() * opacity)
+    c = icon_rect.center()
+    p.translate(c)
+    p.scale(scale, scale)
+    p.translate(-c)
+    if icon_key == "sun":
+        glow = QRadialGradient(icon_rect.center(), 30.0)
+        glow.setColorAt(0.0, QColor(255, 190, 70, 115))
+        glow.setColorAt(1.0, QColor(255, 190, 70, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(glow)
+        p.drawEllipse(icon_rect.center(), 30.0, 30.0)
+        sun = QRadialGradient(icon_rect.left() + 14.0, icon_rect.top() + 14.0, 26.0)
+        sun.setColorAt(0.0, QColor("#ffe58f"))
+        sun.setColorAt(1.0, QColor("#ffae34"))
+        p.setBrush(sun)
+        p.drawEllipse(icon_rect.adjusted(2.0, 2.0, -2.0, -2.0))
+    else:
+        pm = icon_pixmap(icon_key, max(1, int(round(44.0 * s * dpr))), WHITE, SUN_COLOR, 1.8)
+        p.drawPixmap(icon_rect, pm, QRectF(pm.rect()))
+    p.restore()
+
+
+def _paint_midnight_card(p: QPainter, state: CardState, now: float, s: float, dpr: float):
+    # Fundo dinâmico com crossfade suave por condição (sol, chuva, tempestade, neve, noite)
+    sky_p = mo.EASE_IN_OUT(state.sky.progress(now))
+    if state.sky.previous is not None and sky_p < 1.0:
+        _paint_midnight_sky_layer(p, state.sky.previous, now, state.animated, 1.0 - sky_p)
+        _paint_midnight_sky_layer(p, state.sky.current, now, state.animated, sky_p)
+    else:
+        _paint_midnight_sky_layer(p, state.sky.current, now, state.animated, 1.0)
+
+    if state.message:
+        f_msg = _font("", 14.0, QFont.Weight.DemiBold)
+        fm_m = QFontMetricsF(f_msg)
+        p.setFont(f_msg)
+        p.setPen(_white(0.92))
+        p.drawText(QPointF(20.0, _baseline(92.0, 22.0, fm_m)), t(state.message))
+        if state.message_detail:
+            f_det = _font("", 11.5, QFont.Weight.Normal)
+            fm_d = QFontMetricsF(f_det)
+            p.setFont(f_det)
+            p.setPen(_white(0.68))
+            p.drawText(QPointF(20.0, _baseline(118.0, 18.0, fm_d)), state.message_detail)
+        return
+
+    # 1. Topo esquerdo: Cidade + Dia/Hora
+    place_txt, place_dy, place_op = state.place_text.state(now)
+    f_city = _font("", 15.0, QFont.Weight.DemiBold)
+    fm_city = QFontMetricsF(f_city)
+    if place_op > 0.01:
+        p.save()
+        p.setFont(f_city)
+        p.setPen(_white(0.96 * place_op))
+        elided_city = fm_city.elidedText(place_txt or "", Qt.TextElideMode.ElideRight, 200.0)
+        p.drawText(QPointF(20.0, _baseline(20.0 + place_dy, 19.0, fm_city)), elided_city)
+        p.restore()
+
+    day_str = state.day_text.next if hasattr(state.day_text, "next") else (
+        state.days[state.selected].full if state.days else ""
+    )
+    f_day = _font("", 12.0, QFont.Weight.Normal)
+    fm_day = QFontMetricsF(f_day)
+    if day_str:
+        p.setFont(f_day)
+        p.setPen(_white(0.75))
+        elided_day = fm_day.elidedText(day_str, Qt.TextElideMode.ElideRight, 200.0)
+        p.drawText(QPointF(20.0, _baseline(41.0, 16.0, fm_day)), elided_day)
+
+    # 2. Topo direito: Ícone climático com crossfade + escala suave
+    icon_rect = QRectF(CARD_W - 20.0 - 44.0, 18.0, 44.0, 44.0)
+    ic_p = mo.EASE_IN_OUT(state.icon.progress(now))
+    if state.icon.previous is not None and ic_p < 1.0:
+        _draw_midnight_icon(p, state.icon.previous, icon_rect, s, dpr, 1.0 - ic_p, 1.0 - 0.14 * ic_p)
+        _draw_midnight_icon(p, state.icon.current, icon_rect, s, dpr, ic_p, 0.86 + 0.14 * ic_p)
+    else:
+        _draw_midnight_icon(p, state.icon.current, icon_rect, s, dpr, 1.0, 1.0)
+
+    # 3. Temperatura hero (52 px)
+    temp_str = state.temp.text or ""
+    if temp_str:
+        f_hero = _font("", 52.0, QFont.Weight.DemiBold, tabular=True)
+        fm_hero = QFontMetricsF(f_hero)
+        p.setFont(f_hero)
+        x_cur = 20.0
+        for idx, ch in enumerate(temp_str):
+            dy, op = state.temp.char_state(idx, now)
+            if op > 0.01:
+                p.setPen(_white(op))
+                p.drawText(QPointF(x_cur, _baseline(92.0 + dy * 0.6, 56.0, fm_hero)), ch)
+            x_cur += fm_hero.horizontalAdvance(ch)
+        if not temp_str.endswith("°"):
+            p.setPen(_white(1.0))
+            p.drawText(QPointF(x_cur, _baseline(92.0, 56.0, fm_hero)), "°")
+
+    # 4. Condição à esquerda + Máx/Mín à direita
+    cond_txt, cond_dy, cond_op = state.cond_text.state(now)
+    f_meta = _font("", 12.0, QFont.Weight.Medium)
+    fm_meta = QFontMetricsF(f_meta)
+    p.setFont(f_meta)
+    if cond_op > 0.01 and cond_txt:
+        p.setPen(_white(0.85 * cond_op))
+        p.drawText(QPointF(20.0, _baseline(158.0 + cond_dy * 0.5, 16.0, fm_meta)),
+                   fm_meta.elidedText(cond_txt, Qt.TextElideMode.ElideRight, 165.0))
+
+    hi_s = f"{state.hi.text}°" if state.hi.text and not state.hi.text.endswith("°") else state.hi.text
+    lo_s = f"{state.lo.text}°" if state.lo.text and not state.lo.text.endswith("°") else state.lo.text
+    hl_txt = f"{t('weather_high')}{hi_s}  {t('weather_low')}{lo_s}".strip()
+    p.setPen(_white(0.85))
+    hl_w = fm_meta.horizontalAdvance(hl_txt)
+    p.drawText(QPointF(CARD_W - 20.0 - hl_w, _baseline(158.0, 16.0, fm_meta)), hl_txt)
+
+    # 5. Barra fosca inferior com pílula deslizante e troca em onda de dias/horas
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(_white(0.10))
+    p.drawRoundedRect(BAR, 16.0, 16.0)
+
+    count = len(state.days)
+    if count <= 0:
+        return
+
+    pill_i = state.pill_position(now)
+    tw = tab_width(count)
+    pill_x = BAR.x() + BAR_PAD + pill_i * (tw + TAB_GAP)
+    pill_r = QRectF(pill_x + 3.0, BAR.y() + 8.0, tw - 6.0, BAR.height() - 16.0)
+    p.setBrush(_white(0.18))
+    p.drawRoundedRect(pill_r, 12.0, 12.0)
+
+    if 0 <= state.hovered_tab < count and state.hovered_tab != state.selected:
+        hr = tab_rect(state.hovered_tab, count)
+        p.setBrush(_white(0.07))
+        p.drawRoundedRect(QRectF(hr.x() + 3.0, BAR.y() + 8.0, hr.width() - 6.0, BAR.height() - 16.0), 12.0, 12.0)
+
+    tab_e = mo.EASE_SMOOTH_OUT(mo.progress(now, state.pill_t0, mo.TABS_DUR))
+    prev_sel = int(round(state.pill_from))
+    f_tab = _font("", 11.5, QFont.Weight.Medium, tabular=True)
+    f_tab_on = _font("", 11.5, QFont.Weight.DemiBold, tabular=True)
+    for i, d in enumerate(state.days):
+        tr = tab_rect(i, count)
+        active = i == state.selected
+        if active:
+            alpha = mo.lerp(0.75, 1.0, tab_e)
+        elif i == prev_sel and tab_e < 1.0:
+            alpha = mo.lerp(1.0, 0.75, tab_e)
+        else:
+            alpha = 0.75
+        if i == state.hovered_tab:
+            alpha = 1.0
+
+        f_cur = f_tab_on if active else f_tab
+        fm_cur = QFontMetricsF(f_cur)
+        p.save()
+        if i == state.pressed_tab:
+            c = tr.center()
+            p.translate(c)
+            p.scale(mo.PRESS_SCALE, mo.PRESS_SCALE)
+            p.translate(-c)
+        swap = state.tab_swap(i, now) if state.animated else None
+        text, dy, text_alpha = d.short, 0.0, 1.0
+        if swap is not None:
+            text, dy, text_alpha = _tab_text_swap(swap[0][0], d.short, swap[1], state.tab_dir)
+        p.setFont(f_cur)
+        p.setPen(_white(alpha * text_alpha))
+        lw = fm_cur.horizontalAdvance(text)
+        p.drawText(QPointF(tr.center().x() - lw / 2.0, _baseline(BAR.y(), BAR.height(), fm_cur) + dy), text)
+        p.restore()
+
+
+# --- Skin Nothing Dot (matriz de pontos circular + animações nativas do CardState) ---
+
+def _paint_nothing_dot_card(p: QPainter, state: CardState, now: float, theme):
+    from app.core.theme_art import paint_background, paint_stickers
+
+    card_r = QRectF(0.0, 0.0, CARD_W, CARD_H)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(theme.card_bg)
+    p.drawRect(card_r)
+    if theme.background is not None:
+        paint_background(p, card_r, theme.background, RADIUS)
+    if theme.stickers:
+        paint_stickers(p, card_r, theme.stickers, "below")
+
+    def _tone(base: QColor, alpha_mul: float = 1.0) -> QColor:
+        c = QColor(base)
+        c.setAlphaF(max(0.0, min(1.0, c.alphaF() * alpha_mul)))
+        return c
+
+    if state.message:
+        f_msg = _font("", 14.0, QFont.Weight.DemiBold)
+        fm_m = QFontMetricsF(f_msg)
+        p.setFont(f_msg)
+        p.setPen(_tone(theme.text, 0.90))
+        msg_txt = t(state.message)
+        p.drawText(QPointF(20.0, _baseline(92.0, 22.0, fm_m)), msg_txt)
+        if state.message_detail:
+            f_det = _font("", 11.5, QFont.Weight.Normal)
+            fm_d = QFontMetricsF(f_det)
+            p.setFont(f_det)
+            p.setPen(theme.muted_text)
+            p.drawText(QPointF(20.0, _baseline(118.0, 18.0, fm_d)), state.message_detail)
+        return
+
+    # 1. Topo esquerdo: Cidade (sem ponto vermelho à esquerda) + Dia · Condição
+    place_txt, place_dy, place_op = state.place_text.state(now)
+    f_city = _font("", 12.5, QFont.Weight.DemiBold)
+    fm_city = QFontMetricsF(f_city)
+    if place_op > 0.01:
+        p.save()
+        p.setFont(f_city)
+        p.setPen(_tone(theme.text, 0.88 * place_op))
+        elided_city = fm_city.elidedText((place_txt or "").upper(), Qt.TextElideMode.ElideRight, 198.0)
+        p.drawText(QPointF(20.0, _baseline(18.0 + place_dy, 18.0, fm_city)), elided_city)
+        p.restore()
+
+    day_str = state.day_text.current if hasattr(state.day_text, "current") else (
+        state.days[state.selected].full if state.days else ""
+    )
+    cond_txt, cond_dy, cond_op = state.cond_text.state(now)
+    sub_line = f"{day_str} · {cond_txt}" if (day_str and cond_txt) else (day_str or cond_txt)
+    f_sub = _font("", 11.0, QFont.Weight.Normal)
+    fm_sub = QFontMetricsF(f_sub)
+    if cond_op > 0.01 and sub_line:
+        p.save()
+        p.setFont(f_sub)
+        p.setPen(_tone(theme.muted_text, cond_op))
+        elided_sub = fm_sub.elidedText(sub_line, Qt.TextElideMode.ElideRight, 200.0)
+        p.drawText(QPointF(20.0, _baseline(37.0 + cond_dy * 0.5, 16.0, fm_sub)), elided_sub)
+        p.restore()
+
+    # 2. Topo direito: Ícone climático 9x9 em matriz de pontos com crossfade + escala suave
+    icon_rect = QRectF(CARD_W - 20.0 - 46.0, 16.0, 46.0, 46.0)
+    ic_p = mo.EASE_IN_OUT(state.icon.progress(now))
+    if state.icon.previous is not None and ic_p < 1.0:
+        p.save()
+        c = icon_rect.center()
+        s_out = 1.0 - 0.12 * ic_p
+        p.translate(c)
+        p.scale(s_out, s_out)
+        p.translate(-c)
+        draw_dot_weather_icon(p, state.icon.previous, icon_rect, opacity=1.0 - ic_p)
+        p.restore()
+    p.save()
+    c = icon_rect.center()
+    s_in = 0.88 + 0.12 * ic_p
+    p.translate(c)
+    p.scale(s_in, s_in)
+    p.translate(-c)
+    draw_dot_weather_icon(p, state.icon.current, icon_rect, opacity=ic_p if state.icon.previous else 1.0)
+    p.restore()
+
+    # 3. Centro: Temperatura em matriz de pontos circular (dígitos escalonados como no Glass + ° em accent)
+    temp_str = state.temp.text or ""
+    if temp_str:
+        dot_r, gap = 3.0, 7.2
+        char_gap = gap * 1.45
+        x_cur = 20.0
+        last_op = 1.0
+        for idx, ch in enumerate(temp_str):
+            dy, op = state.temp.char_state(idx, now)
+            last_op = op
+            cw, _ch = measure_dot_text(ch, dot_r, gap)
+            if op > 0.01:
+                draw_dot_text(
+                    p,
+                    ch,
+                    QRectF(x_cur, 86.0 + dy * 0.65, cw + 4.0, 62.0),
+                    dot_r=dot_r,
+                    gap=gap,
+                    color=_tone(theme.accent if ch == "°" else theme.dot_on, op),
+                    align="left",
+                )
+            x_cur += cw + char_gap
+        if not temp_str.endswith("°") and last_op > 0.01:
+            draw_dot_text(
+                p,
+                "°",
+                QRectF(x_cur, 86.0, 28.0, 62.0),
+                dot_r=dot_r,
+                gap=gap,
+                color=_tone(theme.accent, last_op),
+                align="left",
+            )
+
+    # 4. Direita do centro: Máx/Mín + pontos de paginação de cidades (quando há 2+ cidades)
+    hi_s = f"{state.hi.text}°" if state.hi.text and not state.hi.text.endswith("°") else state.hi.text
+    lo_s = f"{state.lo.text}°" if state.lo.text and not state.lo.text.endswith("°") else state.lo.text
+    hl_txt = f"{t('weather_high')}{hi_s}  {t('weather_low')}{lo_s}".strip()
+    f_hl = _font("", 11.5, QFont.Weight.Normal, tabular=True)
+    fm_hl = QFontMetricsF(f_hl)
+    p.setFont(f_hl)
+    p.setPen(_tone(theme.text, 0.72))
+    hl_w = fm_hl.horizontalAdvance(hl_txt)
+    p.drawText(QPointF(CARD_W - 20.0 - hl_w, _baseline(122.0, 16.0, fm_hl)), hl_txt)
+
+    if state.city_count > 1:
+        dot_pos = state.city_dot_pos(now) if hasattr(state, "city_dot_pos") else float(state.city_index)
+        dot_gap = 5.0
+        widths = [10.0 if abs(i - dot_pos) < 0.5 else 4.0 for i in range(state.city_count)]
+        total_dw = sum(widths) + dot_gap * (state.city_count - 1)
+        dx = CARD_W - 20.0 - total_dw
+        dy = 144.0
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(state.city_count):
+            dist = max(0.0, 1.0 - abs(i - dot_pos))
+            w_i = 4.0 + 6.0 * dist
+            p.setBrush(theme.accent if dist > 0.5 else _tone(theme.text, 0.24))
+            p.drawRoundedRect(QRectF(dx, dy, w_i, 4.0), 2.0, 2.0)
+            dx += w_i + dot_gap
+
+    # 5. Divisória sutil + faixa de 5 dias (mesmo tab_rect do Glass -> hit-test 100% compatível)
+    p.setPen(QPen(_tone(theme.text, 0.10), 1.0))
+    p.drawLine(QPointF(18.0, BAR.y() - 6.0), QPointF(CARD_W - 18.0, BAR.y() - 6.0))
+
+    count = len(state.days)
+    if count <= 0:
+        if theme.stickers:
+            paint_stickers(p, card_r, theme.stickers, "above")
+        return
+
+    pill_i = state.pill_position(now)
+    tw = tab_width(count)
+    pill_x = BAR.x() + BAR_PAD + pill_i * (tw + TAB_GAP)
+    pill_r = QRectF(pill_x, BAR.y() + BAR_PAD, tw, TAB_H)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(_tone(theme.text, 0.12))
+    p.drawRoundedRect(pill_r, 11.0, 11.0)
+
+    if 0 <= state.hovered_tab < count and state.hovered_tab != state.selected:
+        p.setBrush(_tone(theme.text, 0.06))
+        p.drawRoundedRect(tab_rect(state.hovered_tab, count), 11.0, 11.0)
+
+    f_wd = _font("", 9.5, QFont.Weight.DemiBold)
+    f_tp = _font("", 10.5, QFont.Weight.Medium, tabular=True)
+    fm_wd = QFontMetricsF(f_wd)
+    fm_tp = QFontMetricsF(f_tp)
+
+    for i, day in enumerate(state.days):
+        tr = tab_rect(i, count)
+        is_sel = i == state.selected
+        p.save()
+        if i == state.pressed_tab:
+            c = tr.center()
+            p.translate(c)
+            p.scale(0.95, 0.95)
+            p.translate(-c)
+
+        swap = state.tab_swap(i, now) if state.animated else None
+        wd_txt, wd_dy, wd_alpha = (day.short or "").upper(), 0.0, 1.0
+        if swap is not None:
+            raw_t, wd_dy, wd_alpha = _tab_text_swap((swap[0][0] or "").upper(), wd_txt, swap[1], state.tab_dir)
+            wd_txt = raw_t
+        p.setFont(f_wd)
+        base_wd = _tone(theme.text, 0.96) if is_sel else theme.muted_text
+        p.setPen(_tone(base_wd, wd_alpha))
+        ww = fm_wd.horizontalAdvance(wd_txt)
+        p.drawText(QPointF(tr.center().x() - ww * 0.5, _baseline(tr.y() + 3.0, 12.0, fm_wd) + wd_dy), wd_txt)
+
+        draw_dot_weather_icon(
+            p,
+            day.condition,
+            QRectF(tr.center().x() - 8.5, tr.y() + 16.0, 17.0, 17.0),
+            opacity=(0.95 if is_sel else 0.65) * wd_alpha,
+        )
+
+        tp_txt = f"{int(round(day.temp))}°"
+        p.setFont(f_tp)
+        p.setPen(_tone(theme.text, (0.96 if is_sel else 0.72) * wd_alpha))
+        tp_w = fm_tp.horizontalAdvance(tp_txt)
+        p.drawText(QPointF(tr.center().x() - tp_w * 0.5, _baseline(tr.y() + 34.0, 12.0, fm_tp) + wd_dy * 0.5), tp_txt)
+        p.restore()
+
+    if theme.stickers:
+        paint_stickers(p, card_r, theme.stickers, "above")
 
 
 # --- Fundo ---

@@ -216,3 +216,69 @@ class SlideFadeAnimator(QObject):
             w.setWindowOpacity(1.0)
             self._t = 1.0
         self._rest = None
+
+
+SKIN_SWAP_MS = 150
+
+
+def swap_skin_windows(old_skin: QWidget | None, new_skin: QWidget, was_visible: bool, duration_ms: int = SKIN_SWAP_MS):
+    """
+    Troca uma janela de skin antiga por uma nova sem piscar e sem ativar o Hub no fundo.
+
+    Mostrar `new_skin` ANTES de fechar `old_skin` impede o Windows de pular o foco para a
+    próxima janela do processo (o Hub) quando a skin antiga fecha. Com animações ligadas,
+    faz um crossfade rápido (~150 ms) entre a antiga e a nova.
+    """
+    if not was_visible:
+        if old_skin is not None:
+            old_skin.close()
+            old_skin.deleteLater()
+        return
+
+    # Evita roubar foco / mexer na pilha Z de outras janelas (como o Hub atrás de outro app)
+    new_skin.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+
+    if old_skin is None or not animations_enabled():
+        new_skin.setWindowOpacity(1.0)
+        new_skin.show()
+        new_skin.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+        if old_skin is not None:
+            old_skin.close()
+            old_skin.deleteLater()
+        return
+
+    old_skin.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+    new_skin.setWindowOpacity(0.0)
+    new_skin.show()
+    new_skin.raise_()
+    new_skin.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+
+    anim = QVariantAnimation(new_skin)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setDuration(max(1, int(duration_ms)))
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def _on_step(val):
+        f = max(0.0, min(1.0, float(val)))
+        new_skin.setWindowOpacity(f)
+        try:
+            old_skin.setWindowOpacity(1.0 - f)
+        except RuntimeError:
+            pass
+
+    def _on_done():
+        new_skin.setWindowOpacity(1.0)
+        try:
+            old_skin.close()
+            old_skin.deleteLater()
+        except RuntimeError:
+            pass
+
+    anim.valueChanged.connect(_on_step)
+    anim.finished.connect(_on_done)
+    prev_anim = getattr(new_skin, "_skin_swap_anim", None)
+    if prev_anim is not None:
+        prev_anim.stop()
+    new_skin._skin_swap_anim = anim
+    anim.start()

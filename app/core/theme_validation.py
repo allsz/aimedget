@@ -16,10 +16,16 @@ from dataclasses import dataclass, field, fields
 from app.core.theme_art import collect_issues
 from app.core.theme_loader import MAX_NAME_LEN
 
-CONTAINERS = ("keylock", "mixer", "music", "timer")
+CONTAINERS = ("keylock", "mixer", "music", "timer", "weather", "performance")
 # Nome de cada destino para mensagens (pt-BR) e a pasta dele dentro de um pacote
-CONTAINER_NAMES = {"keylock": "Caps/Num Lock", "mixer": "Volume e mixer",
-                   "music": "Música (Capa Empilhada)", "timer": "Timer (Padrão)"}
+CONTAINER_NAMES = {
+    "keylock": "Caps/Num Lock",
+    "mixer": "Volume e mixer",
+    "music": "Música (Capa Empilhada)",
+    "timer": "Timer (Padrão)",
+    "weather": "Clima (Nothing Dot)",
+    "performance": "Desempenho (Nothing Dot)",
+}
 
 
 def container_folders_text(sep: str = " e ") -> str:
@@ -62,6 +68,10 @@ def _container_parts(container: str):
         from app.widgets.music.skins import stack_theme as module
     elif container == "timer":
         from app.widgets.timer import theme as module
+    elif container == "weather":
+        from app.widgets.weather import theme as module
+    elif container == "performance":
+        from app.widgets.performance import theme as module
     else:
         raise ValueError(f"container desconhecido: {container!r} (use {', '.join(CONTAINERS)})")
     return module.theme_from_dict, module.DEFAULT_THEME

@@ -39,7 +39,7 @@ from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
 
-KNOWN_KEYS = ("music", "timer", "weather", "performance")
+KNOWN_KEYS = ("music", "timer", "weather", "performance", "storage", "battery")
 NET_STYLES = ("dots", "lines", "both")
 BOOM_STYLES = ("ring", "sweep")
 DEFAULT_NET_STYLE = "dots"
@@ -389,6 +389,10 @@ class AnchorManager(QObject):
         if target_w is None and target_h is None:
             return
         animate = animate and animations_enabled() and w.isVisible()
+        if hasattr(w, "match_card_size"):
+            # Cartão de tamanho livre (Bateria): muda só a largura OU a altura, sem escala
+            w.match_card_size(target_w, target_h, animate=animate)
+            return
         if hasattr(w, "set_square_side") and hasattr(w, "MIN_WIDTH") and hasattr(w, "MAX_WIDTH"):
             target = target_w if target_w is not None else target_h
             side = max(int(w.MIN_WIDTH), min(int(w.MAX_WIDTH), int(round(target))))
@@ -701,6 +705,27 @@ class AnchorManager(QObject):
         self._drag = _Drag(key=key, group=g, start=start)
         return self._drag
 
+    @staticmethod
+    def _group_gap(g: Group) -> Optional[float]:
+        """Folga atual (px) de um grupo já formado, ou None se for um widget solto."""
+        if isinstance(g.tree, geo.Join):
+            return float(g.tree.gap)
+        return None
+
+    @classmethod
+    def _inherited_gap(cls, dg: Group, og: Group) -> float:
+        """Folga herdada ao encaixar `dg` em `og`: prevalece a do grupo alvo `og` (como a camada)."""
+        g_gap = cls._group_gap(og)
+        if g_gap is not None:
+            return g_gap
+        d_gap = cls._group_gap(dg)
+        if d_gap is not None:
+            return d_gap
+        prefs = config_manager.get_anchor("align_prefs", None)
+        if isinstance(prefs, dict) and isinstance(prefs.get("gap"), (int, float)):
+            return float(prefs["gap"])
+        return float(geo.GAP)
+
     def _evaluate(self):
         d = self._drag
         dg = d.group
@@ -727,7 +752,7 @@ class AnchorManager(QObject):
             if not trs:
                 continue
             T = geo.union(trs)
-            c = geo.candidate(D, T)
+            c = geo.candidate(D, T, gap=self._inherited_gap(dg, g))
             if c.b <= 0.0 and not c.lock:
                 continue
             if g.anchored:
@@ -781,13 +806,28 @@ class AnchorManager(QObject):
             rects.update(gr)
         U = geo.union(rects[k] for k in owner.keys())
         first, second = (dg, og) if c.d_first else (og, dg)
-        ng = Group(geo.join_from_rects(first.tree, second.tree, c.ax, rects))
+        inherited_gap = self._inherited_gap(dg, og)
+        joined_tree = geo.join_from_rects(first.tree, second.tree, c.ax, rects)
+
+        def _apply_gap(node: geo.Tree) -> None:
+            if isinstance(node, geo.Join):
+                node.gap = inherited_gap
+                _apply_gap(node.A)
+                _apply_gap(node.B)
+
+        _apply_gap(joined_tree)
+        ng = Group(joined_tree)
         # A âncora cumpriu o papel: o grupo novo nasce sem âncora e o brilho que estava aceso apaga suavemente
         # (começa de onde estava; sem isso ele ficava parado na tela depois da junção).
         ng.glow = max(dg.glow, og.glow)
         for k in ng.keys():
             self._groups[k] = ng
         dg.gain = og.gain = 0.0
+        # Garante a folga herdada exata nas posições da tela (inclusive sub-junções do grupo arrastado)
+        sizes = {k: (rects[k].w, rects[k].h) for k in ng.keys()}
+        anchor_k = next(iter(og.keys()))
+        placed = geo.layout(ng.tree, sizes, anchor_k, (rects[anchor_k].l, rects[anchor_k].t))
+        move_cards([(w, placed[k][0], placed[k][1]) for k in ng.keys() if (w := self.window(k)) is not None])
         pinned = self._adopt_layer(dg, og, ng)
         self._save()
         if animations_enabled() and c.origin is not None:

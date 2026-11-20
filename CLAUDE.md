@@ -22,6 +22,20 @@ que estiverem secas.
 - **Teste:** um teste que confirme que anima (não pula) e que termina limpo, mais o caso sem animações. Para listas,
   inclua a altura do contêiner pai ao longo da animação (sem encolher-e-crescer).
 
+## Textos e rótulos de opções (obrigatório em toda opção nova)
+
+O app adota redação minimalista e precisa (veja a skill completa em `.agents/skills/ui-copy-guidelines/SKILL.md`):
+
+- **Sem subtítulo redundante:** se o título + controle (chips, switch, slider) já explicam a opção, deixe o subtítulo
+  vazio (`""`), como em `Unidade de temperatura`, `Fonte do cartão` e `Fonte da previsão`.
+- **Subtítulo curto quando necessário:** no máximo 1 frase curta (3–8 palavras) dizendo a consequência prática — nunca
+  repita o título nem comece com "Escolha qual..." / "Permite...".
+- **Detalhes extras no `HelpBadge` (`?`):** dicas condicionais ou explicações adicionais vão em `help_key` (`HelpBadge`),
+  nunca inflam o cartão.
+- **Zero jargão interno:** não exponha nomes de APIs/bibliotecas (`Open-Meteo`, `GSMTC`, etc.) nem termos de código em
+  rótulos voltados ao usuário.
+- **Botões e chips:** 1–2 palavras no máximo; paridade natural entre `pt` e `en` em `app/core/i18n.py`.
+
 ## Armadilhas do Qt já encontradas
 
 - Nunca `setParent(None)` em widget visível: ele vira uma janela solta por um instante, fora do Hub. Use

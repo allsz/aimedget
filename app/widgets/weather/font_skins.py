@@ -14,8 +14,15 @@ from PySide6.QtGui import QFontDatabase
 from app.core.paths import ASSETS_DIR
 
 DEFAULT_SKIN = "glass"
+NOTHING_DOT_SKIN = "nothing_dot"
+MIDNIGHT_SKIN = "midnight"
 WEATHER_FONTS_DIR = os.path.join(ASSETS_DIR, "fonts", "weather")
 _FONT_EXTS = (".ttf", ".otf")
+
+
+def is_nothing_skin(skin_id: str) -> bool:
+    """True para a skin Nothing Dot (suporta pacotes de tema .aimskin)."""
+    return skin_id == NOTHING_DOT_SKIN
 
 
 @dataclass(frozen=True)
@@ -29,8 +36,12 @@ _loaded: dict[str, FontSkin] = {}   # caminho -> skin (cada arquivo é registrad
 
 
 def discover() -> list:
-    """Skins de fonte disponíveis agora (relê a pasta: uma fonte nova aparece sem reiniciar o Hub)."""
-    skins = [FontSkin(DEFAULT_SKIN, "", "Glass")]
+    """Skins disponíveis agora (Glass, Nothing Dot, Midnight e fontes .ttf/.otf da pasta)."""
+    skins = [
+        FontSkin(DEFAULT_SKIN, "", "Glass"),
+        FontSkin(NOTHING_DOT_SKIN, "", "Nothing Dot"),
+        FontSkin(MIDNIGHT_SKIN, "", "Midnight"),
+    ]
     if not os.path.isdir(WEATHER_FONTS_DIR):
         return skins
     for name in sorted(os.listdir(WEATHER_FONTS_DIR)):
@@ -50,6 +61,8 @@ def discover() -> list:
 
 
 def skin_by_id(skin_id: str) -> FontSkin:
+    if skin_id == "nothing_hourly":
+        skin_id = MIDNIGHT_SKIN
     for skin in discover():
         if skin.id == skin_id:
             return skin

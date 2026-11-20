@@ -59,7 +59,9 @@ from app.widgets.timer.theme import loader as timer_theme_loader
 from app.widgets.timer.theme_specs import make_theme_spec as make_timer_theme_spec
 from app.widgets.timer import init_timer_spec, init_timer_skin_specs
 from app.widgets.volume_mixer import init_volume_spec
-from app.widgets.performance import init_performance_spec
+from app.widgets.performance import init_performance_skin_specs, init_performance_spec
+from app.widgets.storage import init_storage_spec
+from app.widgets.battery import init_battery_spec
 from app.widgets.weather import init_weather_skin_specs
 
 
@@ -235,14 +237,14 @@ class OverviewPage(BaseHubPage):
         card.setProperty("class", "HubCard")
         self.anchor_card = card
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(12)
 
         self.t_anchor = QLabel(t("anchor_card_title"))
         self.t_anchor.setStyleSheet("font-size: 14px; font-weight: 600;")
         self.anchor_help = HelpBadge(t("anchor_card_help"), theme=self._theme)
         anchor_title_row = QHBoxLayout()
-        anchor_title_row.setContentsMargins(0, 0, 0, 0)
+        anchor_title_row.setContentsMargins(2, 0, 0, 0)
         anchor_title_row.setSpacing(6)
         anchor_title_row.addWidget(self.t_anchor)
         anchor_title_row.addWidget(self.anchor_help, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -250,32 +252,33 @@ class OverviewPage(BaseHubPage):
         self.s_anchor = QLabel(t("anchor_card_sub"))
         self.s_anchor.setWordWrap(True)
         head = QVBoxLayout()
-        head.setSpacing(3)
+        head.setSpacing(2)
         head.addLayout(anchor_title_row)
         head.addWidget(self.s_anchor)
         lay.addLayout(head)
 
-        def option_row(title_key, sub_key, chips, selected, on_pick):
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
-            sep.setProperty("class", "HubDivider")
-            lay.addWidget(sep)
-            row = QHBoxLayout()
-            row.setSpacing(16)
-            info = QVBoxLayout()
-            info.setSpacing(2)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        self._anchor_bento_cells: list[QFrame] = []
+
+        def bento_cell(title_key, chips, selected, on_pick, col_idx):
+            cell = QFrame()
+            cell.setObjectName("BentoCell")
+            cl = QVBoxLayout(cell)
+            cl.setContentsMargins(14, 12, 14, 12)
+            cl.setSpacing(10)
             title = QLabel(t(title_key))
-            title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
-            sub = QLabel(t(sub_key))
-            sub.setWordWrap(True)
-            info.addWidget(title)
-            info.addWidget(sub)
-            row.addLayout(info, stretch=1)
-            row.setAlignment(info, Qt.AlignmentFlag.AlignVCenter)
-            group = ChipGroup([(k, t(i)) for k, i in chips], on_pick, self._theme, selected=selected)
-            row.addWidget(group)
-            lay.addLayout(row)
-            return title, sub, group
+            cl.addWidget(title)
+            cl.addStretch()
+            group = ChipGroup([(k, t(i)) for k, i in chips], on_pick, self._theme, selected=selected, segmented=True)
+            cl.addWidget(group)
+            self._anchor_bento_cells.append(cell)
+            grid.addWidget(cell, 0, col_idx)
+            return title, group
 
         def pick_net(key):
             config_manager.set_anchor("net_style", key)
@@ -285,16 +288,25 @@ class OverviewPage(BaseHubPage):
             config_manager.set_anchor("boom", key)
             self._anchor_boom_group.set_selected(key)
 
-        self.t_anchor_net, self.s_anchor_net, self._anchor_net_group = option_row(
-            "anchor_net_title", "anchor_net_sub", self._ANCHOR_NET_CHIPS, net_style(), pick_net)
-        self.t_anchor_boom, self.s_anchor_boom, self._anchor_boom_group = option_row(
-            "anchor_boom_title", "anchor_boom_sub", self._ANCHOR_BOOM_CHIPS, boom_style(), pick_boom)
+        self.t_anchor_net, self._anchor_net_group = bento_cell(
+            "anchor_net_title", self._ANCHOR_NET_CHIPS, net_style(), pick_net, 0)
+        self.t_anchor_boom, self._anchor_boom_group = bento_cell(
+            "anchor_boom_title", self._ANCHOR_BOOM_CHIPS, boom_style(), pick_boom, 1)
+        lay.addLayout(grid)
+
         self._style_anchor_card(self._theme)
         self.content_layout.insertWidget(self.content_layout.count() - 1, card)   # antes do espaçador final
 
     def _style_anchor_card(self, theme: HubTheme):
-        for lbl in (self.s_anchor, self.s_anchor_net, self.s_anchor_boom):
-            lbl.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+        self.s_anchor.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px; padding-left: 2px;")
+        cell_css = (
+            f"QFrame#BentoCell {{ background-color: {theme.panel2}; "
+            f"border: 1px solid {theme.line}; border-radius: 12px; }}"
+        )
+        for cell in getattr(self, "_anchor_bento_cells", ()):
+            cell.setStyleSheet(cell_css)
+        for lbl in (self.t_anchor_net, self.t_anchor_boom):
+            lbl.setStyleSheet(f"font-size: 12.5px; font-weight: 600; color: {theme.body}; background: transparent;")
         if hasattr(self, "anchor_help"):
             self.anchor_help.set_theme(theme)
 
@@ -304,9 +316,7 @@ class OverviewPage(BaseHubPage):
         if hasattr(self, "anchor_help"):
             self.anchor_help.set_text(t("anchor_card_help"))
         self.t_anchor_net.setText(t("anchor_net_title"))
-        self.s_anchor_net.setText(t("anchor_net_sub"))
         self.t_anchor_boom.setText(t("anchor_boom_title"))
-        self.s_anchor_boom.setText(t("anchor_boom_sub"))
         for group, chips in ((self._anchor_net_group, self._ANCHOR_NET_CHIPS),
                              (self._anchor_boom_group, self._ANCHOR_BOOM_CHIPS)):
             for key, i18n_key in chips:
@@ -432,12 +442,12 @@ class OverviewPage(BaseHubPage):
         self._cards.append(self.weather_card)
 
         # 6. Performance Widget Card
-        perf_spec = init_performance_spec()
+        perf_spec = self._active_performance_spec()
         self.performance_card = WidgetCard(
             widget_id="performance",
             name=t("overview_card_performance"),
             category="Widget",
-            skin_label=t("perf_skin_label"),
+            skin_label=perf_spec.title,
             spec=perf_spec,
             is_active=self.bridge.is_performance_enabled(),
             theme=self._theme,
@@ -446,8 +456,38 @@ class OverviewPage(BaseHubPage):
         self.performance_card.customize.connect(self.customize_requested.emit)
         self._cards.append(self.performance_card)
 
+        # 7. Storage Widget Card
+        storage_spec = init_storage_spec()
+        self.storage_card = WidgetCard(
+            widget_id="storage",
+            name=t("overview_card_storage"),
+            category="Widget",
+            skin_label=t("storage_skin_label"),
+            spec=storage_spec,
+            is_active=self.bridge.is_storage_enabled(),
+            theme=self._theme,
+        )
+        self.storage_card.toggled.connect(self._on_card_toggled)
+        self.storage_card.customize.connect(self.customize_requested.emit)
+        self._cards.append(self.storage_card)
+
+        # 8. Battery Widget Card
+        self.battery_card = WidgetCard(
+            widget_id="battery",
+            name=t("overview_card_battery"),
+            category="Widget",
+            skin_label=t("battery_skin_label"),
+            spec=init_battery_spec(),
+            is_active=self.bridge.is_battery_enabled(),
+            theme=self._theme,
+        )
+        self.battery_card.toggled.connect(self._on_card_toggled)
+        self.battery_card.customize.connect(self.customize_requested.emit)
+        self._cards.append(self.battery_card)
+
         self.bridge.status_changed.connect(self._on_bridge_status_changed)
         self.bridge.weather_skin_changed.connect(self._on_weather_skin_changed)
+        self.bridge.performance_skin_changed.connect(self._on_performance_skin_changed)
         self.bridge.music_skin_changed.connect(self._on_music_skin_changed)
         self.bridge.timer_skin_changed.connect(self._on_timer_skin_changed)
 
@@ -502,6 +542,10 @@ class OverviewPage(BaseHubPage):
             self.bridge.set_weather_enabled(is_active)
         elif widget_id == "performance":
             self.bridge.set_performance_enabled(is_active)
+        elif widget_id == "storage":
+            self.bridge.set_storage_enabled(is_active)
+        elif widget_id == "battery":
+            self.bridge.set_battery_enabled(is_active)
 
     def _on_bridge_status_changed(self, widget_id: str, is_active: bool):
         for card in self._cards:
@@ -536,7 +580,12 @@ class OverviewPage(BaseHubPage):
             self._on_weather_skin_changed(self.bridge.weather_controller.active_skin_name)
             self.weather_card.retranslate_ui(name=t("overview_card_weather"), skin_label=self.weather_card.skin_label)
         if hasattr(self, "performance_card"):
-            self.performance_card.retranslate_ui(name=t("overview_card_performance"), skin_label=t("perf_skin_label"))
+            self._on_performance_skin_changed(self.bridge.performance_controller.active_skin_name)
+            self.performance_card.retranslate_ui(name=t("overview_card_performance"), skin_label=self.performance_card.skin_label)
+        if hasattr(self, "storage_card"):
+            self.storage_card.retranslate_ui(name=t("overview_card_storage"), skin_label=t("storage_skin_label"))
+        if hasattr(self, "battery_card"):
+            self.battery_card.retranslate_ui(name=t("overview_card_battery"), skin_label=t("battery_skin_label"))
         if hasattr(self, "anchor_card"):
             self._retranslate_anchor_card()
         self._refresh_grid()
@@ -562,6 +611,16 @@ class OverviewPage(BaseHubPage):
         spec = next((s for s in timer_specs if s.id == skin_key), None)
         if spec and hasattr(self, "timer_card"):
             self.timer_card.set_spec(spec, spec.title)
+
+    def _active_performance_spec(self):
+        specs = init_performance_skin_specs()
+        active = self.bridge.performance_controller.active_skin_name
+        return next((s for s in specs if s.id == active), specs[0])
+
+    def _on_performance_skin_changed(self, _skin_key: str):
+        if hasattr(self, "performance_card"):
+            spec = self._active_performance_spec()
+            self.performance_card.set_spec(spec, spec.title)
 
     def _active_weather_spec(self):
         specs = init_weather_skin_specs()
@@ -693,17 +752,7 @@ class MusicPage(BaseHubPage):
         pos_layout.addWidget(self.pos_picker)
         self.content_layout.addWidget(pos_card)
 
-        # 2. Card de Tamanho e Escala (Automático + controle em %, o mesmo dos outros widgets)
-        self.scale_card = ScaleCard("music_scale_title", "music_scale_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
-        self.scale_card.auto_clicked.connect(lambda: self.bridge.set_music_scale(None))
-        self.scale_card.live_changed.connect(lambda pct: self.bridge.apply_music_scale_live(pct_to_scale(pct)))
-        self.scale_card.committed.connect(lambda pct: self.bridge.set_music_scale(pct_to_scale(pct)))
-        self.content_layout.addWidget(self.scale_card)
-
-        self.update_scale_selection()
-        self.bridge.music_scale_changed.connect(self.update_scale_selection)
-
-        # 3. Card de Skins Disponíveis
+        # 2. Card de Skins Disponíveis
         skin_card = QFrame()
         self.skins_card = skin_card
         skin_card.setProperty("class", "HubCard")
@@ -747,7 +796,7 @@ class MusicPage(BaseHubPage):
 
         sk_layout.addWidget(self._skin_grid)
 
-        # 3b. Card de Tema visual da Capa Empilhada (escolher aplica no widget e torna a Capa Empilhada a skin em uso)
+        # 2b. Card de Tema visual da Capa Empilhada (escolher aplica no widget e torna a Capa Empilhada a skin em uso)
         self.theme_picker = ThemeGalleryCard(
             music_theme_loader,
             "music",
@@ -765,6 +814,16 @@ class MusicPage(BaseHubPage):
             skin_supports_themes(music_specs, active_skin))
         self.content_layout.addWidget(skin_block)
         self.bridge.music_skin_changed.connect(self._on_active_music_skin_changed)
+
+        # 3. Card de Tamanho e Escala (depois de escolher a skin)
+        self.scale_card = ScaleCard("music_scale_title", "music_scale_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
+        self.scale_card.auto_clicked.connect(lambda: self.bridge.set_music_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.bridge.apply_music_scale_live(pct_to_scale(pct)))
+        self.scale_card.committed.connect(lambda pct: self.bridge.set_music_scale(pct_to_scale(pct)))
+        self.content_layout.addWidget(self.scale_card)
+
+        self.update_scale_selection()
+        self.bridge.music_scale_changed.connect(self.update_scale_selection)
 
         # 3. Card de Comportamento
         behav_card = QFrame()
@@ -1451,6 +1510,7 @@ class TimerPage(BaseHubPage):
             theme=self._theme,
         )
         self.sw_remember.toggled.connect(self._on_remember_toggled)
+        self.bridge.timer_controller.remember_position_changed.connect(self._sync_remember)
         row1.addLayout(info1, stretch=1)
         row1.addWidget(self.sw_remember)
         b_layout.addLayout(row1)
@@ -1523,6 +1583,7 @@ class TimerPage(BaseHubPage):
             theme=self._theme,
         )
         self.sw_smart_hover.toggled.connect(self._on_smart_hover_toggled)
+        self.bridge.timer_controller.smart_hover_changed.connect(self._sync_smart_hover)
         row_smart.addLayout(info_smart, stretch=1)
         row_smart.addWidget(self.sw_smart_hover)
         b_layout.addLayout(row_smart)
@@ -1659,8 +1720,22 @@ class TimerPage(BaseHubPage):
                 for k, card in self._skin_cards.items():
                     card.set_selected(k == skin_key)
 
+    def _sync_remember(self, enabled: bool):
+        if self.sw_remember.isChecked() != enabled:
+            self.sw_remember.blockSignals(True)
+            self.sw_remember.set_checked(enabled, animated=False)
+            self.sw_remember.blockSignals(False)
+
+    def _sync_smart_hover(self, enabled: bool):
+        if self.sw_smart_hover.isChecked() != enabled:
+            self.sw_smart_hover.blockSignals(True)
+            self.sw_smart_hover.set_checked(enabled, animated=False)
+            self.sw_smart_hover.blockSignals(False)
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._sync_remember(config_manager.is_timer_position_remembered())
+        self._sync_smart_hover(config_manager.is_timer_smart_hover_enabled())
         if hasattr(self, "_skin_cards"):
             active_skin = self.bridge.timer_controller.active_skin_name
             for k, card in self._skin_cards.items():

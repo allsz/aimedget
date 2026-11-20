@@ -106,6 +106,8 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     close_requested = Signal()
     skin_switch_requested = Signal(str)
     desktop_mode_changed = Signal(bool)   # "Fixar na área de trabalho" no menu (o controller aplica e grava)
+    remember_position_changed = Signal(bool)
+    smart_hover_changed = Signal(bool)
 
     ANCHOR_KEY = "timer"   # chave na ancoragem (ver anchor_manager)
     DEFAULT_SIZE = 164
@@ -414,15 +416,19 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         menu.exec(event.globalPos())
 
     def _toggle_remember_position(self, checked: bool):
+        checked = bool(checked)
         if checked:
             origin = self.square_origin()
             config_manager.set_timer_position_remembered(True, origin.x(), origin.y())
         else:
             config_manager.set_timer_position_remembered(False)
+        self.remember_position_changed.emit(checked)
 
     def _toggle_smart_hover(self, checked: bool):
+        checked = bool(checked)
         config_manager.set_timer_smart_hover_enabled(checked)
         self.update()
+        self.smart_hover_changed.emit(checked)
 
     def _reset_default_size(self):
         from app.core.screen_metrics import get_auto_timer_size

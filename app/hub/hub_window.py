@@ -32,6 +32,8 @@ from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
 from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
 from app.hub.performance_page import PerformancePage
+from app.hub.storage_page import StoragePage
+from app.hub.battery_page import BatteryPage
 from app.hub.weather_page import WeatherPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
@@ -257,6 +259,12 @@ class AimedgetHubWindow(QMainWindow):
         self.show_and_activate()
         self.page_weather.focus_cities()
 
+    def show_storage_folders(self):
+        """Abre o Hub direto na seção de pastas da página de Armazenamento (pelo menu do cartão)."""
+        self.sidebar.select_page("storage")
+        self.show_and_activate()
+        self.page_storage.focus_folders()
+
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_asymmetric_windows_icons()
@@ -333,6 +341,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_timer = TimerPage(theme=self._current_theme, parent=self.stack)
         self.page_weather = WeatherPage(theme=self._current_theme, parent=self.stack)
         self.page_performance = PerformancePage(theme=self._current_theme, parent=self.stack)
+        self.page_storage = StoragePage(theme=self._current_theme, parent=self.stack)
+        self.page_battery = BatteryPage(theme=self._current_theme, parent=self.stack)
         self.page_gen = GeneralPage(
             on_theme_change=self._change_theme_mode,
             on_language_change=self._change_language,
@@ -350,7 +360,9 @@ class AimedgetHubWindow(QMainWindow):
         self.stack.addWidget(self.page_timer)        # index 4: timer
         self.stack.addWidget(self.page_weather)      # index 5: weather
         self.stack.addWidget(self.page_performance)  # index 6: performance
-        self.stack.addWidget(self.page_gen)          # index 7: gen
+        self.stack.addWidget(self.page_storage)      # index 7: storage
+        self.stack.addWidget(self.page_battery)      # index 8: battery
+        self.stack.addWidget(self.page_gen)          # index 9: gen
 
         self._page_map = {
             "ov": 0,
@@ -360,7 +372,9 @@ class AimedgetHubWindow(QMainWindow):
             "timer": 4,
             "weather": 5,
             "performance": 6,
-            "gen": 7,
+            "storage": 7,
+            "battery": 8,
+            "gen": 9,
         }
 
         # Inicializar contadores na sidebar
@@ -374,9 +388,13 @@ class AimedgetHubWindow(QMainWindow):
         self.sidebar.set_badge_count("timer", 0)
         self.sidebar.set_badge_count("weather", 0)
         self.sidebar.set_badge_count("performance", 0)
+        self.sidebar.set_badge_count("storage", 0)
+        self.sidebar.set_badge_count("battery", 0)
         self.sidebar.set_badge_count("gen", 0)
 
-        get_service_bridge().active_skins_changed.connect(self._on_active_skins_changed)
+        bridge = get_service_bridge()
+        bridge.active_skins_changed.connect(self._on_active_skins_changed)
+        bridge.manage_storage_folders_requested.connect(self.show_storage_folders)
 
     def _on_active_skins_changed(self, active_skins: list):
         """Atualiza imediatamente o badge numérico da aba Widget quando skins são marcadas/desmarcadas."""
@@ -396,6 +414,8 @@ class AimedgetHubWindow(QMainWindow):
             "timer": "timer",
             "weather": "weather",
             "performance": "performance",
+            "storage": "storage",
+            "battery": "battery",
         }
         target_page = target_map.get(widget_id, "ov")
         self.sidebar.select_page(target_page)
@@ -415,6 +435,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_timer.retranslate_ui()
         self.page_weather.retranslate_ui()
         self.page_performance.retranslate_ui()
+        self.page_storage.retranslate_ui()
+        self.page_battery.retranslate_ui()
         self.page_gen.retranslate_ui()
         if hasattr(self, "tray_icon") and self.tray_icon:
             self.tray_icon.retranslate_ui()
@@ -512,6 +534,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_timer.set_theme(theme)
         self.page_weather.set_theme(theme)
         self.page_performance.set_theme(theme)
+        self.page_storage.set_theme(theme)
+        self.page_battery.set_theme(theme)
         self.page_gen.set_theme(theme)
 
         # Atualiza a paleta do menu do Tray em tempo real
