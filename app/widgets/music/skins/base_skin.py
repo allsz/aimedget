@@ -293,12 +293,25 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         """Margem que o tema atual pede nesta escala. Skins com tema de figurinhas sobrescrevem."""
         return 0
 
+    ANCHOR_GLOW_ROOM = 16      # px de janela em volta do cartão enquanto o brilho de "ancorado" está aceso
+    _anchor_room = False
+
+    def _effective_art_margin(self) -> int:
+        """Margem da janela: a do tema e, com o brilho de ancorado aceso, pelo menos a folga para ele."""
+        wanted = self._wanted_art_margin()
+        return max(wanted, self.ANCHOR_GLOW_ROOM) if self._anchor_room else wanted
+
+    def anchor_glow_room(self, on: bool):
+        """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o cartão fica exatamente onde está."""
+        self._anchor_room = bool(on)
+        self._apply_art_margin()
+
     def _apply_art_margin(self):
         """
         Confere a margem que o tema pede e, se mudou, redimensiona a janela mantendo o cartão exatamente onde está.
         Devolve True se a janela mudou.
         """
-        wanted = self._wanted_art_margin()
+        wanted = self._effective_art_margin()
         if wanted == self.art_margin:
             return False
         delta = wanted - self.art_margin
@@ -317,7 +330,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
             return
         self.scale = new_scale
         old_margin = self.art_margin
-        self.art_margin = self._wanted_art_margin()
+        self.art_margin = self._effective_art_margin()
         self.setFixedSize(*self._window_size())
         if self.art_margin != old_margin:   # a margem acompanha a escala: o canto do cartão não pode andar
             self.move(self.x() - (self.art_margin - old_margin), self.y() - (self.art_margin - old_margin))

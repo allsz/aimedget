@@ -124,7 +124,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         # O "quadrado" é o cartão com a folga da sombra (o que sempre foi a janela). Figurinhas que passam da borda
         # pedem uma margem transparente EXTRA em volta dele: a janela fica maior, o quadrado não muda.
         side = max(self.MIN_WIDTH, width)
-        self.art_margin = self._wanted_art_margin(side)
+        self.art_margin = self._effective_art_margin(side)
         self.resize(side + 2 * self.art_margin, side + 2 * self.art_margin)
 
         # Estado do Timer
@@ -179,13 +179,28 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         card = self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD   # px lógicos do cartão no tamanho padrão
         return art_margin_px(self.skin_theme.stickers, card, card, k=scale, free=self.ART_FREE_PAD)
 
+    ANCHOR_GLOW_ROOM = 16      # px de janela em volta do cartão enquanto o brilho de "ancorado" está aceso
+    _anchor_room = False
+
+    def _effective_art_margin(self, side: int) -> int:
+        """Margem extra da janela: a do tema e, com o brilho de ancorado aceso, o que falta da folga para ele."""
+        wanted = self._wanted_art_margin(side)
+        if not self._anchor_room:
+            return wanted
+        return max(wanted, int(round(self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD)))
+
+    def anchor_glow_room(self, on: bool):
+        """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o quadrado fica onde está."""
+        self._anchor_room = bool(on)
+        self.set_square_side(self.square_side())
+
     def set_square_side(self, side: int):
         """
         Dá ao quadrado o lado `side` (já dentro de MIN/MAX) e ajusta a margem ao tema e à escala, mantendo o
         canto do quadrado exatamente onde está (a janela cresce/encolhe em volta dele).
         """
         origin = self.square_origin()
-        self.art_margin = self._wanted_art_margin(side)
+        self.art_margin = self._effective_art_margin(side)
         full = side + 2 * self.art_margin
         self.setGeometry(origin.x() - self.art_margin, origin.y() - self.art_margin, full, full)
         if self.isVisible():

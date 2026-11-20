@@ -16,8 +16,8 @@ from __future__ import annotations
 import math
 from typing import Callable, Optional, Tuple
 
-from PySide6.QtCore import QLineF, QPointF, QRect, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QEvent, QLineF, QPointF, QRect, QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtWidgets import QWidget
 
 from app.core.anchor_geometry import Rect
@@ -151,6 +151,88 @@ def paint_seam(p: QPainter, seam) -> None:
         p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
 
+GLOW_EXTENT = 7.0    # px: o quanto o brilho do modo ancorado passa da borda do cartão (sutil, contorna o canto)
+GLOW_EDGE_GAP = 4.0  # px livres até a borda da janela: o halo nunca encosta nela (senão vira uma caixa quadrada)
+GLOW_LAYERS = ((1.00, 0.05), (0.72, 0.09), (0.48, 0.15), (0.28, 0.26), (0.14, 0.62))   # (fração da largura total, opacidade): do halo largo ao fio junto da borda
+
+
+class GlowLayer(QWidget):
+    """
+    Brilho do modo ancorado desenhado DENTRO da janela do widget (um filho transparente que cobre a janela toda e
+    só pinta fora do cartão). Por estar na janela dele, fica na mesma camada (área de trabalho ou por cima) e anda
+    junto no arraste, no mesmo quadro. `geometry()` devolve (cartão na tela, raio).
+    """
+
+    def __init__(self, host: QWidget, geometry):
+        super().__init__(host)
+        self._host = host
+        self._geometry = geometry
+        self._level = 0.0
+        self._breathe = 1.0
+        self._color = QColor(110, 193, 255)
+        self.has_room = False
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setGeometry(0, 0, host.width(), host.height())
+        host.installEventFilter(self)
+        self.show()
+        self.raise_()
+
+    def eventFilter(self, obj, event):
+        if obj is self._host and event.type() == QEvent.Type.Resize:
+            self.setGeometry(0, 0, self._host.width(), self._host.height())
+        return False
+
+    def level(self) -> float:
+        return self._level
+
+    def set_level(self, level: float, breathe: float, color: Optional[QColor]):
+        if color is not None:
+            self._color = color
+        if abs(level - self._level) < 0.002 and abs(breathe - self._breathe) < 0.002:
+            return
+        self._level, self._breathe = level, breathe
+        self.update(self._band())
+
+    def _card_local(self):
+        card, radius = self._geometry()
+        origin = self._host.rest_pos()
+        return QRectF(card.l - origin.x(), card.t - origin.y(), card.w, card.h), radius
+
+    def _band(self) -> QRegion:
+        """Só a faixa em volta do cartão precisa ser redesenhada (o miolo do widget fica como está)."""
+        card, radius = self._card_local()
+        inner = card.adjusted(radius, radius, -radius, -radius).toAlignedRect()
+        band = QRegion(self.rect())
+        return band.subtracted(QRegion(inner)) if inner.isValid() else band
+
+    def paintEvent(self, event):
+        if self._level <= 0.0:
+            return
+        card, radius = self._card_local()
+        room = min(card.left(), card.top(), self.width() - card.right(), self.height() - card.bottom())
+        extent = max(0.0, min(GLOW_EXTENT, room - GLOW_EDGE_GAP))
+        if extent <= 0.5:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        outside = QPainterPath()
+        outside.addRect(QRectF(self.rect()))
+        hole = QPainterPath()
+        hole.addRoundedRect(card, radius, radius)
+        p.setClipPath(outside.subtracted(hole))      # só por fora do cartão
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for frac, alpha in GLOW_LAYERS:
+            wd = 2.0 * extent * frac * (self._breathe if frac > 0.2 else 1.0)
+            wd = min(wd, 2.0 * extent)
+            c = QColor(self._color)
+            c.setAlpha(round(255 * max(0.0, min(1.0, alpha * self._level * 1.25))))
+            p.setPen(QPen(c, wd))
+            r = card.adjusted(-(wd / 2.0 - 0.5), -(wd / 2.0 - 0.5), wd / 2.0 - 0.5, wd / 2.0 - 0.5)
+            p.drawRoundedRect(r, radius + wd / 2.0, radius + wd / 2.0)
+        p.end()
+
+
 class NetOverlay(QWidget):
     """Janela transparente, sem foco e sem cliques, onde a rede é desenhada (coordenadas globais de tela)."""
 
@@ -169,18 +251,46 @@ class NetOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._desktop = False
+        self._layer_dirty = True
+
+    def set_desktop(self, desktop: bool):
+        """Camada da rede: logo acima da área de trabalho (os apps a cobrem) ou por cima de tudo."""
+        if bool(desktop) != self._desktop:
+            self._desktop = bool(desktop)
+            self._layer_dirty = True
+
+    def is_desktop(self) -> bool:
+        return self._desktop
+
+    SLACK = 96   # px de folga em volta: num arraste a janela da rede quase nunca precisa se mover
 
     def cover(self, rect: Optional[QRect]):
-        """Ocupa `rect` (tela) e redesenha; `None` some com a janela."""
+        """
+        Ocupa (pelo menos) `rect` da tela e redesenha NA HORA; `None` some com a janela.
+
+        O redesenho é síncrono (`repaint`, não `update`): quem chama acabou de mover os widgets, e a rede/brilho tem
+        de ir junto no mesmo passo. Com `update` o desenho saía no próximo ciclo e, por um quadro, o brilho ficava
+        onde o widget estava (fantasma). A janela também só muda de lugar quando a área pedida sai da folga atual:
+        mover a janela mostra o desenho velho no lugar novo até o repaint.
+        """
         if rect is None or rect.isEmpty():
             if self.isVisible():
                 self.hide()
             return
-        if self.geometry() != rect:
-            self.setGeometry(rect)
+        cur = self.geometry()
+        too_big = cur.width() * cur.height() > 4 * max(1, rect.width() * rect.height())
+        if not self.isVisible() or not cur.contains(rect) or too_big:
+            s = self.SLACK
+            self.setGeometry(rect.adjusted(-s, -s, s, s))
         if not self.isVisible():
             self.show()
-        self.update()
+            self._layer_dirty = True       # mostrar a janela a põe por cima de novo
+        if self._layer_dirty:
+            from app.core import desktop_layer
+            desktop_layer.apply_layer(int(self.winId()), self._desktop)
+            self._layer_dirty = False
+        self.repaint()
 
     def paintEvent(self, event):
         p = QPainter(self)

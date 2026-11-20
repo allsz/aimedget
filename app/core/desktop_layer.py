@@ -21,6 +21,7 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+SWP_NOOWNERZORDER = 0x0200
 GW_HWNDPREV = 3
 HWND_TOP = 0
 HWND_BOTTOM = 1
@@ -264,6 +265,49 @@ class ForegroundHook:
 
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
+
+# --- Mover várias janelas de uma vez (grupo de widgets ancorados) ---
+
+if IS_WINDOWS:
+    _u32 = ctypes.WinDLL("user32", use_last_error=True)   # instância própria: argtypes só destas chamadas
+    _u32.BeginDeferWindowPos.argtypes = [ctypes.c_int]
+    _u32.BeginDeferWindowPos.restype = wintypes.HANDLE
+    _u32.DeferWindowPos.argtypes = [wintypes.HANDLE, wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    _u32.DeferWindowPos.restype = wintypes.HANDLE
+    _u32.EndDeferWindowPos.argtypes = [wintypes.HANDLE]
+    _u32.EndDeferWindowPos.restype = wintypes.BOOL
+    _u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    _u32.GetWindowRect.restype = wintypes.BOOL
+
+
+def native_window_rect(hwnd: int):
+    """(esquerda, topo) da janela em px físicos, ou None."""
+    if not IS_WINDOWS or not hwnd:
+        return None
+    rect = wintypes.RECT()
+    if not _u32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top
+
+
+def defer_move(moves) -> bool:
+    """
+    Move várias janelas num só lote (`[(hwnd, x, y)]`, px físicos): o Windows aplica todas de uma vez, então um
+    grupo arrastado nunca aparece com os membros um quadro separados. False se o lote falhou (quem chama move uma
+    por vez). Sem mudar a ordem Z nem ativar nada.
+    """
+    if not IS_WINDOWS or not moves:
+        return False
+    handle = _u32.BeginDeferWindowPos(len(moves))
+    if not handle:
+        return False
+    flags = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+    for hwnd, x, y in moves:
+        handle = _u32.DeferWindowPos(handle, hwnd, None, int(x), int(y), 0, 0, flags)
+        if not handle:
+            return False
+    return bool(_u32.EndDeferWindowPos(handle))
 
 
 def set_topmost(own_hwnd: int, topmost: bool):

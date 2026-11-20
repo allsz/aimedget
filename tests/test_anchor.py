@@ -245,13 +245,13 @@ def test_magnet_and_net_animate_then_end_clean(env):
     a = env.make("weather", 200, 200)
     b = env.make("performance", 700, 260)
     env.mgr.set_anchored(a, True)
-    QTest.qWait(int(am.INTRO_DUR * 1000) + 120)                      # a ondinha de "Ancorar" termina
+    QTest.qWait(600)                                                  # o brilho de "Ancorar" assenta
     ra, rb = _rect(a), _rect(b)
     _drag(env.mgr, b, int(ra.r + GAP + 6 - rb.l), int(ra.t + 6 - rb.t))
     g = env.mgr.group_of("weather")
     first_gain = g.gain
     first_l = _rect(b).l
-    assert first_l == pytest.approx(ra.r + GAP + 6, abs=1.5)        # o ímã ainda não puxou: não pula
+    assert ra.r + GAP + 1 < first_l <= ra.r + GAP + 6.5               # o ímã puxa aos poucos: não pula
     assert first_gain < 0.9                                           # a rede acende aos poucos
     QTest.qWait(400)
     assert _rect(b).l == pytest.approx(ra.r + GAP, abs=1)             # o ímã assentou
@@ -268,6 +268,143 @@ def test_magnet_and_net_animate_then_end_clean(env):
     assert all(gr.gain == 0.0 for gr in env.mgr.groups())
     assert not env.mgr.is_busy()                                      # relógio parado: custo zero
     assert not env.mgr._overlay.isVisible()                           # a janela da rede some
+
+
+def _layer(card):
+    layer = getattr(card, "_anchor_glow_layer", None)
+    return layer if layer is not None and am._alive(layer) else None
+
+
+def test_anchor_mode_is_a_pulsing_glow_not_a_grid_flash(env, monkeypatch):
+    from app.ui_components import anchor_net
+    drawn = []
+    real = anchor_net.paint_lattice
+    monkeypatch.setattr(anchor_net, "paint_lattice", lambda *a, **k: drawn.append(1) or real(*a, **k))
+    env.state["anim"] = True
+    a = env.make("weather", 200, 200)
+    g = env.mgr.group_of("weather")
+
+    env.mgr.set_anchored(a, True)
+    seen = [g.glow]
+    for _ in range(12):
+        QTest.qWait(40)
+        seen.append(g.glow)
+    assert seen == sorted(seen) and seen[0] < 0.2 and seen[-1] > 0.6           # acende aos poucos, sem salto
+    QTest.qWait(500)
+    layer = _layer(a)
+    assert layer is not None and layer.level() > 0.3 and env.mgr.is_busy()     # o pulso mantém o relógio
+    assert env.mgr._clock.interval() == am.PULSE_FRAME_MS                        # só o pulso: 30 fps
+    levels = set()
+    for _ in range(25):                                                          # pulsa (varia), não fica parado
+        QTest.qWait(60)
+        levels.add(round(layer.level(), 2))
+    assert len(levels) > 5
+    assert g.gain == 0.0 and not drawn                                           # nenhuma grade, nenhum círculo
+    assert env.mgr._overlay is None or not env.mgr._overlay.isVisible()          # nada na janela de cima
+
+    env.mgr.set_anchored(a, False)
+    seen = [g.glow]
+    for _ in range(30):
+        QTest.qWait(40)
+        seen.append(g.glow)
+    assert seen == sorted(seen, reverse=True) and seen[-1] == 0.0               # apaga aos poucos
+    assert not drawn and layer.level() == 0.0 and not layer.has_room
+    assert not env.mgr.is_busy()                                                 # custo zero de novo
+
+
+def test_glow_lives_in_the_widget_window_and_follows_it(env):
+    """Na janela do próprio widget: mesma camada (área de trabalho ou por cima) e mesmo quadro no arraste."""
+    env.state["anim"] = True
+    a = env.make("weather", 200, 200)
+    env.mgr.set_anchored(a, True)
+    QTest.qWait(600)
+    layer = _layer(a)
+    assert layer.window() is a and layer.geometry() == a.rect()
+    for _ in range(6):
+        QTest.qWait(30)
+        _drag(env.mgr, a, 25, 10)
+        assert layer.window() is a
+    assert env.mgr.group_of("weather").glow > 0.95                               # continua aceso no arraste
+    env.mgr.drag_end(a)
+
+
+def test_glow_uses_the_app_accent_color(env, monkeypatch):
+    from app.hub import theme as hub_theme
+    monkeypatch.setattr(hub_theme, "resolve_theme", lambda *a, **k: type("T", (), {"accent": "#12ab34"})())
+    a = env.make("weather", 200, 200)
+    env.mgr._accent_cache = None
+    env.mgr.set_anchored(a, True)
+    assert _layer(a)._color.name() == "#12ab34"
+
+
+def _join_right(env, a, b):
+    ra, rb = _rect(a), _rect(b)
+    _drag(env.mgr, b, int(ra.r + GAP + 3 - rb.l), int(ra.t + 2 - rb.t))
+    env.mgr.drag_end(b)
+
+
+def test_glow_fades_away_after_a_successful_join(env):
+    env.state["anim"] = True
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 800, 260)
+    env.mgr.set_anchored(b, True)                     # X (b) ancorado, arrastado até Y (a)
+    QTest.qWait(1000)
+    assert _layer(b).level() > 0.3
+    _join_right(env, a, b)
+    assert env.mgr.is_grouped(b) and not env.mgr.is_anchored(b)
+    seen = []
+    for _ in range(30):
+        QTest.qWait(40)
+        seen.append(env.mgr.group_of("performance").glow)
+    assert seen == sorted(seen, reverse=True) and seen[0] > 0.0      # apaga aos poucos, não corta
+    assert seen[-1] == 0.0 and _layer(b).level() == 0.0              # e não fica aceso depois da junção
+
+
+def test_glow_is_gone_after_join_without_animations(env):
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 800, 260)
+    env.mgr.set_anchored(b, True)
+    _join_right(env, a, b)
+    assert _layer(b).level() == 0.0
+
+
+@pytest.mark.parametrize("target_pinned", [True, False])
+def test_dragged_widget_adopts_the_target_layer(env, target_pinned):
+    a = env.make("weather", 200, 200)                  # Y: o alvo
+    b = env.make("performance", 800, 260)              # X: ancorado e arrastado
+    for card in (a, b):                                # o controller aplica o pedido (como no app)
+        card.desktop_mode_changed.connect(card.set_desktop_mode)
+    a.set_desktop_mode(target_pinned)
+    b.set_desktop_mode(not target_pinned)
+    QTest.qWait(900)                                   # trocar de camada passa pela onda de pontos do cartão
+    assert a.is_desktop_mode() is target_pinned and b.is_desktop_mode() is not target_pinned
+    env.mgr.set_anchored(b, True)
+    _join_right(env, a, b)
+    QTest.qWait(900)
+    assert b.is_desktop_mode() is target_pinned and a.is_desktop_mode() is target_pinned
+
+
+def test_anchor_glow_without_animations_is_steady_and_instant(env):
+    a = env.make("weather", 200, 200)
+    g = env.mgr.group_of("weather")
+    env.mgr.set_anchored(a, True)
+    assert g.glow == 1.0 and _layer(a).level() > 0
+    assert not env.mgr.is_busy()                                                 # sem pulso, sem relógio
+    env.mgr.set_anchored(a, False)
+    assert g.glow == 0.0 and _layer(a).level() == 0.0
+
+
+def test_timer_window_makes_room_for_the_glow_without_moving_the_card(qapp):
+    from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
+    t = WindowsTimerSkin()
+    t.move_square_to(300, 300)
+    before_origin, before_side, before_w = t.square_origin(), t.square_side(), t.width()
+    t.anchor_glow_room(True)
+    assert t.square_origin() == before_origin and t.square_side() == before_side
+    assert t.width() >= before_side + 2 * (t.ANCHOR_GLOW_ROOM - t.ART_FREE_PAD)
+    t.anchor_glow_room(False)
+    assert t.width() == before_w and t.square_origin() == before_origin
+    t.deleteLater()
 
 
 def test_no_net_without_anchor(env):
@@ -317,3 +454,83 @@ def test_style_settings_fall_back_to_defaults(monkeypatch):
     monkeypatch.setattr(config_manager, "get_anchor", lambda k, d=None: store.get(k, d))
     assert am.net_style() == am.DEFAULT_NET_STYLE
     assert am.boom_style() == "ring"
+
+
+# --- Camada do grupo e movimento em lote -------------------------------------------------------------------------
+
+
+def _pinnable(env, key, x, y, pinned=False):
+    card = env.make(key, x, y)
+    card.desktop_mode_changed.connect(card.set_desktop_mode)     # o controller aplica o pedido (como no app)
+    card.set_desktop_mode(pinned)
+    return card
+
+
+def test_pinning_one_member_pins_the_whole_group(env):
+    a = _pinnable(env, "weather", 200, 200)
+    b = _pinnable(env, "performance", 800, 260)
+    env.mgr.set_anchored(b, True)
+    _join_right(env, a, b)
+    a.set_desktop_mode(True)                                     # "Fixar na área de trabalho" num membro
+    QTest.qWait(900)
+    assert a.is_desktop_mode() and b.is_desktop_mode()
+    b.set_desktop_mode(False)                                    # e soltar pelo outro membro solta os dois
+    QTest.qWait(900)
+    assert not a.is_desktop_mode() and not b.is_desktop_mode()
+
+
+def test_net_window_lives_in_the_group_layer(env):
+    from app.core import desktop_layer
+    a = _pinnable(env, "weather", 200, 200, pinned=True)
+    b = _pinnable(env, "performance", 800, 260, pinned=True)
+    QTest.qWait(900)
+    env.mgr.set_anchored(a, True)
+    ra, rb = _rect(a), _rect(b)
+    _drag(env.mgr, b, int(ra.r + 60 - rb.l), int(ra.t - rb.t))   # perto: a rede aparece
+    ov = env.mgr._overlay
+    assert ov.isVisible() and ov.is_desktop()                    # grupo na área de trabalho: rede também
+    if desktop_layer.IS_WINDOWS:
+        ex = desktop_layer._user32.GetWindowLongW(int(ov.winId()), desktop_layer.GWL_EXSTYLE)
+        assert not ex & desktop_layer.WS_EX_TOPMOST              # não fica por cima dos apps
+    env.mgr.drag_end(b)
+
+    a.set_desktop_mode(False)                                    # o alvo (e o grupo dele) vai para cima
+    QTest.qWait(900)
+    _drag(env.mgr, b, int(ra.r + 60 - _rect(b).l), 0)
+    assert not env.mgr._overlay.is_desktop()
+    env.mgr.drag_end(b)
+
+
+def test_group_windows_move_in_one_batch(env, monkeypatch):
+    from app.core import desktop_layer
+    if not desktop_layer.IS_WINDOWS:
+        pytest.skip("lote de janelas só no Windows")
+    calls = []
+    real = desktop_layer.defer_move
+    monkeypatch.setattr(desktop_layer, "defer_move", lambda moves: calls.append(len(moves)) or real(moves))
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 800, 260)
+    env.mgr.set_anchored(a, True)
+    _join_right(env, b, a)
+    before_a, before_b = _rect(a), _rect(b)
+    calls.clear()
+    _drag(env.mgr, a, 40, 25)
+    assert calls and calls[-1] == 2                              # os dois na mesma chamada
+    assert _rect(a).l - before_a.l == pytest.approx(40, abs=1)
+    assert _rect(b).l - before_b.l == pytest.approx(40, abs=1)
+    assert _rect(b).t - before_b.t == pytest.approx(25, abs=1)
+    env.mgr.drag_end(a)
+
+
+def test_batch_failure_falls_back_to_moving_one_by_one(env, monkeypatch):
+    from app.core import desktop_layer
+    monkeypatch.setattr(desktop_layer, "defer_move", lambda moves: False)
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 800, 260)
+    env.mgr.set_anchored(a, True)
+    _join_right(env, b, a)
+    before_b = _rect(b)
+    _drag(env.mgr, a, -30, 15)
+    assert _rect(b).l - before_b.l == pytest.approx(-30, abs=1)
+    assert _rect(b).t - before_b.t == pytest.approx(15, abs=1)
+    env.mgr.drag_end(a)

@@ -29,11 +29,11 @@ from typing import Dict, Optional
 
 import shiboken6
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QAction, QPainter, QPainterPath
+from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from app.core import anchor_geometry as geo
-from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dist_to_seg, ease_out, smooth
+from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dist_to_seg, smooth
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
@@ -46,7 +46,10 @@ DEFAULT_BOOM = "ring"
 
 FRAME_MS = 16
 BOOM_DUR = 1.5 / geo.WAVE_SPEED   # s
-INTRO_DUR = 0.7                   # s: a ondinha que confirma "Ancorar" / "Soltar do grupo"
+GLOW_PERIOD = 2.8                 # s: um pulso lento do brilho da borda enquanto o widget está ancorado
+GLOW_RATE = 7.0                   # 1/s: o brilho acende/apaga suavemente (sem piscar)
+ACCENT_TTL = 1.0                  # s: a cor de destaque do app é relida no máximo uma vez por segundo
+PULSE_FRAME_MS = 33               # só o pulso pede quadros: 30 fps bastam e custam pouco
 MAGNET_RATE = 22.0                # 1/s: quão rápido o ímã puxa
 GAIN_RATE = 12.0                  # 1/s: rede acendendo/apagando
 FOCUS_RATE = 14.0                 # 1/s: a parte acesa seguindo a borda
@@ -105,6 +108,51 @@ def move_card(w, x: float, y: float):
         w.move(target)
 
 
+def _window_target(w, x: float, y: float) -> QPoint:
+    r = _local_card(w)
+    return QPoint(int(round(x - r.x())), int(round(y - r.y())))
+
+
+def move_cards(items):
+    """
+    Move vários cartões (um grupo) de uma vez. No Windows as janelas vão num só lote (DeferWindowPos): o Windows
+    aplica todas juntas, então os membros nunca aparecem um quadro separados. Janela oculta, no meio da animação de
+    surgir/sumir ou de um deslize vai pelo caminho normal (uma por vez), assim como tudo se o lote falhar.
+    """
+    from app.core import desktop_layer
+
+    batch, single = [], []
+    for w, x, y in items:
+        if not _alive(w):
+            continue
+        animator = getattr(w, "animator", None)
+        glide = getattr(w, "_position_glide", None)
+        busy = (animator is not None and animator.is_animating()) or (glide is not None and glide.is_running())
+        if busy or not w.isVisible():
+            single.append((w, x, y))
+            continue
+        target = _window_target(w, x, y)
+        if target != w.pos():
+            batch.append((w, x, y, target))
+
+    if len(batch) > 1 and desktop_layer.IS_WINDOWS:
+        native = []
+        for w, _x, _y, target in batch:
+            rect = desktop_layer.native_window_rect(int(w.winId()))
+            if rect is None:
+                break
+            cur, dpr = w.pos(), w.devicePixelRatioF()
+            native.append((int(w.winId()), rect[0] + round((target.x() - cur.x()) * dpr),
+                           rect[1] + round((target.y() - cur.y()) * dpr)))
+        if len(native) == len(batch) and desktop_layer.defer_move(native):
+            for w, _x, _y, target in batch:
+                if w.pos() != target:      # o Qt não acompanhou (ex.: telas com escalas diferentes): corrige
+                    w.move(target)
+            batch = []
+    for w, x, y, *_ in batch + single:
+        move_card(w, x, y)
+
+
 def _persist(w):
     fn = getattr(w, "anchor_position_committed", None)
     if fn is not None:
@@ -121,7 +169,7 @@ class Group:
     gain: float = 0.0                      # brilho atual da rede de aproximação (0 = invisível)
     focus: Optional[geo.Seg] = None        # trecho aceso (segue a borda com suavidade)
     prox: Optional[dict] = None            # durante um arraste: {b, lock, seam, focus}
-    intro: Optional[tuple] = None          # (t0, para_fora): ondinha de confirmação
+    glow: float = 0.0                      # brilho da borda do modo ancorado (0 = apagado, 1 = aceso)
 
     def keys(self) -> list:
         return geo.members(self.tree)
@@ -147,6 +195,7 @@ class _Boom:
     ax: str
     focus: Optional[geo.Seg]
     style: str
+    pinned: bool = False      # o grupo está na área de trabalho: a onda também fica lá (não por cima dos apps)
 
 
 class AnchorManager(QObject):
@@ -158,6 +207,7 @@ class AnchorManager(QObject):
         self._drag: Optional[_Drag] = None
         self._boom: Optional[_Boom] = None
         self._dirty = False
+        self._layer_sync = False
         self._overlay = None
         self._clock = QTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
@@ -290,12 +340,14 @@ class AnchorManager(QObject):
             else:
                 return
         rr = card_rect(self.window(root))
+        moves = []
         for k, (x, y) in geo.layout(g.tree, sizes, root, (rr.l, rr.t)).items():
             w = self.window(k)
             if k != root and w is not None:
                 cur = card_rect(w)
                 if abs(cur.l - x) > 0.5 or abs(cur.t - y) > 0.5:
-                    move_card(w, x, y)
+                    moves.append((w, x, y))
+        move_cards(moves)
 
     # --- Menu ---
 
@@ -307,9 +359,7 @@ class AnchorManager(QObject):
         if g.anchored == bool(anchored):
             return
         g.anchored = bool(anchored)
-        if animations_enabled():
-            g.intro = (time.perf_counter(), g.anchored)
-            self._wake()
+        self._wake()   # o brilho da borda acende (ou apaga) suavemente; sem animações do Windows, na hora
 
     def detach(self, w):
         """Tira o widget do grupo; os outros continuam juntos, exatamente onde estão."""
@@ -323,15 +373,13 @@ class AnchorManager(QObject):
         if rects is None:
             return
         rest = geo.prune(g.tree, key, rects)
-        single = self._groups[key] = Group(key)
+        single = self._groups[key] = Group(key, glow=g.glow)    # o brilho (se havia) apaga suavemente
         if rest is not None:
-            ng = Group(rest)
+            ng = Group(rest, glow=g.glow)
             for k in geo.members(rest):
                 self._groups[k] = ng
         self._save()
-        if animations_enabled():
-            single.intro = (time.perf_counter(), True)
-            self._wake()
+        self._wake()
 
     # --- Arraste ---
 
@@ -354,7 +402,9 @@ class AnchorManager(QObject):
         if not animations_enabled():
             d.cur = d.target
         self._apply_drag()
-        if d.target != (0.0, 0.0) or d.cur != (0.0, 0.0) or any(g.prox or g.gain > 0 for g in self.groups()):
+        # Com a rede ou o ímã em ação, ela é redesenhada AGORA, no mesmo passo que moveu as janelas.
+        if (d.target != (0.0, 0.0) or d.cur != (0.0, 0.0)
+                or any(g.prox or g.gain > 0 for g in self.groups())):
             self._wake()
 
     def _begin(self, key: str) -> _Drag:
@@ -414,10 +464,8 @@ class AnchorManager(QObject):
 
     def _apply_drag(self):
         d = self._drag
-        for k, (x, y) in d.base.items():
-            w = self.window(k)
-            if w is not None:
-                move_card(w, x + d.cur[0], y + d.cur[1])
+        move_cards([(w, x + d.cur[0], y + d.cur[1]) for k, (x, y) in d.base.items()
+                    if (w := self.window(k)) is not None])
 
     def drag_end(self, w):
         """Ao soltar: firma o ímã e, se estava travado, junta os grupos (com a onda)."""
@@ -451,12 +499,75 @@ class AnchorManager(QObject):
         U = geo.union(rects[k] for k in owner.keys())
         first, second = (dg, og) if c.d_first else (og, dg)
         ng = Group(geo.join_from_rects(first.tree, second.tree, c.ax, rects))
+        # A âncora cumpriu o papel: o grupo novo nasce sem âncora e o brilho que estava aceso apaga suavemente
+        # (começa de onde estava; sem isso ele ficava parado na tela depois da junção).
+        ng.glow = max(dg.glow, og.glow)
         for k in ng.keys():
             self._groups[k] = ng
         dg.gain = og.gain = 0.0
+        pinned = self._adopt_layer(dg, og)
         self._save()
         if animations_enabled() and c.origin is not None:
-            self._boom = _Boom(time.perf_counter(), U, c.origin, c.ax, focus, boom_style())
+            self._boom = _Boom(time.perf_counter(), U, c.origin, c.ax, focus, boom_style(), pinned)
+
+    # --- Camada (área de trabalho x por cima): o GRUPO tem uma só ---
+
+    @staticmethod
+    def _pinned_of(w) -> Optional[bool]:
+        """Camada de uma janela: True = na área de trabalho, False = por cima; None = widget sem a opção."""
+        fn = getattr(w, "desktop_mode_target", None)
+        return bool(fn()) if fn is not None else None
+
+    def is_pinned(self, g: Group) -> bool:
+        """O grupo está na área de trabalho? Um membro sem a opção (música, timer) fica sempre por cima."""
+        ws = [w for k in g.keys() if (w := self.window(k)) is not None]
+        return bool(ws) and all(self._pinned_of(w) for w in ws)
+
+    def _set_layer(self, w, pinned: bool):
+        if self._pinned_of(w) in (None, pinned):
+            return
+        signal = getattr(w, "desktop_mode_changed", None)
+        if signal is not None:
+            signal.emit(pinned)        # pelo controller: aplica (com a onda de pontos), salva e avisa o Hub
+        else:
+            w.set_desktop_mode(pinned)
+
+    def _set_group_layer(self, g: Group, pinned: bool, skip: Optional[str] = None):
+        if self._layer_sync:
+            return
+        self._layer_sync = True
+        try:
+            for k in g.keys():
+                w = self.window(k)
+                if k != skip and w is not None:
+                    self._set_layer(w, pinned)
+        finally:
+            self._layer_sync = False
+
+    def member_layer_changed(self, w, pinned: bool):
+        """Um membro mudou de camada ("Fixar na área de trabalho" no menu ou no Hub): o grupo inteiro vai junto."""
+        key = self._key(w)
+        if key is None or self._layer_sync:
+            return
+        g = self.group_of(key)
+        if len(g.keys()) > 1:
+            self._set_group_layer(g, bool(pinned), skip=key)
+
+    def _adopt_layer(self, dragged: Group, target: Group) -> bool:
+        """
+        Quem foi arrastado até o outro passa a ter o comportamento de camada DELE: arrastar o Desempenho até o Clima
+        fixado na área de trabalho fixa o Desempenho também (com a onda de pontos de sempre), e o contrário solta.
+        Widgets sem a opção (música, timer) ficam como estão e, como alvo, contam como "por cima" (não fixados).
+        Devolve a camada do grupo novo.
+        """
+        pinned = False
+        for k in target.keys():
+            w = self.window(k)
+            if w is not None and self._pinned_of(w) is not None:
+                pinned = self._pinned_of(w)
+                break
+        self._set_group_layer(dragged, pinned)
+        return pinned
 
     # --- Relógio ---
 
@@ -473,7 +584,7 @@ class AnchorManager(QObject):
         dt = min(0.05, max(0.0, now - self._last))
         self._last = now
         anim = animations_enabled()
-        changed, moving = getattr(self, "_dirty", False), False
+        changed, moving, pulsing = self._dirty, False, False
         self._dirty = False
         d = self._drag
         if d is not None:
@@ -505,12 +616,24 @@ class AnchorManager(QObject):
                     g.focus = tuple(a + (b - a) * kf for a, b in zip(g.focus, f))
                     if max(abs(a - b) for a, b in zip(g.focus, f)) < 0.05:
                         g.focus = f
-            if g.intro is not None and now - g.intro[0] >= INTRO_DUR:
-                g.intro = None
-                changed = True
+            # O brilho do modo ancorado é desenhado DENTRO da janela de cada widget (ver anchor_net.GlowLayer):
+            # fica na mesma camada que ele (na área de trabalho ou por cima) e anda no mesmo quadro ao arrastar.
+            old_glow, glow_to = g.glow, 1.0 if g.anchored else 0.0
+            if anim:
+                g.glow += (glow_to - g.glow) * (1.0 - math.exp(-dt * GLOW_RATE))
+            else:
+                g.glow = glow_to
+            if abs(g.glow - glow_to) < 0.004:
+                g.glow = glow_to
             if g.gain != old_gain or g.focus != old_focus:
                 changed = True
-            if g.gain != target or (g.prox and g.focus != g.prox["focus"]) or g.intro is not None:
+            if g.glow != glow_to:
+                moving = True
+            if g.glow > 0.0 and anim:
+                pulsing = True
+            if g.glow > 0.0 or old_glow > 0.0:
+                self._sync_glow(g, now, anim)
+            if g.gain != target or (g.prox and g.focus != g.prox["focus"]):
                 moving = True
         if self._boom is not None:
             changed = moving = True
@@ -518,8 +641,12 @@ class AnchorManager(QObject):
                 self._boom = None
         if changed:
             self._update_overlay(now)
-        if not moving:
+        if not moving and not pulsing:
             self._clock.stop()
+        else:
+            interval = FRAME_MS if moving else PULSE_FRAME_MS
+            if self._clock.interval() != interval:
+                self._clock.setInterval(interval)
 
     # --- Rede na tela ---
 
@@ -533,10 +660,11 @@ class AnchorManager(QObject):
             rect = q if rect is None else rect.united(q)
 
         for g in self.groups():
-            if g.gain > 0.004 or g.intro is not None:
-                rs = [card_rect(self.window(k)) for k in g.keys() if self.window(k) is not None]
-                if rs:
-                    add(geo.union(rs).grown(NET_MARGIN))
+            rs = [card_rect(self.window(k)) for k in g.keys() if self.window(k) is not None]
+            if not rs:
+                continue
+            if g.gain > 0.004:
+                add(geo.union(rs).grown(NET_MARGIN))
         if self._boom is not None:
             ox, oy = self._boom.origin
             add(Rect(ox - REACH, oy - REACH, ox + REACH, oy + REACH))
@@ -551,7 +679,19 @@ class AnchorManager(QObject):
         if self._overlay is None:
             from app.ui_components.anchor_net import NetOverlay
             self._overlay = NetOverlay(self._paint_scene)
+        self._overlay.set_desktop(self._overlay_pinned())
         self._overlay.cover(bounds)
+
+    def _overlay_pinned(self) -> bool:
+        """
+        A rede e a onda ficam na camada do que estão desenhando: grupo na área de trabalho = rede na área de trabalho
+        (qualquer app por cima a cobre, como cobre o widget). Se algo desenhado é de um grupo "por cima", ela fica
+        por cima. Os cartões viram buracos na rede, então ela pode ficar abaixo deles sem aparecer por cima.
+        """
+        layers = [self.is_pinned(g) for g in self.groups() if g.gain > 0.004]
+        if self._boom is not None:
+            layers.append(self._boom.pinned)
+        return bool(layers) and all(layers)
 
     def _paint_scene(self, p: QPainter):
         from app.ui_components.anchor_net import paint_lattice, paint_seam
@@ -578,8 +718,6 @@ class AnchorManager(QObject):
                 paint_lattice(p, U, U.grown(NET_MARGIN), CELL, style, self._focus_alpha(g, U))
                 if g.prox and g.prox["lock"] and g.prox["seam"]:
                     paint_seam(p, g.prox["seam"])
-            if g.intro is not None:
-                paint_lattice(p, U, U.grown(NET_MARGIN), CELL, style, self._intro_alpha(g, U, now))
         if self._boom is not None:
             b = self._boom
             alpha, disp = self._boom_fns(b, now)
@@ -604,19 +742,46 @@ class AnchorManager(QObject):
 
         return alpha
 
-    def _intro_alpha(self, g: Group, U: Rect, now: float):
-        t0, outward = g.intro
-        k = clamp((now - t0) / INTRO_DUR, 0.0, 1.0)
-        r = ease_out(k) * NET_MARGIN if outward else (1.0 - ease_out(k)) * NET_MARGIN
-        fade = (1.0 - k) * 0.9
-        edge = self._edge_fall
+    def _accent(self) -> QColor:
+        """Cor de destaque do app (a mesma do Hub), relida no máximo uma vez por ACCENT_TTL."""
+        now = time.perf_counter()
+        cached = getattr(self, "_accent_cache", None)
+        if cached is None or now - cached[0] > ACCENT_TTL:
+            from app.hub.theme import resolve_theme
+            try:
+                color = QColor(resolve_theme(config_manager.get_hub_theme("system")).accent)
+            except Exception:
+                color = QColor(110, 193, 255)
+            self._accent_cache = cached = (now, color)
+        return QColor(cached[1])
 
-        def alpha(x, y):
-            du = dist_to_rect(x, y, U)
-            band = math.exp(-((du - r) / (CELL * 1.4)) ** 2)
-            return edge(du, NET_MARGIN) * band * fade, 0.3, 0.0
+    def _sync_glow(self, g: Group, now: float, anim: bool):
+        """Passa o brilho (com o pulso) para a camada de cada membro e abre/fecha a folga da janela para ele."""
+        from app.ui_components.anchor_net import GlowLayer
 
-        return alpha
+        pulse = 0.5 + 0.5 * math.sin(2.0 * math.pi * now / GLOW_PERIOD) if anim else 0.7
+        level = g.glow * (0.45 + 0.55 * pulse)
+        color = self._accent() if g.glow > 0.0 else None
+        for key in g.keys():
+            w = self.window(key)
+            if w is None:
+                continue
+            layer = getattr(w, "_anchor_glow_layer", None)
+            if layer is None or not _alive(layer):
+                if g.glow <= 0.0:
+                    continue
+                layer = w._anchor_glow_layer = GlowLayer(w, lambda host=w: (card_rect(host), card_radius(host)))
+            if g.glow > 0.0 and not layer.has_room:
+                room = getattr(w, "anchor_glow_room", None)
+                if room is not None:
+                    room(True)          # a janela ganha a folga em volta do cartão (o cartão não se mexe)
+                layer.has_room = True
+            layer.set_level(level, 0.85 + 0.3 * pulse, color)
+            if g.glow <= 0.0 and layer.has_room:
+                room = getattr(w, "anchor_glow_room", None)
+                if room is not None:
+                    room(False)
+                layer.has_room = False
 
     def _boom_fns(self, b: _Boom, now: float):
         """A onda: sobe a rede (altura) ao passar e a apaga atrás de si; sai do meio do ponto de encaixe."""

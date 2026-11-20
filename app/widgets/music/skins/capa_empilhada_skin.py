@@ -218,7 +218,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         # Tema visual escolhido no Hub (themes/music/): paleta fixa ou adaptativa, fundo, figurinhas, barra
         self.skin_theme: stack_theme.StackTheme = stack_theme.load_user_theme()
         # Figurinhas que passam da borda pedem uma margem transparente em volta do cartão (janela maior)
-        self.art_margin = self._wanted_art_margin()
+        self.art_margin = self._effective_art_margin()
         self.setFixedSize(*self._window_size())
         # Paleta pastel (adaptativa à capa ou fixa pelo tema) com interpolação a 60 FPS
         self.pastel_theme: PastelStackTheme = self._palette_for(None)

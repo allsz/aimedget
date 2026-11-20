@@ -368,11 +368,16 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     def is_desktop_mode(self) -> bool:
         return self._desktop_mode
 
+    def desktop_mode_target(self) -> bool:
+        """A camada para onde o cartão vai (durante a onda de pontos a troca ainda não aconteceu)."""
+        return self._wave_target if self._wave_target is not None else self._desktop_mode
+
     def set_desktop_mode(self, enabled: bool):
         enabled = bool(enabled)
-        target = self._wave_target if self._wave_target is not None else self._desktop_mode
+        target = self.desktop_mode_target()
         if enabled == target:
             return
+        anchor_manager().member_layer_changed(self, enabled)   # num grupo ancorado, todos mudam de camada juntos
         if self.isVisible() and animations_enabled():
             if self._wave_t0 is None:
                 self._wave_t0 = self.now()
