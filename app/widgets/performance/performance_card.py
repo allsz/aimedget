@@ -8,13 +8,14 @@ fixação na área de trabalho com onda de pontos e suporte ao Win+D.
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QPainter
 
-from app.core.anchor_manager import add_anchor_actions
+from app.core.anchor_manager import anchor_bar_items
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import resolve_theme
 from app.ui_components.floating_card import CARD_H, CARD_W, SCALES, FloatingCard
 from app.ui_components.fluent_menu import FluentMusicMenu
+from app.ui_components.menu_action_bar import ActionBarItem
 from app.widgets.performance.card_painter import paint_performance_card, pill_at
 from app.widgets.performance.card_state import ALL_METRICS, PerformanceState
 
@@ -109,6 +110,28 @@ class PerformanceCard(FloatingCard):
         theme = resolve_theme(config_manager.get_hub_theme("system"))
         menu = FluentMusicMenu(parent=self, theme=theme)
 
+        remembered = bool(config_manager.get_performance("remember_position", False))
+        bar_items = [
+            ActionBarItem(
+                key="pin",
+                icon="pin",
+                tooltip=t("timer_menu_remember"),
+                toggle=True,
+                checked=remembered,
+                on_trigger=self.remember_position_changed.emit,
+            ),
+            ActionBarItem(
+                key="desktop",
+                icon="desktop",
+                tooltip=t("weather_menu_desktop"),
+                toggle=True,
+                checked=self._desktop_mode,
+                on_trigger=self.desktop_mode_changed.emit,
+            ),
+            *anchor_bar_items(self),
+        ]
+        menu.add_action_bar(bar_items)
+
         size_menu = FluentMusicMenu(t("weather_menu_size"), menu, theme=theme)
         for value in SCALES:
             act = QAction(f"{int(round(value * 100))}%", self)
@@ -116,18 +139,6 @@ class PerformanceCard(FloatingCard):
             act.triggered.connect(lambda checked=False, v=value: self.scale_changed.emit(v))
             size_menu.addAction(act)
         menu.addMenu(size_menu)
-
-        remembered = bool(config_manager.get_performance("remember_position", False))
-        act_remember = QAction(t("timer_menu_remember"), self)
-        menu.set_trailing_check(act_remember, remembered)
-        act_remember.triggered.connect(lambda: self.remember_position_changed.emit(not remembered))
-        menu.addAction(act_remember)
-
-        act_desktop = QAction(t("weather_menu_desktop"), self)
-        menu.set_trailing_check(act_desktop, self._desktop_mode)
-        act_desktop.triggered.connect(lambda: self.desktop_mode_changed.emit(not self._desktop_mode))
-        menu.addAction(act_desktop)
-        add_anchor_actions(menu, self)
 
         menu.addSeparator()
         act_close = QAction(t("menu_close_widget"), self)

@@ -386,15 +386,7 @@ class AimedgetHubWindow(QMainWindow):
         self._stop_wipe()   # a foto é da página antiga
         if page_key not in self._page_map:
             return
-        index = self._page_map[page_key]
-        old = self.stack.currentIndex()
-        animate = (index != old and animations_enabled() and self.isVisible() and not self.isMinimized() and self.stack.width() > 1)
-        if animate:
-            self._page_transition.stop()
-            snapshot = self.stack.grab()   # a página antiga, antes da troca
-        self.stack.setCurrentIndex(index)
-        if animate:
-            self._page_transition.start(snapshot, 1 if index > old else -1)
+        self.stack.setCurrentIndex(self._page_map[page_key])
 
     def _on_customize_requested(self, widget_id: str):
         target_map = {

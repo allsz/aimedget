@@ -22,6 +22,8 @@ from app.core.anchor_manager import anchor_manager
 from app.core.desktop_pin_guard import DesktopPinGuard
 from app.core.position_glide import glide_widget_to
 from app.core.refresh_rate import refresh_interval_ms
+from app.core.scale_animator import ScaleAnimator
+from app.core.screen_metrics import get_screen_scale_ratio
 from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
 from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
@@ -160,7 +162,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     """Base de janela flutuante sem moldura com sombra, escala, arraste e fixação no desktop."""
 
     close_requested = Signal()
-    scale_changed = Signal(float)
+    scale_changed = Signal(float)   # pedido de um tamanho novo (menu, roda, soltar a alça): quem decide é o controlador
+    scale_applied = Signal(float)   # o tamanho de fato aplicado, a cada quadro (o Hub acompanha a animação)
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
 
@@ -198,6 +201,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._resize_start: Optional[tuple] = None
         self._grip_hovered = False
         self._hovered = False
+        self.scale_auto = False        # True: o tamanho acompanha a resolução da tela (o controlador liga)
+        self._scale_animator = ScaleAnimator(self, self.set_scale, tolerance=0.003)
         self.set_scale(scale)
 
         self._pin_guard = DesktopPinGuard(self)
@@ -248,6 +253,33 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             self.move_card_to(origin.x(), origin.y())
             anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
+        self.scale_applied.emit(self._scale)
+
+    def animate_scale_to(self, target: float):
+        """Leva o tamanho até `target` com mola; sem animações do Windows ou com o cartão oculto, vale na hora."""
+        target = max(MIN_SCALE, min(MAX_SCALE, float(target)))
+        if not animations_enabled() or not self.isVisible() or abs(self._scale - target) < 0.004:
+            self._scale_animator.stop()
+            self.set_scale(target)
+            return
+        self._scale_animator.start(self._scale, target)
+
+    def is_scale_animating(self) -> bool:
+        return self._scale_animator.is_active()
+
+    def stop_scale_animation(self):
+        self._scale_animator.stop()
+
+    def auto_scale_target(self) -> float:
+        """Tamanho proporcional à tela onde o cartão está (1440p = 100%), dentro dos limites do cartão."""
+        return max(MIN_SCALE, min(MAX_SCALE, get_screen_scale_ratio(widget=self)))
+
+    def _retarget_auto_scale(self):
+        """Soltou o cartão (talvez em outra tela): no automático, o tamanho acompanha a tela nova, com movimento."""
+        if self.scale_auto:
+            target = self.auto_scale_target()
+            if abs(self._scale - target) >= 0.02:
+                self.animate_scale_to(target)
 
     def _to_card(self, pos) -> QPointF:
         r = self.card_rect()
@@ -307,6 +339,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
 
     def hideEvent(self, event):
         self._clock.stop()
+        self._scale_animator.finish()   # oculto não anima: assenta no tamanho final
         if self._wave_target is not None:
             target, self._wave_target = self._wave_target, None
             self._apply_desktop_mode(target)
@@ -540,6 +573,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             return super().mousePressEvent(event)
         card_pos = self._to_card(event.position())
         if self._on_grip(card_pos):
+            self._scale_animator.stop()
             self._resize_start = (event.globalPosition(), self._scale)
             return
         if self._on_card_press(card_pos):
@@ -580,6 +614,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         if self._drag_offset is not None and self._dragged:
             anchor_manager().drag_end(self)
             self._on_drag_finished(self.card_origin())
+            self._retarget_auto_scale()
         self._drag_offset = None
 
     def anchor_position_committed(self):

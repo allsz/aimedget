@@ -8,15 +8,16 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLay
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
+from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.shortcut_picker import ShortcutPicker
-from app.hub.components.tab_pill import ChipGroup
+from app.hub.components.scale_card import ScaleCard
+from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.services.fps_service import fps_capability_status, perf_log_users_group_name, request_fps_permission
-from app.ui_components.floating_card import SCALES
 
 
 class PerformancePage(BaseHubPage):
@@ -41,9 +42,11 @@ class PerformancePage(BaseHubPage):
         box.setSpacing(2)
         title = QLabel(t(title_key))
         title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
-        sub = QLabel(t(sub_key))
+        sub_txt = t(sub_key)
+        sub = QLabel(sub_txt)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        sub.setVisible(bool(sub_txt))
         box.addWidget(title)
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]
@@ -81,42 +84,70 @@ class PerformancePage(BaseHubPage):
     def _build_ui(self):
         # 1. Posição
         card, row = self._card()
-        row.addLayout(self._info("weather_pos_title", "weather_pos_sub", 14), stretch=1)
+        pos_info = self._info("weather_pos_title", "weather_pos_sub", 14)
+        row.addLayout(pos_info, stretch=1)
+        row.setAlignment(pos_info, Qt.AlignmentFlag.AlignVCenter)
         self.pos_picker = PositionPicker(current_pos="tr", theme=self._theme, parent=card)
         self.pos_picker.position_changed.connect(self.bridge.move_performance_to_screen_position)
         row.addWidget(self.pos_picker)
         self.content_layout.addWidget(card)
 
-        # 2. Tamanho
-        card, row = self._card()
-        row.addLayout(self._info("weather_size_title", "weather_size_sub", 14), stretch=1)
-        self._size_group = ChipGroup([(v, f"{int(round(v * 100))}%") for v in SCALES], self.controller.set_scale,
-                                     self._theme, parent=card)
-        row.addWidget(self._size_group)
-        self.content_layout.addWidget(card)
+        # 2. Tamanho (Automático + controle em %; os presets do menu do cartão continuam valendo)
+        self.scale_card = ScaleCard("weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
+        self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: self.controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        self.controller.skin.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
         self.controller.scale_changed.connect(lambda _s: self._sync_size())
         self._sync_size()
 
         # 3. Contador de FPS (opcional, somente em jogos)
         card, col = self._card(vertical=True)
-        col.setSpacing(10)
-        self.sw_fps = self._switch_row(
-            col,
-            "perf_fps_title",
-            "perf_fps_sub",
-            bool(config_manager.get_performance("fps_enabled", False)),
-            self.controller.set_fps_enabled,
+        col.setSpacing(12)
+        fps_row = QHBoxLayout()
+        fps_row.setSpacing(16)
+        fps_info = QVBoxLayout()
+        fps_info.setSpacing(3)
+        fps_title_row = QHBoxLayout()
+        fps_title_row.setContentsMargins(0, 0, 0, 0)
+        fps_title_row.setSpacing(6)
+        lbl_fps_title = QLabel(t("perf_fps_title"))
+        lbl_fps_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self._texts.append((lbl_fps_title, "perf_fps_title"))
+        self.fps_help = HelpBadge(t("perf_fps_help"), theme=self._theme)
+        fps_title_row.addWidget(lbl_fps_title)
+        fps_title_row.addWidget(self.fps_help, alignment=Qt.AlignmentFlag.AlignVCenter)
+        fps_title_row.addStretch()
+        lbl_fps_sub = QLabel(t("perf_fps_sub"))
+        lbl_fps_sub.setWordWrap(True)
+        lbl_fps_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self._texts.append((lbl_fps_sub, "perf_fps_sub"))
+        self._subs.append(lbl_fps_sub)
+        fps_info.addLayout(fps_title_row)
+        fps_info.addWidget(lbl_fps_sub)
+        fps_row.addLayout(fps_info, stretch=1)
+        fps_row.setAlignment(fps_info, Qt.AlignmentFlag.AlignVCenter)
+        self.sw_fps = PillSwitch(
+            checked=bool(config_manager.get_performance("fps_enabled", False)),
+            theme=self._theme,
         )
+        self.sw_fps.toggled.connect(self.controller.set_fps_enabled)
+        fps_row.addWidget(self.sw_fps, alignment=Qt.AlignmentFlag.AlignVCenter)
+        col.addLayout(fps_row)
         self.controller.fps_enabled_changed.connect(self._sync_fps)
+
+        col.addWidget(self._divider())
+
         fps_foot = QHBoxLayout()
-        fps_foot.setSpacing(10)
+        fps_foot.setSpacing(12)
         self.lbl_fps_status = QLabel()
         self.lbl_fps_status.setWordWrap(True)
-        self.lbl_fps_status.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self.lbl_fps_status.setStyleSheet(f"color: {self._theme.mute}; font-size: 12px;")
         self._subs.append(self.lbl_fps_status)
-        fps_foot.addWidget(self.lbl_fps_status, stretch=1)
+        fps_foot.addWidget(self.lbl_fps_status, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.btn_grant_fps = self._chip(t("perf_fps_grant_btn"), self._on_grant_fps_clicked)
-        fps_foot.addWidget(self.btn_grant_fps)
+        fps_foot.addWidget(self.btn_grant_fps, alignment=Qt.AlignmentFlag.AlignVCenter)
         col.addLayout(fps_foot)
         self.content_layout.addWidget(card)
         self._refresh_fps_status()
@@ -151,15 +182,19 @@ class PerformancePage(BaseHubPage):
         )
         col.addWidget(self._divider())
         row = QHBoxLayout()
-        row.addLayout(self._info("weather_opt_show_title", "weather_opt_show_sub"), stretch=1)
+        show_info = self._info("weather_opt_show_title", "weather_opt_show_sub")
+        row.addLayout(show_info, stretch=1)
+        row.setAlignment(show_info, Qt.AlignmentFlag.AlignVCenter)
         self.btn_show = self._chip(t("weather_opt_show_btn"), self._on_show_clicked)
-        row.addWidget(self.btn_show)
+        row.addWidget(self.btn_show, alignment=Qt.AlignmentFlag.AlignVCenter)
         col.addLayout(row)
         self.content_layout.addWidget(card)
 
         # 4. Atalho
         card, row = self._card()
-        row.addLayout(self._info("perf_hotkey_title", "perf_hotkey_sub", 14), stretch=1)
+        hk_info = self._info("perf_hotkey_title", "perf_hotkey_sub", 14)
+        row.addLayout(hk_info, stretch=1)
+        row.setAlignment(hk_info, Qt.AlignmentFlag.AlignVCenter)
         self.hk_picker = ShortcutPicker(
             current_shortcut=config_manager.get_performance("hotkey", "Win+Alt+P"),
             default_shortcut="Win+Alt+P",
@@ -172,10 +207,10 @@ class PerformancePage(BaseHubPage):
 
         self.content_layout.addStretch()
 
-    def _sync_size(self, animated: bool = True):
-        scale = self.controller.skin.scale()
-        match = next((v for v in SCALES if abs(scale - v) < 0.01), None)   # arrastado: nenhum chip, a pílula some
-        self._size_group.set_selected(match, animated=animated)
+    def _sync_size(self):
+        """Chip Automático e polegar seguem o cartão (inclusive enquanto ele anima até o tamanho novo)."""
+        pct = max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, int(round(self.controller.skin.scale() * 100))))
+        self.scale_card.set_state(self.controller.is_scale_auto(), pct)
 
     def _sync_desktop(self, enabled: bool):
         if self.sw_desktop.isChecked() != enabled:
@@ -231,15 +266,21 @@ class PerformancePage(BaseHubPage):
     def retranslate_ui(self):
         self.set_header(t("perf_title"), t("perf_subtitle"))
         for label, key in self._texts:
-            label.setText(t(key))
+            txt = t(key)
+            label.setText(txt)
+            if label in self._subs:
+                label.setVisible(bool(txt))
+        self.scale_card.retranslate()
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.btn_grant_fps.setText(t("perf_fps_grant_btn"))
+        self.fps_help.set_text(t("perf_fps_help"))
         self._refresh_fps_status()
 
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
         for sub in self._subs:
-            sub.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
-        for w in (self._size_group, self.pos_picker, self.hk_picker, self.sw_fps, self.sw_remember, self.sw_desktop, self.sw_startup):
+            px = "12px" if sub is self.lbl_fps_status else "12.5px"
+            sub.setStyleSheet(f"color: {theme.mute}; font-size: {px};")
+        for w in (self.scale_card, self.pos_picker, self.hk_picker, self.fps_help, self.sw_fps, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)

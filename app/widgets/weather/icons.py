@@ -2,7 +2,7 @@
 Ícones de traço do Weather Widget.
 
 Sol, nuvem, raio e lua são os Heroicons (outline) da referência: Copyright (c) Tailwind Labs, Inc., licença MIT
-(https://github.com/tailwindlabs/heroicons/blob/master/LICENSE). Parcialmente nublado e neblina são composições
+(https://github.com/tailwindlabs/heroicons/blob/master/LICENSE). Parcialmente nublado (de dia e de noite) e neblina são composições
 deles. Cada ícone vira um QPixmap pintado na cor pedida e guardado em cache (por tamanho, cor, traço e DPR), então
 girar o sol ou mover a nuvem quadro a quadro só desenha um pixmap pronto.
 """
@@ -41,6 +41,10 @@ ICONS: dict[str, tuple] = {
     "bolt": (Layer(BOLT, warm=True),),
     "partly": (
         Layer(SUN, warm=True, transform="translate(10.2 -0.6) scale(0.6)", scale=0.6),
+        Layer(CLOUD, transform="translate(0 4.2) scale(0.82)", scale=0.82, knockout=True),
+    ),
+    "partly_night": (
+        Layer(MOON, transform="translate(9.2 -1.2) scale(0.62)", scale=0.62),
         Layer(CLOUD, transform="translate(0 4.2) scale(0.82)", scale=0.82, knockout=True),
     ),
     "fog": (

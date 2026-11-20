@@ -87,6 +87,8 @@ class HubServiceBridge(QObject):
             )
         )
         self.volume_flyout.app_routing_changed.connect(self.endpoint_service.set_app_device)
+        # Gaveta do ícone do volume principal (botão direito): troca o dispositivo PADRÃO do Windows
+        self.volume_flyout.default_device_changed.connect(self.endpoint_service.set_default_device)
         # O mixer precisa saber a rota de cada app para mostrar o volume da sessão certa quando o app tem sessões em
         # mais de um dispositivo (ex.: Chrome roteado para o fone, com uma sessão parada nas caixas)
         self.audio_service.set_route_resolver(lambda app_id: self.endpoint_service.get_app_device(app_id, "output"))
@@ -352,6 +354,10 @@ class HubServiceBridge(QObject):
     def set_music_scale(self, scale: Optional[float]):
         """Ajusta o fator de escala proporcional do widget de música."""
         self.music_controller.set_scale(scale)
+
+    def apply_music_scale_live(self, scale: float):
+        """Aplica a escala enquanto o controle é arrastado, sem gravar (a gravação vem ao soltar)."""
+        self.music_controller.apply_scale_live(scale)
 
     def move_music_to_screen_position(self, pos_key: str):
         """

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.i18n import t
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme
 from app.widgets.weather.motion import cubic_bezier
@@ -726,6 +727,7 @@ class CityList(QWidget):
             self._last_change = anim
         if not self._clock.isActive():
             self._last = time.perf_counter()
+            self._clock.setInterval(refresh_interval_ms(self))   # taxa do monitor onde a lista está agora
             self._clock.start()
 
     def _on_frame(self):

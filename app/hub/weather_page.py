@@ -11,17 +11,19 @@ from app.core.i18n import i18n, t
 from app.core.preview_card import PreviewCard
 from app.hub.components.city_list import CityList
 from app.hub.components.fold import Fold
+from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
+from app.hub.components.scale_card import ScaleCard
 from app.hub.components.tab_pill import ChipGroup
+from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.widgets.weather import init_weather_skin_specs
 from app.services.weather_service import MAX_CITIES, city_key
-from app.widgets.weather.weather_card import SCALES
 
 SEARCH_DEBOUNCE_MS = 450
 MAX_RESULTS = 6
@@ -36,6 +38,7 @@ class WeatherPage(BaseHubPage):
         self.service = self.controller.service
         self._texts: list = []      # (QLabel, chave i18n)
         self._subs: list = []       # legendas cinzas (a cor muda com o tema)
+        self._help_badges: list = []
         self._result_buttons: list = []
         self._build_ui()
 
@@ -57,15 +60,28 @@ class WeatherPage(BaseHubPage):
         layout.setContentsMargins(18, 14, 18, 14)
         return card, layout
 
-    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5) -> QVBoxLayout:
+    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5, help_key: str | None = None) -> QVBoxLayout:
         box = QVBoxLayout()
         box.setSpacing(2)
         title = QLabel(t(title_key))
         title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
-        sub = QLabel(t(sub_key))
+        if help_key:
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(6)
+            title_row.addWidget(title)
+            badge = HelpBadge(t(help_key), theme=self._theme)
+            title_row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
+            title_row.addStretch()
+            box.addLayout(title_row)
+            self._help_badges.append((badge, help_key))
+        else:
+            box.addWidget(title)
+        sub_txt = t(sub_key)
+        sub = QLabel(sub_txt)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        box.addWidget(title)
+        sub.setVisible(bool(sub_txt))
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]
         self._subs.append(sub)
@@ -93,26 +109,28 @@ class WeatherPage(BaseHubPage):
     def _build_ui(self):
         # 1. Posição
         card, row = self._card()
-        row.addLayout(self._info("weather_pos_title", "weather_pos_sub", 14), stretch=1)
+        pos_info = self._info("weather_pos_title", "weather_pos_sub", 14)
+        row.addLayout(pos_info, stretch=1)
+        row.setAlignment(pos_info, Qt.AlignmentFlag.AlignVCenter)
         self.pos_picker = PositionPicker(current_pos="tr", theme=self._theme, parent=card)
         self.pos_picker.position_changed.connect(self.bridge.move_weather_to_screen_position)
         row.addWidget(self.pos_picker)
         self.content_layout.addWidget(card)
 
-        # 1b. Tamanho (os mesmos tamanhos do menu; arrastar o canto dá qualquer valor entre eles)
-        card, row = self._card()
-        row.addLayout(self._info("weather_size_title", "weather_size_sub", 14), stretch=1)
-        self._size_group = ChipGroup([(v, f"{int(round(v * 100))}%") for v in SCALES], self.controller.set_scale,
-                                     self._theme, parent=card)
-        row.addWidget(self._size_group)
-        self.content_layout.addWidget(card)
+        # 1b. Tamanho (Automático + controle em %; os presets do menu do cartão continuam valendo)
+        self.scale_card = ScaleCard("weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
+        self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: self.controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        self.controller.skin.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
         self.controller.scale_changed.connect(lambda _s: self._sync_size())
         self._sync_size()
 
         # 2. Estilo (uma skin por fonte)
         card, col = self._card(vertical=True)
         col.setContentsMargins(22, 20, 22, 22)
-        col.addLayout(self._info("weather_style_title", "weather_style_sub", 14.5))
+        col.addLayout(self._info("weather_style_title", "weather_style_sub", 14.5, help_key="weather_style_help"))
         col.addSpacing(18)
         self._skin_grid = ResponsiveCardGrid(min_card_width=150, spacing=16, parent=card)
         self._skin_cards: dict = {}
@@ -132,7 +150,7 @@ class WeatherPage(BaseHubPage):
         self.cities_card = card
         col.setSpacing(0)
         head = QHBoxLayout()
-        head.addLayout(self._info("weather_cities_title", "weather_cities_sub", 14), stretch=1)
+        head.addLayout(self._info("weather_cities_title", "weather_cities_sub", 14, help_key="weather_cities_help"), stretch=1)
         self.lbl_count = QLabel()
         self.lbl_count.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px; font-weight: 600;")
         head.addWidget(self.lbl_count, alignment=Qt.AlignmentFlag.AlignTop)
@@ -177,9 +195,11 @@ class WeatherPage(BaseHubPage):
 
         # 4. Unidade
         card, row = self._card()
-        row.addLayout(self._info("weather_units_title", "weather_units_sub", 14), stretch=1)
+        unit_info = self._info("weather_units_title", "weather_units_sub", 14)
+        row.addLayout(unit_info, stretch=1)
+        row.setAlignment(unit_info, Qt.AlignmentFlag.AlignVCenter)
         self._unit_group = ChipGroup([("c", "°C"), ("f", "°F")], self._on_unit, self._theme, parent=card)
-        row.addWidget(self._unit_group)
+        row.addWidget(self._unit_group, alignment=Qt.AlignmentFlag.AlignVCenter)
         self._sync_units(animated=False)
         self.content_layout.addWidget(card)
 
@@ -200,15 +220,19 @@ class WeatherPage(BaseHubPage):
                                            lambda v: config_manager.set_weather("show_on_startup", bool(v)))
         col.addWidget(self._divider())
         row = QHBoxLayout()
-        row.addLayout(self._info("weather_opt_show_title", "weather_opt_show_sub"), stretch=1)
+        show_info = self._info("weather_opt_show_title", "weather_opt_show_sub")
+        row.addLayout(show_info, stretch=1)
+        row.setAlignment(show_info, Qt.AlignmentFlag.AlignVCenter)
         self.btn_show = self._chip(t("weather_opt_show_btn"), self._on_show_clicked)
-        row.addWidget(self.btn_show)
+        row.addWidget(self.btn_show, alignment=Qt.AlignmentFlag.AlignVCenter)
         col.addLayout(row)
         self.content_layout.addWidget(card)
 
         # 6. Atalho
         card, row = self._card()
-        row.addLayout(self._info("weather_hotkey_title", "weather_hotkey_sub", 14), stretch=1)
+        hk_info = self._info("weather_hotkey_title", "weather_hotkey_sub", 14)
+        row.addLayout(hk_info, stretch=1)
+        row.setAlignment(hk_info, Qt.AlignmentFlag.AlignVCenter)
         self.hk_picker = ShortcutPicker(
             current_shortcut=config_manager.get_weather("hotkey", "Win+Alt+W"),
             default_shortcut="Win+Alt+W",
@@ -342,11 +366,10 @@ class WeatherPage(BaseHubPage):
     def _sync_units(self, animated: bool = True):
         self._unit_group.set_selected(self.controller.units(), animated=animated)
 
-    def _sync_size(self, animated: bool = True):
-        scale = self.controller.skin.scale()
-        # tamanho arrastado: nenhum chip marcado (a pílula some)
-        match = next((v for v in SCALES if abs(scale - v) < 0.01), None)
-        self._size_group.set_selected(match, animated=animated)
+    def _sync_size(self):
+        """Chip Automático e polegar seguem o cartão (inclusive enquanto ele anima até o tamanho novo)."""
+        pct = max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, int(round(self.controller.skin.scale() * 100))))
+        self.scale_card.set_state(self.controller.is_scale_auto(), pct)
 
     def _sync_desktop(self, enabled: bool):
         if self.sw_desktop.isChecked() != enabled:
@@ -385,7 +408,13 @@ class WeatherPage(BaseHubPage):
     def retranslate_ui(self):
         self.set_header(t("weather_title"), t("weather_subtitle"))
         for label, key in self._texts:
-            label.setText(t(key))
+            txt = t(key)
+            label.setText(txt)
+            if label in self._subs:
+                label.setVisible(bool(txt))
+        for badge, key in self._help_badges:
+            badge.set_text(t(key))
+        self.scale_card.retranslate()
         self.btn_add_auto.setText(t("weather_add_my_location"))
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.lbl_empty.setText(t("weather_cities_empty"))
@@ -395,11 +424,13 @@ class WeatherPage(BaseHubPage):
         super().set_theme(theme)
         for sub in self._subs:
             sub.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+        for badge, _key in self._help_badges:
+            badge.set_theme(theme)
         for card in self._skin_cards.values():
             card.set_theme(theme)
         self.city_list.set_theme(theme)
         self.lbl_count.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px; font-weight: 600;")
-        for w in (self._size_group, self._unit_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
+        for w in (self.scale_card, self._unit_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)
 

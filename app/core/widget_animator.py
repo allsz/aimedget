@@ -151,6 +151,21 @@ class SlideFadeAnimator(QObject):
         self._rest = QPoint(pos)
         self._widget.move(self._rest + offset)
 
+    def set_rest_geometry(self, x: int, y: int, w: int, h: int):
+        """
+        Tamanho e posição de repouso numa operação só (setGeometry é um SetWindowPos no Windows): ao mudar a margem
+        transparente em volta do cartão, a janela nunca aparece um quadro com o tamanho novo no lugar antigo. Com a
+        janela surgindo/sumindo, o deslocamento da animação continua por cima do lugar novo.
+        """
+        widget = self._widget
+        offset = QPoint(0, 0) if self._rest is None else widget.pos() - self._rest
+        if self._rest is not None:
+            self._rest = QPoint(x, y)
+        widget.setMinimumSize(0, 0)                 # sem isso o setFixedSize abaixo redimensionaria em outro passo
+        widget.setMaximumSize(16777215, 16777215)
+        widget.setGeometry(x + offset.x(), y + offset.y(), w, h)
+        widget.setFixedSize(w, h)
+
     def settle(self):
         """Conclui a animação em curso no estado final, imediatamente."""
         if not self.is_animating():

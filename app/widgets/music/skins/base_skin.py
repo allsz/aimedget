@@ -3,9 +3,11 @@ from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, Signal
 from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import QWidget, QMenu
 from app.core.typography import init_app_font
-from app.core.anchor_manager import add_anchor_actions, anchor_manager
+from app.core.anchor_manager import anchor_bar_items, anchor_manager
 from app.core.config_manager import config_manager
-from app.core.widget_animator import AnimatedSkinMixin
+from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
+from app.core.desktop_pin import DesktopPinMixin
+from app.core.scale_animator import ScaleAnimator
 from app.core.position_glide import glide_widget_to
 from app.core.i18n import t
 from app.services.repeat_modes import next_repeat_mode
@@ -15,9 +17,10 @@ from app.core.colorimetry import (
     extract_palette_from_image,
 )
 from app.ui_components.fluent_menu import FluentMusicMenu
+from app.ui_components.menu_action_bar import ActionBarItem
 
 
-class BaseMusicSkin(AnimatedSkinMixin, QWidget):
+class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     """
     Classe base para qualquer Skin do Music Widget.
     Fornece:
@@ -32,6 +35,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
     manage_skins_requested = Signal()
     close_requested = Signal()   # "Fechar widget" no menu de contexto
     volume_wheel_requested = Signal(float)  # entalhes da roda (+ = sobe, fracionário em touchpads)
+    desktop_mode_changed = Signal(bool)     # "Fixar na área de trabalho" no menu (o controller aplica e grava)
 
     # Ordem canônica das skins no menu: (id, chave i18n do título)
     SKIN_MENU_ENTRIES = (
@@ -58,8 +62,9 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         self.canvas_w = base_width
         self.canvas_h = base_height
         self.scale = scale if scale is not None else config_manager.get_effective_music_scale()
-        # Margem transparente (px, nos 4 lados) em volta do cartão: só skins com tema de figurinhas que passam da borda
-        self.art_margin = 0
+        # Margem transparente (px, nos 4 lados) em volta do cartão: a folga fixa do brilho de ancorado e, em skins com
+        # figurinhas que passam da borda, o que elas pedirem a mais (ver _effective_art_margin)
+        self.art_margin = self.ANCHOR_GLOW_ROOM
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -70,6 +75,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         self.setFixedSize(*self._window_size())
         self.setMouseTracking(True)
         self._init_animator()
+        self._init_desktop_pin(config_manager.get_widget_desktop_mode("music_widget"))
 
         # Estado base da mídia
         self.title_text = "Nenhuma mídia ativa"
@@ -277,6 +283,11 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         w, h = self._card_size()
         return QRectF(self.art_margin, self.art_margin, w, h)
 
+    def card_pos(self, event) -> QPointF:
+        """Posição do mouse em coordenadas do CARTÃO (a janela tem uma margem transparente em volta dele)."""
+        m = float(self.art_margin)
+        return event.position() - QPointF(m, m)
+
     def card_origin(self) -> QPoint:
         """Canto superior esquerdo do cartão na tela, sem o deslocamento da animação de surgir/sumir."""
         return self.rest_pos() + QPoint(self.art_margin, self.art_margin)
@@ -297,12 +308,24 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
     _anchor_room = False
 
     def _effective_art_margin(self) -> int:
-        """Margem da janela: a do tema e, com o brilho de ancorado aceso, pelo menos a folga para ele."""
-        wanted = self._wanted_art_margin()
-        return max(wanted, self.ANCHOR_GLOW_ROOM) if self._anchor_room else wanted
+        """
+        Margem da janela: a do tema, e sempre pelo menos a folga do brilho de ancorado. A folga é fixa (não só com o
+        brilho aceso): a janela é translúcida (layered no Windows) e, ao mudar de tamanho, mostra por um quadro a
+        imagem antiga no tamanho novo, o cartão "pulando" ao ancorar. Pixels transparentes não pegam cliques.
+        """
+        if not self._glow_room:
+            return self._wanted_art_margin()
+        return max(self._wanted_art_margin(), self.ANCHOR_GLOW_ROOM)
+
+    _glow_room = True
+
+    def set_glow_room(self, enabled: bool):
+        """Miniaturas do Hub (skins headless, nunca ancoradas) desligam a folga: a imagem é só o cartão e a arte."""
+        self._glow_room = bool(enabled)
+        self._apply_art_margin()
 
     def anchor_glow_room(self, on: bool):
-        """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o cartão fica exatamente onde está."""
+        """O gerenciador de ancoragem avisa que o brilho acendeu/apagou; a folga já existe, então nada se move."""
         self._anchor_room = bool(on)
         self._apply_art_margin()
 
@@ -314,26 +337,43 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         wanted = self._effective_art_margin()
         if wanted == self.art_margin:
             return False
-        delta = wanted - self.art_margin
-        origin = self.pos()
+        old = self.art_margin
         self.art_margin = wanted
-        self.setFixedSize(*self._window_size())
-        self.move(origin.x() - delta, origin.y() - delta)   # o cartão fica onde estava
+        self._resize_window_keeping_card(old)   # o cartão fica onde estava, sem um quadro fora do lugar
         self._update_hitboxes()
         self.update()
         return True
 
+    def _resize_window_keeping_card(self, old_margin: int):
+        """
+        A margem mudou de `old_margin` para `self.art_margin`: tamanho e posição da janela num passo só (antes era
+        setFixedSize e depois move, e entre os dois o cartão aparecia um quadro deslocado: a "tremida" ao ancorar).
+        Usa a posição de repouso, então vale também no meio da animação de surgir/sumir.
+        """
+        delta = self.art_margin - old_margin
+        rest = self.rest_pos()
+        w, h = self._window_size()
+        animator = getattr(self, "animator", None)
+        if animator is not None and hasattr(animator, "set_rest_geometry"):
+            animator.set_rest_geometry(rest.x() - delta, rest.y() - delta, w, h)
+        else:
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+            self.setGeometry(rest.x() - delta, rest.y() - delta, w, h)
+            self.setFixedSize(w, h)
+
     def set_scale(self, new_scale: float, save_preference: bool = True):
         """Aplica novo fator de escala ao widget e reposiciona os elementos."""
         new_scale = max(self.MIN_SAFE_SCALE, min(self.MAX_SAFE_SCALE, round(float(new_scale), 4)))
-        if abs(self.scale - new_scale) < 0.001:
+        if abs(self.scale - new_scale) < 0.00005:
             return
         self.scale = new_scale
         old_margin = self.art_margin
         self.art_margin = self._effective_art_margin()
-        self.setFixedSize(*self._window_size())
         if self.art_margin != old_margin:   # a margem acompanha a escala: o canto do cartão não pode andar
-            self.move(self.x() - (self.art_margin - old_margin), self.y() - (self.art_margin - old_margin))
+            self._resize_window_keeping_card(old_margin)
+        else:
+            self.setFixedSize(*self._window_size())
         self._update_hitboxes()
         if save_preference:
             config_manager.set_music_scale(new_scale)
@@ -346,7 +386,36 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         """Restaura a escala para o modo de detecção automática proporcional à tela."""
         config_manager.set_music_scale(None)
         auto_s = config_manager.get_effective_music_scale()
-        self.set_scale(auto_s, save_preference=False)
+        self.animate_scale_to(auto_s)
+
+    # --- Mudança de tamanho com movimento (automático, presets, troca de tela) ---
+
+    def animate_scale_to(self, target: float, save_preference: bool = False):
+        """
+        Leva a escala até `target` com uma mola, em vez de trocar de tamanho no corte. Sem animações do Windows, com o
+        widget oculto ou com a mudança minúscula, vale na hora. Cada quadro passa por `set_scale` (janela, vizinhos
+        ancorados e sinais acompanham o tamanho).
+        """
+        target = max(self.MIN_SAFE_SCALE, min(self.MAX_SAFE_SCALE, round(float(target), 4)))
+        if save_preference:
+            config_manager.set_music_scale(target)   # grava já; os quadros intermediários não regravam
+        if not animations_enabled() or not self.isVisible() or abs(self.scale - target) < 0.004:
+            self.stop_scale_animation()
+            self.set_scale(target, save_preference=False)
+            return
+        if getattr(self, "_scale_animator", None) is None:
+            self._scale_animator = ScaleAnimator(self, lambda v: self.set_scale(v, save_preference=False), tolerance=0.0004)
+        self._scale_animator.start(self.scale, target)
+
+    def is_scale_animating(self) -> bool:
+        anim = getattr(self, "_scale_animator", None)
+        return anim is not None and anim.is_active()
+
+    def stop_scale_animation(self):
+        """Interrompe a animação de tamanho onde está (o usuário assumiu o controle)."""
+        anim = getattr(self, "_scale_animator", None)
+        if anim is not None:
+            anim.stop()
 
     def get_resize_grip_margin(self) -> float:
         """
@@ -430,6 +499,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         """Inicia redimensionamento se o clique do mouse for na alça inferior direita."""
         if event.button() == Qt.MouseButton.LeftButton:
             if self.is_in_resize_grip(event.position()):
+                self.stop_scale_animation()
                 self._is_resizing = True
                 self._resize_start_pos = event.globalPosition().toPoint()
                 self._resize_start_scale = self.scale
@@ -481,6 +551,7 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
                 self.last_tick = time.perf_counter()  # evita um dt grande no primeiro frame
             timer.start()
         super().showEvent(event)
+        self._desktop_pin_shown()          # camada: logo acima do desktop (fixado) ou sempre no topo
         anchor_manager().register(self)   # num grupo, volta ao lugar dele em relação aos outros widgets
 
     def hideEvent(self, event):
@@ -488,7 +559,13 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         timer = getattr(self, "timer", None)
         if timer is not None:
             timer.stop()
+        if self.is_scale_animating():   # oculto não anima: assenta no tamanho final
+            self._scale_animator.finish()
+        self._desktop_pin_hidden()
         super().hideEvent(event)
+
+    def nativeEvent(self, event_type, message):
+        return self.desktop_pin_native_event(event_type, message)
 
     def enterEvent(self, event):
         self._hovered = True
@@ -549,6 +626,29 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
         menu = FluentMusicMenu(self)
         is_dark = menu._theme.is_dark
 
+        # Barra superior Fluent Rail: ações rápidas sem submenu (Lembrar posição, Ancorar...)
+        is_remembered = config_manager.is_music_position_remembered()
+        bar_items = [
+            ActionBarItem(
+                key="pin",
+                icon="pin",
+                tooltip=t("menu_remember_position"),
+                toggle=True,
+                checked=is_remembered,
+                on_trigger=self._toggle_remember_position,
+            ),
+            ActionBarItem(
+                key="desktop",
+                icon="desktop",
+                tooltip=t("weather_menu_desktop"),     # "Fixar na área de trabalho" (o mesmo texto em todo widget)
+                toggle=True,
+                checked=self.desktop_mode_target(),
+                on_trigger=self.desktop_mode_changed.emit,
+            ),
+            *anchor_bar_items(self),
+        ]
+        menu.add_action_bar(bar_items)
+
         # Submenu "Skins": apenas as skins ativas no Hub, com check na skin em uso
         skins_menu = FluentMusicMenu(t("menu_skins"), menu)
         skins_icon = self._build_minimal_skin_icon("skins", is_dark)
@@ -597,20 +697,11 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
             act_s = QAction(t(s_label), self)
             is_active = (not is_auto) and abs(curr_scale - s_val) < 0.005
             scale_menu.set_trailing_check(act_s, is_active)
-            act_s.triggered.connect(lambda chk=False, s=s_val: self.set_scale(s, save_preference=True))
+            act_s.triggered.connect(lambda chk=False, s=s_val: self.animate_scale_to(s, save_preference=True))
             scale_menu.addAction(act_s)
 
         # "Automático (adaptar à tela)" fica só nas configurações do app (Hub)
         menu.addMenu(scale_menu)
-
-        # Opção de fixar / lembrar posição favorita na tela com check (certo) à direita
-        menu.addSeparator()
-        is_remembered = config_manager.is_music_position_remembered()
-        act_remember_pos = QAction(self._build_minimal_skin_icon("pin", is_dark), t("menu_remember_position"), self)
-        menu.set_trailing_check(act_remember_pos, is_remembered)
-        act_remember_pos.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
-        menu.addAction(act_remember_pos)
-        add_anchor_actions(menu, self, self._build_minimal_skin_icon("anchor", is_dark))
 
         # Fechar o widget (como no Timer): última opção, separada das preferências
         menu.addSeparator()
@@ -671,4 +762,4 @@ class BaseMusicSkin(AnimatedSkinMixin, QWidget):
             from app.core.screen_metrics import get_auto_music_scale
             target_scale = get_auto_music_scale(widget=self)
             if abs(self.scale - target_scale) >= 0.02:
-                self.set_scale(target_scale, save_preference=False)
+                self.animate_scale_to(target_scale)

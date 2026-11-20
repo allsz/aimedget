@@ -22,6 +22,7 @@ from app.services import weather_service as ws
 from app.widgets.weather import conditions as cond
 from app.widgets.weather import motion as mo
 from app.widgets.weather.card_painter import paint_card, tab_at, tab_rect
+from app.widgets.weather.icons import ICONS
 from app.widgets.weather.card_state import PAST, CardState, DayView, DigitGroup, TextMorph, TextSwap
 
 FORECAST = {
@@ -65,7 +66,28 @@ class TestConditions(unittest.TestCase):
             self.assertIn(key, cond.SCENES)
             self.assertIn(key, cond.TAB_ICON)
             for lang in ("pt", "en"):
-                self.assertIn(f"weather_cond_{key}", TRANSLATIONS[lang])
+                self.assertIn(f"weather_cond_{cond.name_key(key)}", TRANSLATIONS[lang])
+
+    def test_every_condition_has_a_night_version(self):
+        night = {cond.PARTLY_CLOUDY: cond.PARTLY_CLOUDY_NIGHT, cond.CLOUDY: cond.CLOUDY_NIGHT, cond.FOG: cond.FOG_NIGHT,
+                 cond.LIGHT_RAIN: cond.LIGHT_RAIN_NIGHT, cond.RAIN: cond.RAIN_NIGHT,
+                 cond.HEAVY_RAIN: cond.HEAVY_RAIN_NIGHT, cond.THUNDERSTORM: cond.THUNDERSTORM_NIGHT,
+                 cond.SNOW: cond.SNOW_NIGHT}
+        codes = {cond.PARTLY_CLOUDY: 2, cond.CLOUDY: 3, cond.FOG: 45, cond.LIGHT_RAIN: 53, cond.RAIN: 63,
+                 cond.HEAVY_RAIN: 65, cond.THUNDERSTORM: 95, cond.SNOW: 73}
+        for day, ngt in night.items():
+            self.assertEqual(cond.condition_from_wmo(codes[day], True), day)
+            self.assertEqual(cond.condition_from_wmo(codes[day], False), ngt)
+            self.assertTrue(cond.is_night(ngt))
+            self.assertFalse(cond.is_night(day))
+            self.assertEqual(cond.name_key(ngt), day)
+            # o céu da noite é mais escuro que o do dia
+            lum = lambda c: sum(int(c[i:i + 2], 16) for i in (1, 3, 5))
+            self.assertLess(lum(cond.scene_for(ngt).sky[0][1]), lum(cond.scene_for(day).sky[0][1]))
+        # o que importa para Gurupi à meia-noite: parcialmente nublado de noite não mostra o sol
+        self.assertEqual(cond.scene_for(cond.PARTLY_CLOUDY_NIGHT).icon, "partly_night")
+        self.assertEqual(cond.TAB_ICON[cond.PARTLY_CLOUDY_NIGHT], "partly_night")
+        self.assertIn("partly_night", ICONS)
 
     def test_rain_intensity_grows(self):
         light, rain, heavy = (cond.scene_for(k) for k in (cond.LIGHT_RAIN, cond.RAIN, cond.HEAVY_RAIN))
@@ -201,6 +223,19 @@ class TestForecastTabsSwap(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def test_day_to_night_swaps_sky_and_icon_with_motion(self):
+        st = CardState()
+        st.set_days("Gurupi", self._days([cond.PARTLY_CLOUDY] * 5), {}, PAST, animate=False)
+        st.set_days("Gurupi", self._days([cond.PARTLY_CLOUDY_NIGHT] + [cond.PARTLY_CLOUDY] * 4), {}, 10.0,
+                    animate=True)
+        self.assertTrue(st.transitions_busy(10.05))          # anima, não pula
+        self.assertEqual(st.icon.current, "partly_night")
+        self.assertEqual(st.icon.previous, "partly")
+        self.assertFalse(st.transitions_busy(20.0))          # termina limpo
+        st.set_days("Gurupi", self._days([cond.PARTLY_CLOUDY] * 5), {}, 30.0, animate=False)   # sem animações
+        self.assertFalse(st.transitions_busy(30.0))
+        self.assertEqual(st.icon.current, "partly")
 
     def _days(self, conds, names=("Mon", "Tue", "Wed", "Thu", "Fri")):
         return [DayView(n, n + "day", c, 20, 25, 15) for n, c in zip(names, conds)]

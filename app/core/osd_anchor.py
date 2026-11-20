@@ -16,7 +16,7 @@ Regra de empilhamento (quando os dois estão na MESMA âncora e aparecem juntos)
 Nada gira: o que muda é qual borda do card fica parada (e para onde ele cresce/desliza).
 """
 
-from PySide6.QtCore import QRect
+from PySide6.QtCore import QPoint, QRect, QSize
 from PySide6.QtWidgets import QApplication
 
 ANCHORS: tuple[str, ...] = ("tl", "tc", "tr", "ml", "mr", "bl", "bc", "br")
@@ -24,6 +24,11 @@ DEFAULT_ANCHOR = "bc"   # centro inferior, logo acima da barra de tarefas (o pad
 
 SIDE_GAP_PX = 24        # distância do card às laterais da tela nas âncoras de canto/lateral (= widgets do Hub)
 STACK_GAP_PX = 10.0     # espaço entre o Caps Lock e o mixer quando empilhados
+
+# Constantes compartilhadas de posicionamento externo (barra de volume da música, HUD de alinhamento, etc.)
+EDGE_GAP = 12           # distância entre o widget e o overlay externo
+SIDE_HYSTERESIS = 48    # folga extra exigida para VOLTAR ao lado direito (evita vai-e-volta na parede)
+SCREEN_MARGIN = 8       # folga mínima até a borda da tela
 
 _VERTICAL = {"t": "top", "m": "middle", "b": "bottom"}
 _HORIZONTAL = {"l": "left", "c": "center", "r": "right"}
@@ -63,6 +68,76 @@ def primary_available_geometry() -> QRect | None:
     if app and app.primaryScreen():
         return app.primaryScreen().availableGeometry()
     return None
+
+
+def compute_osd_placement(
+    anchor: QRect,
+    osd_size: QSize,
+    screen: QRect,
+    gap: int = EDGE_GAP,
+    margin: int = SCREEN_MARGIN,
+    previous_side: str | None = None,
+    hysteresis: int = SIDE_HYSTERESIS,
+) -> tuple[QPoint, str]:
+    """
+    Posição do canto superior esquerdo de um overlay externo (barra de volume, HUD de alinhamento, etc.)
+    e o lado escolhido ("right", "left", "above", "below" ou "over"), sempre fora do widget e dentro da tela.
+
+    1. Preferência: lateral externa direita, centrada verticalmente no widget.
+    2. Sem espaço à direita: lateral esquerda.
+    3. Nenhuma lateral cabe: acima ou abaixo.
+    4. Último recurso: sobre a borda direita do widget, ainda preso na área útil da tela.
+    """
+    w, h = osd_size.width(), osd_size.height()
+    left_limit = screen.left() + margin
+    right_limit = screen.right() + 1 - margin
+    top_limit = screen.top() + margin
+    bottom_limit = screen.bottom() + 1 - margin
+
+    def clamp(v: int, lo: int, hi: int) -> int:
+        return max(lo, min(v, hi)) if hi >= lo else lo
+
+    mid_y = clamp(anchor.center().y() - h // 2, top_limit, bottom_limit - h)
+
+    x_right = anchor.right() + 1 + gap
+    x_left = anchor.left() - gap - w
+    right_fits = x_right + w <= right_limit
+    right_fits_clear = x_right + w <= right_limit - hysteresis
+    left_fits = x_left >= left_limit
+
+    if previous_side == "left":
+        if right_fits_clear:
+            return QPoint(x_right, mid_y), "right"
+        if left_fits:
+            return QPoint(x_left, mid_y), "left"
+        if right_fits:
+            return QPoint(x_right, mid_y), "right"
+    else:
+        if right_fits:
+            return QPoint(x_right, mid_y), "right"
+        if left_fits:
+            return QPoint(x_left, mid_y), "left"
+
+    mid_x = clamp(anchor.center().x() - w // 2, left_limit, right_limit - w)
+    y_above = anchor.top() - gap - h
+    if y_above >= top_limit:
+        return QPoint(mid_x, y_above), "above"
+    y_below = anchor.bottom() + 1 + gap
+    if y_below + h <= bottom_limit:
+        return QPoint(mid_x, y_below), "below"
+
+    return QPoint(clamp(anchor.right() + 1 - w - gap, left_limit, right_limit - w), mid_y), "over"
+
+
+def compute_osd_position(
+    anchor: QRect,
+    osd_size: QSize,
+    screen: QRect,
+    gap: int = EDGE_GAP,
+    margin: int = SCREEN_MARGIN,
+) -> QPoint:
+    """Atalho: só a posição (sem histerese). Ver `compute_osd_placement`."""
+    return compute_osd_placement(anchor, osd_size, screen, gap, margin)[0]
 
 
 class OsdStack:

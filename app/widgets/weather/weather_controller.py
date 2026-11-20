@@ -24,7 +24,7 @@ from app.services.weather_service import (
 from app.widgets.weather import conditions as cond
 from app.widgets.weather import font_skins
 from app.widgets.weather.card_state import MSG_LOADING, MSG_NO_LOCATION, MSG_OFFLINE, PAST, DayView
-from app.ui_components.floating_card import is_rect_on_screen, place_card_default, restore_card_position
+from app.ui_components.floating_card import MAX_SCALE, MIN_SCALE, is_rect_on_screen, place_card_default, restore_card_position
 from app.widgets.weather.weather_card import WeatherCard
 
 SCREEN_MARGIN = 24
@@ -36,7 +36,7 @@ def weekday_labels() -> tuple:
 
 
 def condition_names() -> dict:
-    return {key: t(f"weather_cond_{key}") for key in cond.ALL_CONDITIONS}
+    return {key: t(f"weather_cond_{cond.name_key(key)}") for key in cond.ALL_CONDITIONS}
 
 
 def build_days(report: WeatherReport, unit: str) -> list:
@@ -85,6 +85,9 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
 
         self.skin = WeatherCard(scale=float(config_manager.get_weather("scale", 1.0) or 1.0),
                                 desktop_mode=bool(config_manager.get_weather("desktop_mode", False)))
+        self.skin.scale_auto = bool(config_manager.get_weather("scale_auto", False))
+        if self.skin.scale_auto:
+            self.skin.set_scale(self.skin.auto_scale_target())
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
@@ -204,11 +207,23 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         config_manager.set_weather("units", "f" if unit == "f" else "c")
         self._apply_report(animate=True)
 
-    def set_scale(self, scale: float):
-        """Tamanho do cartão (menu, Hub ou arraste do canto); fica salvo para a próxima vez."""
+    def set_scale(self, scale: float | None):
+        """Tamanho do cartão (menu, Hub ou arraste do canto), com movimento; None = automático (segue a tela)."""
+        auto = scale is None
+        config_manager.set_weather("scale_auto", auto)
+        self.skin.scale_auto = auto
+        target = self.skin.auto_scale_target() if auto else max(MIN_SCALE, min(MAX_SCALE, float(scale)))
+        self.skin.animate_scale_to(target)
+        config_manager.set_weather("scale", round(target, 3))
+        self.scale_changed.emit(target)
+
+    def apply_scale_live(self, scale: float):
+        """Arraste do controle de tamanho no Hub: aplica na hora (o ponteiro já é o movimento), sem gravar."""
+        self.skin.stop_scale_animation()
         self.skin.set_scale(scale)
-        config_manager.set_weather("scale", round(self.skin.scale(), 3))
-        self.scale_changed.emit(self.skin.scale())
+
+    def is_scale_auto(self) -> bool:
+        return bool(self.skin.scale_auto)
 
     def set_desktop_mode(self, enabled: bool):
         """Fixar na área de trabalho: o cartão fica no nível do desktop e qualquer janela o cobre."""

@@ -534,3 +534,69 @@ def test_batch_failure_falls_back_to_moving_one_by_one(env, monkeypatch):
     assert _rect(b).l - before_b.l == pytest.approx(-30, abs=1)
     assert _rect(b).t - before_b.t == pytest.approx(15, abs=1)
     env.mgr.drag_end(a)
+
+
+# --- Alinhador (HUD): só o mais próximo, desliza, uma camada só ----------------------------------------------------
+
+
+def test_align_without_group_takes_only_the_nearest_widget(env):
+    a = env.make("weather", 200, 200)
+    near = env.make("performance", 620, 240)
+    far = env.make("music", 1400, 700)
+    far_before = _rect(far)
+    env.mgr.align_widgets(a, axis="y", align=0, gap=10.0)
+    assert sorted(env.mgr.group_of("weather").keys()) == ["performance", "weather"]
+    assert len(env.mgr.group_of("music").keys()) == 1                  # o de longe não foi puxado
+    assert (_rect(far).l, _rect(far).t) == (far_before.l, far_before.t)
+    ra, rn = _rect(a), _rect(near)
+    assert abs(rn.l - ra.l) < 1.0 and abs(rn.t - ra.b - 10.0) < 1.0
+
+
+def test_align_slides_into_place_then_ends_clean(env):
+    env.state["anim"] = True
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 700, 260)
+    start = _rect(b)
+    env.mgr.align_widgets(a, axis="y", align=0, gap=10.0)
+    goal = (_rect(a).l, _rect(a).b + 10.0)
+    assert env.mgr._arranging()                                          # não pulou para o lugar
+    xs = []
+    for _ in range(80):
+        QTest.qWait(16)
+        xs.append(_rect(b).l)
+        if not env.mgr._arranging():
+            break
+    assert len(set(round(x) for x in xs)) > 4                           # passou por várias posições
+    # vai na direção do alvo; a mola SLIDE (420/34) passa no máximo uns 2 px e volta, sem ir e vir
+    assert all(x2 <= x1 + 3.0 for x1, x2 in zip([start.l] + xs, xs))
+    assert min(xs) >= goal[0] - 4.0
+    assert not env.mgr._arranging()
+    assert abs(_rect(b).l - goal[0]) < 1.0 and abs(_rect(b).t - goal[1]) < 1.0
+    assert env.store.get("groups")                                      # salvo ao terminar
+
+
+def test_align_without_animations_is_instant(env):
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 700, 260)
+    env.mgr.align_widgets(a, axis="x", align=0, gap=10.0)
+    assert not env.mgr._arranging()
+    assert abs(_rect(b).l - _rect(a).r - 10.0) < 1.0 and abs(_rect(b).t - _rect(a).t) < 1.0
+
+
+def test_aligned_group_shares_the_reference_layer(env):
+    a = _pinnable(env, "weather", 200, 200, pinned=True)
+    b = _pinnable(env, "performance", 700, 260, pinned=False)
+    QTest.qWait(900)
+    env.mgr.align_widgets(a, axis="y", align=0)
+    QTest.qWait(900)
+    assert a.is_desktop_mode() and b.is_desktop_mode()
+
+
+def test_group_with_a_member_that_cannot_pin_stays_on_top(env):
+    a = _pinnable(env, "weather", 200, 200, pinned=True)
+    music = env.make("music", 700, 260)
+    music.desktop_mode_target = None          # um widget sem "Fixar na área de trabalho" (salvaguarda do anchor)
+    QTest.qWait(900)
+    env.mgr.align_widgets(a, axis="y", align=0)
+    QTest.qWait(900)
+    assert not a.is_desktop_mode()            # uma camada só: o grupo inteiro fica por cima

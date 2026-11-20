@@ -31,6 +31,7 @@ import shiboken6
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
+from app.core.refresh_rate import refresh_interval_ms
 
 from app.core import anchor_geometry as geo
 from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dist_to_seg, smooth
@@ -53,6 +54,8 @@ PULSE_FRAME_MS = 33               # só o pulso pede quadros: 30 fps bastam e cu
 MAGNET_RATE = 22.0                # 1/s: quão rápido o ímã puxa
 GAIN_RATE = 12.0                  # 1/s: rede acendendo/apagando
 FOCUS_RATE = 14.0                 # 1/s: a parte acesa seguindo a borda
+ARRANGE_SPRING = (420.0, 34.0)    # SLIDE: os widgets alinhados deslizam até o lugar (massa 1, 4 subpassos)
+ARRANGE_SUBSTEPS = 4
 NET_MARGIN = max(CELL * 4, round(REACH * 0.75 / CELL) * CELL)   # até onde a rede de aproximação vai da borda
 
 
@@ -209,6 +212,7 @@ class AnchorManager(QObject):
         self._dirty = False
         self._layer_sync = False
         self._overlay = None
+        self._arrange: Optional[dict] = None   # alinhamento em curso: {group, root, ref, save, st: {key: [x, y, vx, vy]}}
         self._clock = QTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
@@ -305,6 +309,8 @@ class AnchorManager(QObject):
         r = card_rect(w)
         self._sizes[key] = (r.w, r.h)
         g = self.group_of(key)
+        if self._arranging(g):
+            return          # o alinhamento em curso refaz o grupo a cada quadro com os tamanhos novos
         if len(g.keys()) > 1 and not (self._drag and self._drag.group is g):
             self._reflow(g, key)
 
@@ -361,6 +367,282 @@ class AnchorManager(QObject):
         g.anchored = bool(anchored)
         self._wake()   # o brilho da borda acende (ou apaga) suavemente; sem animações do Windows, na hora
 
+    # --- Alinhamento & Igualar tamanho ---
+
+    def current_gap_of(self, w) -> float:
+        """Retorna a folga atual (px) do grupo de `w`, ou `geo.GAP` (10 px) se ainda não estiver agrupado."""
+        key = self._key(w)
+        if key is None:
+            return float(geo.GAP)
+        tree = self.group_of(key).tree
+        if isinstance(tree, geo.Join):
+            return float(tree.gap)
+        return float(geo.GAP)
+
+    @staticmethod
+    def match_widget_size(w, target_w: Optional[float] = None, target_h: Optional[float] = None,
+                          animate: bool = False) -> None:
+        """
+        Ajusta a escala/lado de `w` para igualar a largura ou altura alvo, respeitando os limites do widget. Com
+        `animate` o tamanho vai com a mola de escala do widget (sem animações do Windows, na hora).
+        """
+        if target_w is None and target_h is None:
+            return
+        animate = animate and animations_enabled() and w.isVisible()
+        if hasattr(w, "set_square_side") and hasattr(w, "MIN_WIDTH") and hasattr(w, "MAX_WIDTH"):
+            target = target_w if target_w is not None else target_h
+            side = max(int(w.MIN_WIDTH), min(int(w.MAX_WIDTH), int(round(target))))
+            config_manager.save_timer_size(side, side)
+            if animate and abs(w.square_side() - side) >= 1:
+                from app.core.scale_animator import ScaleAnimator
+                anim = getattr(w, "_align_side_anim", None)
+                if anim is None:
+                    anim = w._align_side_anim = ScaleAnimator(w, lambda v, w=w: w.set_square_side(int(round(v))),
+                                                              tolerance=0.5)
+                anim.start(float(w.square_side()), float(side))
+            else:
+                w.set_square_side(side)
+            return
+        if hasattr(w, "_card_w") and hasattr(w, "_card_h") and hasattr(w, "set_scale"):
+            base = float(w._card_w) if target_w is not None else float(w._card_h)
+            target = float(target_w if target_w is not None else target_h)
+            if base > 0:
+                scale = target / base
+                if animate and hasattr(w, "animate_scale_to"):
+                    w.animate_scale_to(scale)
+                else:
+                    w.set_scale(scale)
+                    scale = w._scale
+                sig = getattr(w, "scale_changed", None)
+                if sig is not None:
+                    sig.emit(scale)      # o controller grava o tamanho (e segue animando até ele)
+            return
+        if hasattr(w, "canvas_w") and hasattr(w, "canvas_h") and hasattr(w, "set_scale"):
+            base = float(w.canvas_w) if target_w is not None else float(w.canvas_h)
+            target = float(target_w if target_w is not None else target_h)
+            if base > 0:
+                if animate and hasattr(w, "animate_scale_to"):
+                    w.animate_scale_to(target / base, save_preference=True)
+                else:
+                    w.set_scale(target / base, save_preference=True)
+
+    @staticmethod
+    def _size_busy(w) -> bool:
+        """O tamanho de `w` ainda está animando (mola de escala do widget ou a do lado do timer)?"""
+        fn = getattr(w, "is_scale_animating", None)
+        if fn is not None and fn():
+            return True
+        anim = getattr(w, "_align_side_anim", None)
+        return anim is not None and anim.is_active()
+
+    def _visible(self, k: str) -> bool:
+        w = self.window(k)
+        return w is not None and w.isVisible()
+
+    def nearest_key(self, ref_key: str) -> Optional[str]:
+        """O widget visível mais perto do cartão de `ref_key` (distância entre as bordas), fora do grupo dele."""
+        ref = self.window(ref_key)
+        if ref is None:
+            return None
+        R = card_rect(ref)
+        mine = set(self.group_of(ref_key).keys())
+        best, best_d = None, None
+        for k in KNOWN_KEYS:
+            if k in mine or not self._visible(k):
+                continue
+            O = card_rect(self.window(k))
+            d = math.hypot(max(0.0, O.l - R.r, R.l - O.r), max(0.0, O.t - R.b, R.t - O.b))
+            if best_d is None or d < best_d:
+                best, best_d = k, d
+        return best
+
+    def _align_target_keys(self, ref_key: str) -> list[str]:
+        """
+        Chaves dos widgets que entram no alinhamento: o grupo atual; sem grupo, só o widget mais próximo (com o grupo
+        dele, se tiver). Nunca todos os widgets da tela: quem não foi escolhido não é puxado de longe.
+        """
+        g = self.group_of(ref_key)
+        if len(g.keys()) > 1:
+            keys = [k for k in g.keys() if self._visible(k)]
+        else:
+            near = self.nearest_key(ref_key)
+            keys = [ref_key] + ([k for k in self.group_of(near).keys() if self._visible(k)] if near else [])
+        if ref_key not in keys:
+            keys.insert(0, ref_key)
+        else:
+            # Mantém o widget clicado como referência no início da lista
+            keys = [ref_key] + [k for k in keys if k != ref_key]
+        return keys
+
+    def align_widgets(
+        self,
+        ref_widget,
+        axis: str = "y",
+        align: int = 0,
+        gap: float = geo.GAP,
+        match_size: bool = False,
+        save: bool = True,
+    ) -> None:
+        """Alinha perfeitamente os widgets no eixo escolhido (`'y'` empilhado, `'x'` lado a lado) e opcionalmente iguala o tamanho."""
+        if self.window(getattr(ref_widget, "ANCHOR_KEY", "")) is not ref_widget:
+            self.register(ref_widget)
+        ref_key = self._key(ref_widget)
+        if ref_key is None or axis not in geo.AXES:
+            return
+
+        keys = self._align_target_keys(ref_key)
+        if len(keys) < 2:
+            return
+
+        self._finish_arrange()      # um alinhamento anterior ainda deslizando termina no lugar dele
+        ref_rect = card_rect(ref_widget)
+        animate = save and animations_enabled() and ref_widget.isVisible()
+
+        # Monta árvore limpa preservando a ordem (ref_widget primeiro) e a folga exata
+        tree: geo.Tree = keys[0]
+        for k in keys[1:]:
+            tree = geo.Join(tree, k, axis, int(align), 0.0, float(gap))
+
+        # Remove os membros de grupos antigos (que tenham outros widgets fora de `keys`) e os reúne no grupo alinhado
+        key_set = set(keys)
+        old_anchored = self.group_of(ref_key).anchored
+        new_group = Group(tree, anchored=old_anchored)
+        for k in keys:
+            old = self._groups.get(k)
+            if old is not None and old is not new_group and len(old.keys()) > 1:
+                if any(m not in key_set for m in old.keys()):
+                    rects = self._rects_of(old)
+                    rem = geo.prune(old.tree, k, rects) if rects is not None else None
+                    if rem is not None:
+                        old.tree = rem
+            self._groups[k] = new_group
+            w = self.window(k)
+            if w is not None:
+                r = card_rect(w)
+                self._sizes[k] = (r.w, r.h)
+        self._unify_layer(new_group, ref_widget)
+
+        if animate:
+            # Uma linha do tempo só: os tamanhos vão com a mola de escala e as posições deslizam (mola SLIDE) até o
+            # lugar calculado a cada quadro com os tamanhos daquele quadro.
+            st = {}
+            for k in keys:
+                w = self.window(k)
+                if w is not None and k != ref_key:
+                    r = card_rect(w)
+                    st[k] = [r.l, r.t, 0.0, 0.0]
+            self._arrange = {"group": new_group, "root": ref_key, "ref": ref_widget, "save": save, "st": st}
+        if match_size:
+            for k in keys[1:]:
+                w = self.window(k)
+                if w is None:
+                    continue
+                if axis == "y":
+                    self.match_widget_size(w, target_w=ref_rect.w, animate=animate)
+                else:
+                    self.match_widget_size(w, target_h=ref_rect.h, animate=animate)
+        if animate:
+            self._wake()
+            return
+        self._reflow(new_group, ref_key)
+        if save:
+            self.commit_group_layout(ref_widget)
+
+    # --- Alinhamento animado ---
+
+    def _arranging(self, g: Optional[Group] = None) -> bool:
+        a = self._arrange
+        return a is not None and (g is None or a["group"] is g)
+
+    def _finish_arrange(self):
+        """Leva o alinhamento em curso ao fim na hora (arraste novo, outro alinhamento): tudo no lugar e salvo."""
+        a, self._arrange = self._arrange, None
+        if a is None:
+            return
+        if self._visible(a["root"]):
+            self._reflow(a["group"], a["root"])
+        if a["save"] and _alive(a["ref"]):
+            self.commit_group_layout(a["ref"])
+
+    def _step_arrange(self, dt: float) -> bool:
+        """Um quadro do deslize do alinhamento. Devolve True enquanto ainda há movimento."""
+        a = self._arrange
+        g, root = a["group"], a["root"]
+        rw = self.window(root)
+        if rw is None or not rw.isVisible() or any(self._groups.get(k) is not g for k in a["st"]):
+            self._finish_arrange()
+            return False
+        sizes = {}
+        for k in g.keys():
+            w = self.window(k)
+            if w is not None:
+                r = card_rect(w)
+                sizes[k] = self._sizes[k] = (r.w, r.h)
+            elif k in self._sizes:
+                sizes[k] = self._sizes[k]
+            else:
+                self._finish_arrange()
+                return False
+        rr = card_rect(rw)
+        goal = geo.layout(g.tree, sizes, root, (rr.l, rr.t))
+        kk, cc = ARRANGE_SPRING
+        sub = dt / ARRANGE_SUBSTEPS
+        moves, settled = [], True
+        for k, s in a["st"].items():
+            w = self.window(k)
+            if w is None or k not in goal:
+                continue
+            gx, gy = goal[k]
+            for _ in range(ARRANGE_SUBSTEPS):
+                s[2] += (-kk * (s[0] - gx) - cc * s[2]) * sub
+                s[3] += (-kk * (s[1] - gy) - cc * s[3]) * sub
+                s[0] += s[2] * sub
+                s[1] += s[3] * sub
+            if abs(s[0] - gx) < 0.5 and abs(s[1] - gy) < 0.5 and abs(s[2]) < 8.0 and abs(s[3]) < 8.0:
+                s[0], s[1], s[2], s[3] = gx, gy, 0.0, 0.0
+            else:
+                settled = False
+            moves.append((w, s[0], s[1]))
+        move_cards(moves)
+        if settled and not any(self._size_busy(w) for k in g.keys() if (w := self.window(k)) is not None):
+            self._finish_arrange()
+            return False
+        return True
+
+    def set_group_gap(self, ref_widget, gap: float, save: bool = True) -> None:
+        """Atualiza em tempo real a folga (px) entre os widgets do grupo de `ref_widget`."""
+        key = self._key(ref_widget)
+        if key is None:
+            return
+        g = self.group_of(key)
+        if len(g.keys()) < 2:
+            return
+
+        def _update_gap(node: geo.Tree) -> None:
+            if isinstance(node, geo.Join):
+                node.gap = float(gap)
+                _update_gap(node.A)
+                _update_gap(node.B)
+
+        _update_gap(g.tree)
+        if self._arranging(g):
+            return          # o deslize em curso já vai para a folga nova
+        self._reflow(g, key)
+        if save:
+            self.commit_group_layout(ref_widget)
+
+    def commit_group_layout(self, ref_widget) -> None:
+        """Grava em disco a árvore do grupo e as posições lembradas dos membros (chamado ao soltar o slider)."""
+        key = self._key(ref_widget)
+        if key is None:
+            return
+        g = self.group_of(key)
+        for k in g.keys():
+            w = self.window(k)
+            if w is not None:
+                _persist(w)
+        self._save()
+
     def detach(self, w):
         """Tira o widget do grupo; os outros continuam juntos, exatamente onde estão."""
         key = self._key(w)
@@ -408,6 +690,7 @@ class AnchorManager(QObject):
             self._wake()
 
     def _begin(self, key: str) -> _Drag:
+        self._finish_arrange()      # pegar um widget no meio do deslize do alinhamento: ele assenta e o arraste segue
         g = self.group_of(key)
         start = {}
         for k in g.keys():
@@ -505,7 +788,7 @@ class AnchorManager(QObject):
         for k in ng.keys():
             self._groups[k] = ng
         dg.gain = og.gain = 0.0
-        pinned = self._adopt_layer(dg, og)
+        pinned = self._adopt_layer(dg, og, ng)
         self._save()
         if animations_enabled() and c.origin is not None:
             self._boom = _Boom(time.perf_counter(), U, c.origin, c.ax, focus, boom_style(), pinned)
@@ -553,11 +836,12 @@ class AnchorManager(QObject):
         if len(g.keys()) > 1:
             self._set_group_layer(g, bool(pinned), skip=key)
 
-    def _adopt_layer(self, dragged: Group, target: Group) -> bool:
+    def _adopt_layer(self, dragged: Group, target: Group, merged: Optional[Group] = None) -> bool:
         """
         Quem foi arrastado até o outro passa a ter o comportamento de camada DELE: arrastar o Desempenho até o Clima
         fixado na área de trabalho fixa o Desempenho também (com a onda de pontos de sempre), e o contrário solta.
-        Widgets sem a opção (música, timer) ficam como estão e, como alvo, contam como "por cima" (não fixados).
+        Widgets sem a opção (música, timer) ficam sempre por cima; como o grupo tem uma camada só, um grupo com um
+        deles fica todo por cima (senão a música ficava acima de tudo e o resto do grupo atrás das janelas).
         Devolve a camada do grupo novo.
         """
         pinned = False
@@ -566,7 +850,20 @@ class AnchorManager(QObject):
             if w is not None and self._pinned_of(w) is not None:
                 pinned = self._pinned_of(w)
                 break
-        self._set_group_layer(dragged, pinned)
+        group = merged or dragged
+        if pinned and not self._can_pin(group):
+            pinned = False
+        self._set_group_layer(group, pinned)
+        return pinned
+
+    def _can_pin(self, g: Group) -> bool:
+        """Todos os membros (com janela) têm a opção "Fixar na área de trabalho"?"""
+        return all(self._pinned_of(w) is not None for k in g.keys() if (w := self.window(k)) is not None)
+
+    def _unify_layer(self, g: Group, ref_widget) -> bool:
+        """Grupo montado pelo alinhador: todos na camada do widget de referência (por cima, se alguém não fixa)."""
+        pinned = bool(self._pinned_of(ref_widget)) and self._can_pin(g)
+        self._set_group_layer(g, pinned)
         return pinned
 
     # --- Relógio ---
@@ -576,6 +873,7 @@ class AnchorManager(QObject):
         self._dirty = True
         if not self._clock.isActive():
             self._last = time.perf_counter()
+            self._clock.setInterval(refresh_interval_ms())
             self._clock.start()
         self._tick()
 
@@ -598,6 +896,8 @@ class AnchorManager(QObject):
                 self._apply_drag()
                 changed = True
             moving = d.cur != d.target
+        if self._arrange is not None and self._step_arrange(dt if anim else 1.0):
+            moving = True
         for g in self.groups():
             target = clamp(g.prox["b"], 0.0, 1.0) ** 0.75 if g.prox else 0.0
             old_gain, old_focus = g.gain, g.focus
@@ -644,7 +944,7 @@ class AnchorManager(QObject):
         if not moving and not pulsing:
             self._clock.stop()
         else:
-            interval = FRAME_MS if moving else PULSE_FRAME_MS
+            interval = refresh_interval_ms() if moving else PULSE_FRAME_MS
             if self._clock.interval() != interval:
                 self._clock.setInterval(interval)
 
@@ -843,6 +1143,52 @@ def anchor_manager() -> AnchorManager:
     if _manager is None or not shiboken6.isValid(_manager):
         _manager = AnchorManager()
     return _manager
+
+
+def anchor_bar_items(w) -> list:
+    """Botões mínimos de Ancorar, Alinhar (HUD flutuante) e Soltar do grupo para a barra superior Fluent Rail."""
+    from app.ui_components.menu_action_bar import ActionBarItem
+
+    mgr = anchor_manager()
+    if mgr.window(getattr(w, "ANCHOR_KEY", "")) is not w:
+        mgr.register(w)
+    if mgr._key(w) is None:
+        return []
+
+    def _open_aligner():
+        from app.ui_components.align_hud import open_align_hud
+        QTimer.singleShot(0, lambda: open_align_hud(w))
+
+    items = [
+        ActionBarItem(
+            key="anchor",
+            icon="anchor",
+            tooltip=t("anchor_menu_anchor"),
+            toggle=True,
+            checked=mgr.is_anchored(w),
+            on_trigger=lambda checked: mgr.set_anchored(w, checked),
+        ),
+        ActionBarItem(
+            key="align",
+            icon="align",
+            tooltip=t("align_menu_open"),
+            toggle=False,
+            close_menu=True,
+            on_trigger=_open_aligner,
+        ),
+    ]
+    if mgr.is_grouped(w):
+        items.append(
+            ActionBarItem(
+                key="detach",
+                icon="detach",
+                tooltip=t("anchor_menu_detach"),
+                toggle=False,
+                close_menu=True,
+                on_trigger=lambda: mgr.detach(w),
+            )
+        )
+    return items
 
 
 def add_anchor_actions(menu, w, icon=None):

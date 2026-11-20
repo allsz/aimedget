@@ -6,7 +6,7 @@ Páginas de conteúdo do Aimedget Hub revisadas com a skill Impeccable:
 """
 
 from typing import List, Optional
-from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -31,6 +31,9 @@ from app.hub.components.accent_entry import AccentEntryRow
 from app.hub.components.collapsible_section import skin_and_theme_block, skin_supports_themes
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.tab_pill import ChipGroup
+from app.hub.components.theme_swatch import ThemeSwatchGroup
+from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN, pct_to_scale, scale_to_pct
+from app.hub.components.scale_card import ScaleCard
 from app.hub.components.hue_slider import MARGIN as SLIDER_MARGIN, HueSlider
 from app.hub.components.theme_import_dialog import warning_color
 from app.hub.components.pill_switch import PillSwitch
@@ -100,6 +103,7 @@ class BaseHubPage(QWidget):
         self.lbl_sub = QLabel(subtitle)
         self.lbl_sub.setProperty("class", "SectionSubtitle")
         self.lbl_sub.setWordWrap(True)
+        self.lbl_sub.setVisible(bool(subtitle))
         self.content_layout.addWidget(self.lbl_sub)
 
         self.scroll.setWidget(self.content_widget)
@@ -122,6 +126,7 @@ class BaseHubPage(QWidget):
     def set_header(self, title: str, subtitle: str):
         self.lbl_title.setText(title)
         self.lbl_sub.setText(subtitle)
+        self.lbl_sub.setVisible(bool(subtitle))
 
     def retranslate_ui(self):
         pass
@@ -235,11 +240,18 @@ class OverviewPage(BaseHubPage):
 
         self.t_anchor = QLabel(t("anchor_card_title"))
         self.t_anchor.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self.anchor_help = HelpBadge(t("anchor_card_help"), theme=self._theme)
+        anchor_title_row = QHBoxLayout()
+        anchor_title_row.setContentsMargins(0, 0, 0, 0)
+        anchor_title_row.setSpacing(6)
+        anchor_title_row.addWidget(self.t_anchor)
+        anchor_title_row.addWidget(self.anchor_help, alignment=Qt.AlignmentFlag.AlignVCenter)
+        anchor_title_row.addStretch()
         self.s_anchor = QLabel(t("anchor_card_sub"))
         self.s_anchor.setWordWrap(True)
         head = QVBoxLayout()
         head.setSpacing(3)
-        head.addWidget(self.t_anchor)
+        head.addLayout(anchor_title_row)
         head.addWidget(self.s_anchor)
         lay.addLayout(head)
 
@@ -283,10 +295,14 @@ class OverviewPage(BaseHubPage):
     def _style_anchor_card(self, theme: HubTheme):
         for lbl in (self.s_anchor, self.s_anchor_net, self.s_anchor_boom):
             lbl.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+        if hasattr(self, "anchor_help"):
+            self.anchor_help.set_theme(theme)
 
     def _retranslate_anchor_card(self):
         self.t_anchor.setText(t("anchor_card_title"))
         self.s_anchor.setText(t("anchor_card_sub"))
+        if hasattr(self, "anchor_help"):
+            self.anchor_help.set_text(t("anchor_card_help"))
         self.t_anchor_net.setText(t("anchor_net_title"))
         self.s_anchor_net.setText(t("anchor_net_sub"))
         self.t_anchor_boom.setText(t("anchor_boom_title"))
@@ -670,41 +686,19 @@ class MusicPage(BaseHubPage):
         pos_info.addWidget(self.t_pos)
         pos_info.addWidget(self.s_pos)
         pos_layout.addLayout(pos_info, stretch=1)
+        pos_layout.setAlignment(pos_info, Qt.AlignmentFlag.AlignVCenter)
 
         self.pos_picker = PositionPicker(current_pos="br", theme=self._theme, parent=pos_card)
         self.pos_picker.position_changed.connect(self._on_pos_changed)
         pos_layout.addWidget(self.pos_picker)
         self.content_layout.addWidget(pos_card)
 
-        # 2. Card de Tamanho e Escala Proporcional
-        scale_card = QFrame()
-        scale_card.setProperty("class", "HubCard")
-        scale_layout = QHBoxLayout(scale_card)
-        scale_layout.setContentsMargins(18, 14, 18, 14)
-
-        scale_info = QVBoxLayout()
-        scale_info.setSpacing(3)
-        self.t_scale = QLabel(t("music_scale_title"))
-        self.t_scale.setStyleSheet("font-size: 14px; font-weight: 600;")
-        self.s_scale = QLabel(t("music_scale_sub"))
-        self.s_scale.setWordWrap(True)
-        self.s_scale.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        scale_info.addWidget(self.t_scale)
-        scale_info.addWidget(self.s_scale)
-        scale_layout.addLayout(scale_info, stretch=1)
-
-        self._scale_options = [
-            ("auto", t("music_scale_auto")),
-            ("0.375", "75%"),
-            ("0.50", "100%"),
-            ("0.625", "125%"),
-            ("0.75", "150%"),
-        ]
-
-        self._scale_group = ChipGroup(self._scale_options, self._on_scale_selected, self._theme)
-        self._scale_chips = self._scale_group.buttons
-        scale_layout.addWidget(self._scale_group)
-        self.content_layout.addWidget(scale_card)
+        # 2. Card de Tamanho e Escala (Automático + controle em %, o mesmo dos outros widgets)
+        self.scale_card = ScaleCard("music_scale_title", "music_scale_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
+        self.scale_card.auto_clicked.connect(lambda: self.bridge.set_music_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.bridge.apply_music_scale_live(pct_to_scale(pct)))
+        self.scale_card.committed.connect(lambda pct: self.bridge.set_music_scale(pct_to_scale(pct)))
+        self.content_layout.addWidget(self.scale_card)
 
         self.update_scale_selection()
         self.bridge.music_scale_changed.connect(self.update_scale_selection)
@@ -724,6 +718,7 @@ class MusicPage(BaseHubPage):
         self.sk_desc = QLabel(t("music_style_sub"))
         self.sk_desc.setWordWrap(True)
         self.sk_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self.sk_desc.setVisible(bool(t("music_style_sub")))
         header_layout.addWidget(self.sk_header)
         header_layout.addWidget(self.sk_desc)
         sk_layout.addLayout(header_layout)
@@ -845,6 +840,28 @@ class MusicPage(BaseHubPage):
         row3.addWidget(self.sw_wheel_volume)
         b_layout.addLayout(row3)
 
+        # "Fixar na área de trabalho": o mesmo dos outros widgets (num grupo ancorado, todos vão juntos)
+        sep_desktop = QFrame()
+        sep_desktop.setFrameShape(QFrame.Shape.HLine)
+        sep_desktop.setProperty("class", "HubDivider")
+        b_layout.addWidget(sep_desktop)
+        row_desktop = QHBoxLayout()
+        info_desktop = QVBoxLayout()
+        info_desktop.setSpacing(2)
+        self.ld_title = QLabel(t("weather_opt_desktop_title"))
+        self.ld_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.ld_sub = QLabel(t("weather_opt_desktop_sub"))
+        self.ld_sub.setWordWrap(True)
+        self.ld_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_desktop.addWidget(self.ld_title)
+        info_desktop.addWidget(self.ld_sub)
+        self.sw_desktop = PillSwitch(checked=self.bridge.music_controller.is_desktop_mode(), theme=self._theme)
+        self.sw_desktop.toggled.connect(self.bridge.music_controller.set_desktop_mode)
+        self.bridge.music_controller.desktop_mode_changed.connect(self._sync_desktop)
+        row_desktop.addLayout(info_desktop, stretch=1)
+        row_desktop.addWidget(self.sw_desktop)
+        b_layout.addLayout(row_desktop)
+
         self.content_layout.addWidget(behav_card)
 
         # 4. Card de Atalho de Teclado
@@ -863,6 +880,7 @@ class MusicPage(BaseHubPage):
         hk_info.addWidget(self.hk_title)
         hk_info.addWidget(self.hk_desc)
         hk_layout.addLayout(hk_info, stretch=1)
+        hk_layout.setAlignment(hk_info, Qt.AlignmentFlag.AlignVCenter)
 
         self.hk_picker = ShortcutPicker(
             current_shortcut=config_manager.get_music_hotkey("Win+Alt+M"),
@@ -882,45 +900,14 @@ class MusicPage(BaseHubPage):
 
     def update_scale_selection(self, scale: object = _SCALE_UNSET):
         """
-        Atualiza o estado visual dos chips de seleção de escala.
-        Se a escala for customizada pelo usuário (não-auto e diferente dos presets fixos),
-        nenhum dos chips de escala deve aparecer selecionado.
+        Reflete o tamanho do widget no cartão. O sinal traz ora a escala efetiva (quadro a quadro, do widget), ora a
+        preferência; a verdade do modo automático está sempre na configuração.
         """
-        if not hasattr(self, "_scale_chips") or not self._scale_chips:
+        if not hasattr(self, "scale_card"):
             return
-
-        if scale is _SCALE_UNSET:
-            curr_scale = config_manager.get_music_scale()
-        else:
-            curr_scale = scale
-
-        is_auto = (curr_scale is None)
-
-        matching_key = None
-        if is_auto:
-            matching_key = "auto"
-        else:
-            for opt_key, _ in self._scale_options:
-                if opt_key == "auto":
-                    continue
-                try:
-                    if abs(float(opt_key) - float(curr_scale)) < 0.005:
-                        matching_key = opt_key
-                        break
-                except (ValueError, TypeError):
-                    continue
-
-        self._scale_group.set_selected(matching_key)
-
-    def _on_scale_selected(self, opt_key: str):
-        if opt_key == "auto":
-            self.bridge.set_music_scale(None)
-        else:
-            try:
-                scale_val = float(opt_key)
-                self.bridge.set_music_scale(scale_val)
-            except ValueError:
-                return
+        skin = getattr(self.bridge.music_controller, "skin", None)
+        effective = skin.scale if skin is not None else config_manager.get_effective_music_scale()
+        self.scale_card.set_state(config_manager.is_music_scale_auto(), scale_to_pct(effective))
 
     def _on_hotkey_changed(self, new_shortcut: str):
         self.bridge.update_music_hotkey(new_shortcut)
@@ -962,6 +949,13 @@ class MusicPage(BaseHubPage):
         for k, c in self._skin_cards.items():
             c.set_selected(k == skin_key)
 
+    def _sync_desktop(self, enabled: bool):
+        """O widget mudou de camada por outro caminho (menu dele, ou o grupo ancorado): a chave acompanha."""
+        if hasattr(self, "sw_desktop") and self.sw_desktop.isChecked() != enabled:
+            self.sw_desktop.blockSignals(True)
+            self.sw_desktop.set_checked(enabled, animated=True)
+            self.sw_desktop.blockSignals(False)
+
     def _on_auto_launch_toggled(self, checked: bool):
         self.bridge.set_music_auto_launch(checked)
 
@@ -976,16 +970,14 @@ class MusicPage(BaseHubPage):
             self.t_pos.setText(t("music_pos_title"))
         if hasattr(self, "s_pos"):
             self.s_pos.setText(t("music_pos_sub"))
-        if hasattr(self, "t_scale"):
-            self.t_scale.setText(t("music_scale_title"))
-        if hasattr(self, "s_scale"):
-            self.s_scale.setText(t("music_scale_sub"))
-        if hasattr(self, "_scale_chips") and "auto" in self._scale_chips:
-            self._scale_chips["auto"].setText(t("music_scale_auto"))
+        if hasattr(self, "scale_card"):
+            self.scale_card.retranslate()
         if hasattr(self, "sk_header"):
             self.sk_header.setText(t("music_style_title"))
         if hasattr(self, "sk_desc"):
-            self.sk_desc.setText(t("music_style_sub"))
+            txt = t("music_style_sub")
+            self.sk_desc.setText(txt)
+            self.sk_desc.setVisible(bool(txt))
         if hasattr(self, "l1_title"):
             self.l1_title.setText(t("music_auto_launch_title"))
         if hasattr(self, "l1_sub"):
@@ -998,6 +990,10 @@ class MusicPage(BaseHubPage):
             self.l3_title.setText(t("music_wheel_volume_title"))
         if hasattr(self, "l3_sub"):
             self.l3_sub.setText(t("music_wheel_volume_sub"))
+        if hasattr(self, "ld_title"):
+            self.ld_title.setText(t("weather_opt_desktop_title"))
+        if hasattr(self, "ld_sub"):
+            self.ld_sub.setText(t("weather_opt_desktop_sub"))
         if hasattr(self, "hk_title"):
             self.hk_title.setText(t("music_hotkey_title"))
         if hasattr(self, "hk_desc"):
@@ -1024,17 +1020,17 @@ class MusicPage(BaseHubPage):
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
         self.pos_picker.set_theme(theme)
-        self._scale_group.set_theme(theme)
+        self.scale_card.set_theme(theme)
         if hasattr(self, "web_help"):
             self.web_help.set_theme(theme)
-        if hasattr(self, "s_scale"):
-            self.s_scale.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
         if hasattr(self, "sw_auto_launch"):
             self.sw_auto_launch.set_theme(theme)
         if hasattr(self, "sw_auto_hide"):
             self.sw_auto_hide.set_theme(theme)
         if hasattr(self, "sw_wheel_volume"):
             self.sw_wheel_volume.set_theme(theme)
+        if hasattr(self, "sw_desktop"):
+            self.sw_desktop.set_theme(theme)
         if hasattr(self, "hk_picker"):
             self.hk_picker.set_theme(theme)
         if hasattr(self, "theme_picker"):
@@ -1133,6 +1129,7 @@ class LockKeysPage(BaseHubPage):
             lbl_d = QLabel(t(desc_key))
             lbl_d.setWordWrap(True)
             lbl_d.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+            lbl_d.setVisible(bool(t(desc_key)))
             info.addWidget(lbl_n)
             info.addWidget(lbl_d)
             self._opt_labels.append((lbl_n, name_key, lbl_d, desc_key))
@@ -1141,7 +1138,8 @@ class LockKeysPage(BaseHubPage):
             s.toggled.connect(lambda checked, k=key_id: config_manager.set_keylock_key_enabled(k, checked))
             self._key_switches[key_id] = s
             row.addLayout(info, stretch=1)
-            row.addWidget(s)
+            row.setAlignment(info, Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(s, alignment=Qt.AlignmentFlag.AlignVCenter)
             c_layout.addLayout(row)
 
             if i < len(keys_opts) - 1:
@@ -1200,7 +1198,9 @@ class LockKeysPage(BaseHubPage):
         if hasattr(self, "_opt_labels"):
             for lbl_n, name_key, lbl_d, desc_key in self._opt_labels:
                 lbl_n.setText(t(name_key))
-                lbl_d.setText(t(desc_key))
+                txt = t(desc_key)
+                lbl_d.setText(txt)
+                lbl_d.setVisible(bool(txt))
         if hasattr(self, "hk_title"):
             self.hk_title.setText(t("keys_hotkey_title"))
         if hasattr(self, "hk_desc"):
@@ -1362,6 +1362,7 @@ class TimerPage(BaseHubPage):
         pos_info.addWidget(self.t_pos)
         pos_info.addWidget(self.s_pos)
         pos_layout.addLayout(pos_info, stretch=1)
+        pos_layout.setAlignment(pos_info, Qt.AlignmentFlag.AlignVCenter)
 
         self.pos_picker = PositionPicker(current_pos="tc", theme=self._theme, parent=pos_card)
         self.pos_picker.position_changed.connect(self._on_pos_changed)
@@ -1383,6 +1384,7 @@ class TimerPage(BaseHubPage):
         self.sk_desc = QLabel(t("timer_style_sub"))
         self.sk_desc.setWordWrap(True)
         self.sk_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self.sk_desc.setVisible(bool(t("timer_style_sub")))
         header_layout.addWidget(self.sk_header)
         header_layout.addWidget(self.sk_desc)
         sk_layout.addLayout(header_layout)
@@ -1453,6 +1455,28 @@ class TimerPage(BaseHubPage):
         row1.addWidget(self.sw_remember)
         b_layout.addLayout(row1)
 
+        # "Fixar na área de trabalho": o mesmo dos outros widgets (num grupo ancorado, todos vão juntos)
+        sep_desktop = QFrame()
+        sep_desktop.setFrameShape(QFrame.Shape.HLine)
+        sep_desktop.setProperty("class", "HubDivider")
+        b_layout.addWidget(sep_desktop)
+        row_desktop = QHBoxLayout()
+        info_desktop = QVBoxLayout()
+        info_desktop.setSpacing(2)
+        self.ld_title = QLabel(t("weather_opt_desktop_title"))
+        self.ld_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self.ld_sub = QLabel(t("weather_opt_desktop_sub"))
+        self.ld_sub.setWordWrap(True)
+        self.ld_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        info_desktop.addWidget(self.ld_title)
+        info_desktop.addWidget(self.ld_sub)
+        self.sw_desktop = PillSwitch(checked=self.bridge.timer_controller.is_desktop_mode(), theme=self._theme)
+        self.sw_desktop.toggled.connect(self.bridge.timer_controller.set_desktop_mode)
+        self.bridge.timer_controller.desktop_mode_changed.connect(self._sync_desktop)
+        row_desktop.addLayout(info_desktop, stretch=1)
+        row_desktop.addWidget(self.sw_desktop)
+        b_layout.addLayout(row_desktop)
+
         sep1 = QFrame()
         sep1.setFrameShape(QFrame.Shape.HLine)
         sep1.setProperty("class", "HubDivider")
@@ -1517,6 +1541,7 @@ class TimerPage(BaseHubPage):
         self.la_sub = QLabel(t("timer_opt_alarm_sub"))
         self.la_sub.setWordWrap(True)
         self.la_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self.la_sub.setVisible(bool(t("timer_opt_alarm_sub")))
         info_alarm.addWidget(self.la_title)
         info_alarm.addWidget(self.la_sub)
         self.sw_alarm = PillSwitch(
@@ -1525,7 +1550,8 @@ class TimerPage(BaseHubPage):
         )
         self.sw_alarm.toggled.connect(config_manager.set_timer_alarm_sound_enabled)
         row_alarm.addLayout(info_alarm, stretch=1)
-        row_alarm.addWidget(self.sw_alarm)
+        row_alarm.setAlignment(info_alarm, Qt.AlignmentFlag.AlignVCenter)
+        row_alarm.addWidget(self.sw_alarm, alignment=Qt.AlignmentFlag.AlignVCenter)
         b_layout.addLayout(row_alarm)
 
         sep2 = QFrame()
@@ -1542,6 +1568,7 @@ class TimerPage(BaseHubPage):
         self.l2_sub = QLabel(t("timer_opt_show_sub"))
         self.l2_sub.setWordWrap(True)
         self.l2_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self.l2_sub.setVisible(bool(t("timer_opt_show_sub")))
         info2.addWidget(self.l2_title)
         info2.addWidget(self.l2_sub)
 
@@ -1551,7 +1578,8 @@ class TimerPage(BaseHubPage):
         self.btn_show.clicked.connect(self._on_show_timer_clicked)
 
         row2.addLayout(info2, stretch=1)
-        row2.addWidget(self.btn_show)
+        row2.setAlignment(info2, Qt.AlignmentFlag.AlignVCenter)
+        row2.addWidget(self.btn_show, alignment=Qt.AlignmentFlag.AlignVCenter)
         b_layout.addLayout(row2)
 
         self.content_layout.addWidget(behav_card)
@@ -1598,6 +1626,13 @@ class TimerPage(BaseHubPage):
         else:
             config_manager.set_timer_position_remembered(checked)
 
+    def _sync_desktop(self, enabled: bool):
+        """O widget mudou de camada por outro caminho (menu dele, ou o grupo ancorado): a chave acompanha."""
+        if hasattr(self, "sw_desktop") and self.sw_desktop.isChecked() != enabled:
+            self.sw_desktop.blockSignals(True)
+            self.sw_desktop.set_checked(enabled, animated=True)
+            self.sw_desktop.blockSignals(False)
+
     def _on_smart_hover_toggled(self, checked: bool):
         config_manager.set_timer_smart_hover_enabled(checked)
         if self.bridge.timer_controller.skin:
@@ -1640,11 +1675,17 @@ class TimerPage(BaseHubPage):
         if hasattr(self, "sk_header"):
             self.sk_header.setText(t("timer_style_title"))
         if hasattr(self, "sk_desc"):
-            self.sk_desc.setText(t("timer_style_sub"))
+            txt = t("timer_style_sub")
+            self.sk_desc.setText(txt)
+            self.sk_desc.setVisible(bool(txt))
         if hasattr(self, "l1_title"):
             self.l1_title.setText(t("timer_opt_remember_title"))
         if hasattr(self, "l1_sub"):
             self.l1_sub.setText(t("timer_opt_remember_sub"))
+        if hasattr(self, "ld_title"):
+            self.ld_title.setText(t("weather_opt_desktop_title"))
+        if hasattr(self, "ld_sub"):
+            self.ld_sub.setText(t("weather_opt_desktop_sub"))
         if hasattr(self, "lst_title"):
             self.lst_title.setText(t("timer_opt_startup_title"))
         if hasattr(self, "lst_sub"):
@@ -1652,7 +1693,9 @@ class TimerPage(BaseHubPage):
         if hasattr(self, "la_title"):
             self.la_title.setText(t("timer_opt_alarm_title"))
         if hasattr(self, "la_sub"):
-            self.la_sub.setText(t("timer_opt_alarm_sub"))
+            txt = t("timer_opt_alarm_sub")
+            self.la_sub.setText(txt)
+            self.la_sub.setVisible(bool(txt))
         if hasattr(self, "ls_title"):
             self.ls_title.setText(t("timer_opt_smart_hover_title"))
         if hasattr(self, "ls_sub"):
@@ -1660,7 +1703,9 @@ class TimerPage(BaseHubPage):
         if hasattr(self, "l2_title"):
             self.l2_title.setText(t("timer_opt_show_title"))
         if hasattr(self, "l2_sub"):
-            self.l2_sub.setText(t("timer_opt_show_sub"))
+            txt = t("timer_opt_show_sub")
+            self.l2_sub.setText(txt)
+            self.l2_sub.setVisible(bool(txt))
         if hasattr(self, "btn_show"):
             self.btn_show.setText(t("timer_opt_show_btn"))
         if hasattr(self, "hk_title"):
@@ -1686,6 +1731,7 @@ class TimerPage(BaseHubPage):
         super().set_theme(theme)
         self.pos_picker.set_theme(theme)
         self.sw_remember.set_theme(theme)
+        self.sw_desktop.set_theme(theme)
         self.sw_smart_hover.set_theme(theme)
         self.sw_alarm.set_theme(theme)
         self.sw_startup.set_theme(theme)
@@ -1713,7 +1759,7 @@ class GeneralPage(BaseHubPage):
     ):
         super().__init__(
             title=t("gen_title"),
-            subtitle=t("gen_subtitle"),
+            subtitle="",
             theme=theme,
             parent=parent,
         )
@@ -1797,18 +1843,11 @@ class GeneralPage(BaseHubPage):
         sep2.setProperty("class", "HubDivider")
         c_layout.addWidget(sep2)
 
-        # Modo de Aparência
+        # Modo de Aparência (círculos com a cor real do modo; Sistema dividido 50/50 na diagonal)
         row3 = QHBoxLayout()
-        info3 = QVBoxLayout()
-        info3.setSpacing(2)
         self.t3 = QLabel(t("gen_theme_title"))
         self.t3.setStyleSheet("font-size: 13.5px; font-weight: 600;")
-        self.d3 = QLabel(t("gen_theme_sub"))
-        self.d3.setWordWrap(True)
-        self.d3.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        info3.addWidget(self.t3)
-        info3.addWidget(self.d3)
-        row3.addLayout(info3, stretch=1)
+        row3.addWidget(self.t3, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._theme_modes = [
             ("light", "gen_theme_light"),
@@ -1816,10 +1855,14 @@ class GeneralPage(BaseHubPage):
             ("true_dark", "gen_theme_true_dark"),
             ("system", "gen_theme_system"),
         ]
-        self._theme_group = ChipGroup([(k, t(i)) for k, i in self._theme_modes], self._set_theme_mode, self._theme,
-                                      selected=self._current_pref)
+        self._theme_group = ThemeSwatchGroup(
+            [(k, t(i)) for k, i in self._theme_modes],
+            self._set_theme_mode,
+            self._theme,
+            selected=self._current_pref,
+        )
         self._theme_chips = self._theme_group.buttons
-        row3.addWidget(self._theme_group)
+        row3.addWidget(self._theme_group, alignment=Qt.AlignmentFlag.AlignVCenter)
         c_layout.addLayout(row3)
 
         sep3 = QFrame()
@@ -1847,6 +1890,10 @@ class GeneralPage(BaseHubPage):
         self._accent_spec = config_manager.get_hub_accent()   # None | matiz | "#RRGGBB"
         # Um só controle: a barra ocupa a largura do bloco; sem cor personalizada, o campo fica alinhado à direita
         # da trilha; com ela, desliza para a esquerda formando um par centralizado com o "Redefinir".
+        # O HueSlider reserva HEADROOM (26px) acima da trilha para a onda do arraste; para não criar um vão vazio
+        # acima da linha em repouso, o layout reserva só a altura em repouso (30px) e o slider fica ancorado no card
+        # (sem recortar a onda ao arrastar e sem invadir a linha de Aparência acima).
+        self._general_card = card
         accent_box = QWidget()
         accent_box.setFixedWidth(ACCENT_BOX_W)
         right = QVBoxLayout(accent_box)
@@ -1854,11 +1901,17 @@ class GeneralPage(BaseHubPage):
         right.setSpacing(6)
         spec = self._accent_spec
         start_hue = DEFAULT_ACCENT_HUE if spec is None else (hue_of(spec) if isinstance(spec, str) else spec)
-        self.hue_slider = HueSlider(hue=start_hue, theme=self._theme)
+        self._hue_slot = QWidget(accent_box)
+        self._hue_slot.setFixedHeight(30)
+        self._hue_slot.installEventFilter(self)
+        right.addWidget(self._hue_slot)
+
+        self.hue_slider = HueSlider(hue=start_hue, theme=self._theme, parent=card)
         self.hue_slider.setAccessibleName(t("gen_accent_title"))
         self.hue_slider.hueChanged.connect(lambda h: self._accent_moved(h, False))
         self.hue_slider.hueCommitted.connect(lambda h: self._accent_moved(h, True))
-        right.addWidget(self.hue_slider)
+        self.hue_slider.raise_()
+        card.installEventFilter(self)
 
         self.accent_edit = QLineEdit()
         self.accent_edit.setObjectName("AccentField")
@@ -1892,21 +1945,14 @@ class GeneralPage(BaseHubPage):
 
         # Seletor de Idioma
         row4 = QHBoxLayout()
-        info4 = QVBoxLayout()
-        info4.setSpacing(2)
         self.t4 = QLabel(t("gen_language_title"))
         self.t4.setStyleSheet("font-size: 13.5px; font-weight: 600;")
-        self.d4 = QLabel(t("gen_language_sub"))
-        self.d4.setWordWrap(True)
-        self.d4.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        info4.addWidget(self.t4)
-        info4.addWidget(self.d4)
-        row4.addLayout(info4, stretch=1)
+        row4.addWidget(self.t4, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
 
         self._lang_group = ChipGroup([("pt", "Português"), ("en", "English")], self._set_language, self._theme,
                                      selected=self._current_lang)
         self._lang_chips = self._lang_group.buttons
-        row4.addWidget(self._lang_group)
+        row4.addWidget(self._lang_group, alignment=Qt.AlignmentFlag.AlignVCenter)
         c_layout.addLayout(row4)
 
         self.content_layout.addWidget(card)
@@ -2069,6 +2115,27 @@ class GeneralPage(BaseHubPage):
         self.btn_apply_update.setEnabled(True)
         self.lbl_update_status.setText(f"{t('gen_updates_download_err')}: {err_msg}")
 
+    def _sync_hue_slider_geom(self):
+        if not hasattr(self, "_hue_slot") or not hasattr(self, "_general_card"):
+            return
+        pos = self._hue_slot.mapTo(self._general_card, QPoint(0, 0))
+        h = self.hue_slider.height()
+        slot_h = self._hue_slot.height()
+        # Mantém a base do HueSlider alinhada à base do slot; a folga da onda (24px) sobe para o vão do divisor.
+        self.hue_slider.setGeometry(pos.x(), pos.y() - (h - slot_h), self._hue_slot.width(), h)
+        self.hue_slider.raise_()
+
+    def eventFilter(self, obj, event):
+        if obj in (getattr(self, "_hue_slot", None), getattr(self, "_general_card", None)):
+            if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.LayoutRequest):
+                self._sync_hue_slider_geom()
+        return super().eventFilter(obj, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_hue_slider_geom()
+        QTimer.singleShot(0, self._sync_hue_slider_geom)
+
     def _set_theme_mode(self, mode: str):
         self._current_pref = mode
         self._theme_group.set_selected(mode)
@@ -2192,7 +2259,7 @@ class GeneralPage(BaseHubPage):
             self._on_language_change(lang_code)
 
     def retranslate_ui(self):
-        self.set_header(t("gen_title"), t("gen_subtitle"))
+        self.set_header(t("gen_title"), "")
         if hasattr(self, "t1"):
             self.t1.setText(t("gen_startup_title"))
         if hasattr(self, "d1"):
@@ -2207,8 +2274,6 @@ class GeneralPage(BaseHubPage):
             self.d2.setText(t("gen_tray_sub"))
         if hasattr(self, "t3"):
             self.t3.setText(t("gen_theme_title"))
-        if hasattr(self, "d3"):
-            self.d3.setText(t("gen_theme_sub"))
         if hasattr(self, "t_acc"):
             self.t_acc.setText(t("gen_accent_title"))
             self.d_acc.setText(t("gen_accent_invalid") if self._accent_invalid else t("gen_accent_sub"))
@@ -2218,12 +2283,9 @@ class GeneralPage(BaseHubPage):
             self.hue_slider.setAccessibleName(t("gen_accent_title"))
         if hasattr(self, "t4"):
             self.t4.setText(t("gen_language_title"))
-        if hasattr(self, "d4"):
-            self.d4.setText(t("gen_language_sub"))
         if hasattr(self, "_theme_modes"):
             for mode_key, i18n_key in self._theme_modes:
-                if mode_key in self._theme_chips:
-                    self._theme_chips[mode_key].setText(t(i18n_key))
+                self._theme_group.set_label(mode_key, t(i18n_key))
         if hasattr(self, "_lang_chips"):
             from app.core.i18n import i18n
             self._current_lang = i18n.current_language

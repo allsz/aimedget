@@ -9,6 +9,7 @@ import time
 from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
+from app.core.refresh_rate import refresh_interval_ms
 
 DURATION_MS = 180
 SHIFT_PX = 12
@@ -49,6 +50,7 @@ class PageTransition(QWidget):
         self.setGeometry(self.parentWidget().rect())
         self.raise_()
         self.show()
+        self._timer.setInterval(refresh_interval_ms(self))
         self._timer.start()
 
     def stop(self):

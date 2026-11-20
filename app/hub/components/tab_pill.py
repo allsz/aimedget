@@ -20,6 +20,7 @@ import time
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QPushButton, QWidget
+from app.core.refresh_rate import refresh_interval_ms
 
 from app.core import widget_animator
 from app.hub.components.city_list import Spring
@@ -74,6 +75,7 @@ class Blend(QObject):
             self._on_change()
             return
         self._last = time.monotonic()
+        self._timer.setInterval(refresh_interval_ms())
         self._timer.start()
 
     def _tick(self):
@@ -203,6 +205,7 @@ class TabPill(QWidget):
 
     def _start(self):
         self._last = time.monotonic()
+        self._timer.setInterval(refresh_interval_ms(self))
         self._timer.start()
 
     def _tick(self):

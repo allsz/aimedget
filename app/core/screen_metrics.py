@@ -112,6 +112,22 @@ def get_auto_timer_size(screen: Optional[QScreen] = None, widget: Optional[QWidg
     return (w, h)
 
 
+# Faixa do controle deslizante do Hub, em % (100% = BASELINE_MUSIC_SCALE). O piso é 75%, não 50%: abaixo de ~70% o
+# widget deixa de ser legível e os botões ficam pequenos demais (MIN_SAFE_SCALE); o teto de 150% fica abaixo do limite
+# seguro de 160%.
+SCALE_PCT_MIN: int = 75
+SCALE_PCT_MAX: int = 150
+
+
+def pct_to_scale(pct: float) -> float:
+    return round(BASELINE_MUSIC_SCALE * float(pct) / 100.0, 4)
+
+
+def scale_to_pct(scale: float) -> int:
+    """Escala -> % do controle (fora da faixa, como o automático de 720p, fica na ponta mais próxima)."""
+    return int(max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, round(float(scale) / BASELINE_MUSIC_SCALE * 100.0))))
+
+
 def format_scale_percent(scale: float) -> str:
     """Formata um float de escala em percentual humano em relação ao baseline de 1440p (ex: 0.50 -> 100%)."""
     pct = int(round((scale / BASELINE_MUSIC_SCALE) * 100))

@@ -7,7 +7,7 @@ Puro (sem Qt): o código WMO que a Open-Meteo devolve vira uma das condições a
 referência não tinha (noite, parcialmente nublado, neblina, neve, chuva fraca/forte) seguem o mesmo vocabulário.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 SUNNY = "sunny"
 CLEAR_NIGHT = "clear_night"
@@ -20,10 +20,39 @@ HEAVY_RAIN = "heavy_rain"
 THUNDERSTORM = "thunderstorm"
 SNOW = "snow"
 
+# Versões noturnas (a Open-Meteo diz `is_day`; só o céu limpo tinha noite, o resto aparecia com céu e sol de dia)
+PARTLY_CLOUDY_NIGHT = "partly_cloudy_night"
+CLOUDY_NIGHT = "cloudy_night"
+FOG_NIGHT = "fog_night"
+LIGHT_RAIN_NIGHT = "light_rain_night"
+RAIN_NIGHT = "rain_night"
+HEAVY_RAIN_NIGHT = "heavy_rain_night"
+THUNDERSTORM_NIGHT = "thunderstorm_night"
+SNOW_NIGHT = "snow_night"
+
+# condição de dia -> a mesma à noite (o céu limpo já tem o seu par: SUNNY <-> CLEAR_NIGHT)
+NIGHT_OF = {
+    SUNNY: CLEAR_NIGHT, PARTLY_CLOUDY: PARTLY_CLOUDY_NIGHT, CLOUDY: CLOUDY_NIGHT, FOG: FOG_NIGHT,
+    LIGHT_RAIN: LIGHT_RAIN_NIGHT, RAIN: RAIN_NIGHT, HEAVY_RAIN: HEAVY_RAIN_NIGHT,
+    THUNDERSTORM: THUNDERSTORM_NIGHT, SNOW: SNOW_NIGHT,
+}
+DAY_OF = {night: day for day, night in NIGHT_OF.items()}
+
 # Ordem usada no menu de pré-visualização e nos testes
 ALL_CONDITIONS = (
     SUNNY, CLEAR_NIGHT, PARTLY_CLOUDY, CLOUDY, FOG, LIGHT_RAIN, RAIN, HEAVY_RAIN, THUNDERSTORM, SNOW,
+    PARTLY_CLOUDY_NIGHT, CLOUDY_NIGHT, FOG_NIGHT, LIGHT_RAIN_NIGHT, RAIN_NIGHT, HEAVY_RAIN_NIGHT,
+    THUNDERSTORM_NIGHT, SNOW_NIGHT,
 )
+
+
+def is_night(condition: str) -> bool:
+    return condition == CLEAR_NIGHT or condition in DAY_OF
+
+
+def name_key(condition: str) -> str:
+    """Chave do nome na tradução: a noite usa o nome da condição de dia (o céu limpo à noite tem o seu)."""
+    return condition if condition == CLEAR_NIGHT else DAY_OF.get(condition, condition)
 
 # WMO 4677 (o que a Open-Meteo usa em `weather_code`)
 _WMO = {
@@ -43,13 +72,13 @@ _WMO = {
 
 
 def condition_from_wmo(code: int | None, is_day: bool = True) -> str:
-    """Condição para um código WMO. Céu limpo à noite vira CLEAR_NIGHT; código desconhecido cai em CLOUDY."""
+    """Condição para um código WMO. À noite cada condição vira a sua versão noturna; desconhecido cai em CLOUDY."""
     try:
         cond = _WMO.get(int(code), CLOUDY)
     except (TypeError, ValueError):
         cond = CLOUDY
-    if cond == SUNNY and not is_day:
-        return CLEAR_NIGHT
+    if not is_day:
+        return NIGHT_OF.get(cond, cond)
     return cond
 
 
@@ -158,10 +187,44 @@ SCENES: dict[str, Scene] = {
     ),
 }
 
-# Ícone pequeno da aba do dia (a aba usa sempre a variante de dia)
+
+
+def _mix_hex(a: str, b: str, t: float) -> str:
+    ca = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    cb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(ca, cb))
+
+
+_NIGHT_SKY = "#0e1a38"
+
+
+def _night_scene(day: Scene, mix: float = 0.62, **changes) -> Scene:
+    """O céu do dia escurecido em direção ao azul-noite; as manchas de luz quente viram frias."""
+    sky = tuple((pos, _mix_hex(color, _NIGHT_SKY, mix)) for pos, color in day.sky)
+    blobs = tuple(
+        replace(b, rgba=(round(b.rgba[0] * 0.55 + 80 * 0.45), round(b.rgba[1] * 0.55 + 110 * 0.45),
+                         round(b.rgba[2] * 0.55 + 200 * 0.45), b.rgba[3] * 0.8))
+        for b in day.blobs)
+    return replace(day, sky=sky, blobs=blobs, **changes)
+
+
+SCENES.update({
+    PARTLY_CLOUDY_NIGHT: _night_scene(SCENES[PARTLY_CLOUDY], 0.7, stars=12, icon="partly_night"),
+    CLOUDY_NIGHT: _night_scene(SCENES[CLOUDY]),
+    FOG_NIGHT: _night_scene(SCENES[FOG]),
+    LIGHT_RAIN_NIGHT: _night_scene(SCENES[LIGHT_RAIN]),
+    RAIN_NIGHT: _night_scene(SCENES[RAIN]),
+    HEAVY_RAIN_NIGHT: _night_scene(SCENES[HEAVY_RAIN], 0.5),
+    THUNDERSTORM_NIGHT: _night_scene(SCENES[THUNDERSTORM], 0.5),
+    SNOW_NIGHT: _night_scene(SCENES[SNOW], 0.55),
+})
+
+# Ícone pequeno da aba: a de hoje à noite mostra a lua; as dos outros dias são sempre de dia
 TAB_ICON = {
     SUNNY: "sun", CLEAR_NIGHT: "moon", PARTLY_CLOUDY: "partly", CLOUDY: "cloud", FOG: "fog",
     LIGHT_RAIN: "rain", RAIN: "rain", HEAVY_RAIN: "rain", THUNDERSTORM: "bolt", SNOW: "snow",
+    PARTLY_CLOUDY_NIGHT: "partly_night", CLOUDY_NIGHT: "cloud", FOG_NIGHT: "fog", LIGHT_RAIN_NIGHT: "rain",
+    RAIN_NIGHT: "rain", HEAVY_RAIN_NIGHT: "rain", THUNDERSTORM_NIGHT: "bolt", SNOW_NIGHT: "snow",
 }
 
 # Ícones grandes que ficam amarelos (o resto é branco), como `.wx-big .t-icon[data-key="sun"|"bolt"]`

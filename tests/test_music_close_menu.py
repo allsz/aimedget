@@ -95,17 +95,34 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _open_menu_with_bar(skin):
+    """Dispara o menu de contexto sem bloquear em exec() e devolve (ações, barra superior)."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+    captured = {}
+
+    def fake_exec(self, *args, **kwargs):
+        captured["actions"] = list(self.actions())
+        captured["bar"] = self.action_bar
+
+    with mock.patch.object(FluentMusicMenu, "exec", fake_exec):
+        skin.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5), QPoint(5, 5)))
+    return captured["actions"], captured["bar"]
+
+
 class MenuTranslationTests(unittest.TestCase):
     def test_every_skin_menu_follows_the_app_language(self):
         from app.core.i18n import i18n
         with mock.patch.object(i18n, "_current_lang", "en"):
             for cls in SKINS:
                 with self.subTest(skin=cls.__name__):
-                    texts = [a.text() for a in _open_menu(_make(cls))]
+                    actions, bar = _open_menu_with_bar(_make(cls))
+                    texts = [a.text() for a in actions]
+                    tooltips = [b.toolTip() for b in bar.buttons.values()] if bar else []
                     self.assertIn("Size", texts)
-                    self.assertIn("Remember position", texts)
+                    self.assertIn("Remember position", tooltips)
                     self.assertNotIn("Tamanho", texts)
-                    self.assertNotIn("Lembrar posição", texts)
+                    self.assertNotIn("Lembrar posição", tooltips)
 
 
 class NoMediaTextTests(unittest.TestCase):

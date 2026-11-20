@@ -23,7 +23,8 @@ from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_
 from app.widgets.volume_mixer.theme_shape import (
     DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, hairline, paint_digits, paint_plates, pop_amount, tilt_transform,
 )
-from app.widgets.volume_mixer.app_volume_row import AppVolumeRow
+from app.core.widget_animator import animations_enabled
+from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
 
 
 class VolumeMixerFlyout(QWidget):
@@ -43,6 +44,7 @@ class VolumeMixerFlyout(QWidget):
     app_volume_dragged = Signal(str, int)
     app_mute_toggled = Signal(str)
     app_routing_changed = Signal(str, str, str)  # (app_id, flow, device_id)
+    default_device_changed = Signal(str, str)    # (flow, device_id): gaveta do ícone do volume principal
     refresh_requested = Signal()
     card_top_changed = Signal(float, bool)
     card_bounds_changed = Signal(float, float, bool)   # (topo visual, base visual, ativo) em coordenadas de tela
@@ -133,6 +135,10 @@ class VolumeMixerFlyout(QWidget):
         self._cached_inputs: list[AudioEndpoint] = []
         self._app_routing_map: dict[str, dict[str, str]] = {}
 
+        # Botão direito no alto-falante do cabeçalho: gaveta dos dispositivos PADRÃO do Windows (Saída/Entrada).
+        # Abre logo abaixo do cabeçalho com o mixer recolhido ou expandido (aí empurra a lista de apps).
+        self._master_drawer = MasterDeviceDrawer(on_routing_changed=self._on_master_routing_changed)
+
         # Barra de rolagem dinâmica (Fluent Design):
         # Só existe quando _max_scroll() > 0.5; aparece temporariamente em scroll ou hover
         self._scrollbar_opacity = 0.0
@@ -194,26 +200,75 @@ class VolumeMixerFlyout(QWidget):
     def _target_expanded_height(self) -> float:
         """Calcula a altura ideal do container adaptando-se às linhas de apps e gavetas inline abertas."""
         total_rows_h = sum(r.get_target_height() for r in self._rows)
-        wanted = self.HEADER_H + total_rows_h + 14.0
-        return min(float(self.EXPANDED_MAX_H), max(float(self.COLLAPSED_H), wanted))
+        wanted = self.HEADER_H + self._master_drawer.target_extra_height() + total_rows_h + 14.0
+        return min(float(self.EXPANDED_MAX_H), max(self._collapsed_height(target=True), wanted))
+
+    def _collapsed_height(self, target: bool = False) -> float:
+        """Altura do card recolhido: o cabeçalho e, se aberta, a gaveta de dispositivos do volume principal."""
+        d = self._master_drawer
+        extra = d.target_extra_height() if target else d.extra_height()
+        return min(float(self.EXPANDED_MAX_H), self.COLLAPSED_H + extra)
+
+    def _list_top(self) -> float:
+        """Onde começa a lista de apps (y relativo ao card): abaixo do cabeçalho e da gaveta do volume principal."""
+        return self.HEADER_H + self._master_drawer.extra_height()
+
+    def _list_rows_top(self, y0: float) -> float:
+        """Y (janela) do topo da primeira linha de app, já com a rolagem."""
+        return (y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5)
+                + self._master_drawer.extra_height() - self._scroll_y)
 
     def _current_card_height(self) -> float:
         return self._anim_card_h
 
     def _visible_content_height(self) -> float:
         """Retorna a altura visível real disponível para a lista de aplicativos dentro do card."""
-        current_h = self._anim_card_h if self._anim_card_h > self.COLLAPSED_H else self._target_expanded_height()
-        return max(60.0, current_h - self.HEADER_H - 8.0)
+        current_h = (self._anim_card_h if self._anim_card_h > self._collapsed_height() + 0.5
+                     else self._target_expanded_height())
+        floor = 60.0 if self._master_drawer.extra_height() < 1.0 else 20.0
+        return max(floor, current_h - self._list_top() - 8.0)
 
     def _target_visible_content_height(self) -> float:
         """Retorna a altura visível que o card terá ao final da transição."""
-        target_h = self._target_expanded_height() if self.is_expanded else float(self.COLLAPSED_H)
-        return max(60.0, target_h - self.HEADER_H - 8.0)
+        target_h = self._target_expanded_height() if self.is_expanded else self._collapsed_height(target=True)
+        extra = self._master_drawer.target_extra_height()
+        floor = 60.0 if extra < 1.0 else 20.0
+        return max(floor, target_h - self.HEADER_H - extra - 8.0)
+
+    # --- Gaveta de dispositivos do volume principal (botão direito no alto-falante) ---
+
+    def toggle_master_drawer(self):
+        """Abre/fecha a gaveta dos dispositivos padrão. Abrir fecha a gaveta de qualquer app (modo acordeão)."""
+        d = self._master_drawer
+        if not d.is_routing_open:
+            for r in self._rows:
+                r.close_routing()
+        d.toggle_routing()
+        if not animations_enabled():
+            d.snap()
+            for r in self._rows:
+                if not r.is_routing_open:
+                    r.reset_routing()   # a que o acordeão fechou some na hora também
+            self._anim_card_h = self._target_expanded_height() if self.is_expanded else self._collapsed_height()
+        self._clamp_scroll()
+        self._restart_hide_timer()
+        self._sync_refresh_rate_interval()
+        self._start_anim_timer()
+        self._notify_card_top()
+        self.update()
+
+    def _on_master_routing_changed(self, _app_id: str, flow: str, device_id: str):
+        """Usuário escolheu um dispositivo na gaveta do volume principal: vira o padrão do Windows."""
+        self.default_device_changed.emit(flow, device_id)
+        self._restart_hide_timer()
+        self._start_anim_timer()
+        self.update()
 
     def on_endpoints_updated(self, outputs: list[AudioEndpoint], inputs: list[AudioEndpoint]):
         """Atualiza a lista de dispositivos de Saída e Entrada conhecidos pelo sistema."""
         self._cached_outputs = outputs
         self._cached_inputs = inputs
+        self._master_drawer.set_system_endpoints(outputs, inputs)
         for row in self._rows:
             rout = self._app_routing_map.get(row.app_id, {})
             row.set_endpoints(
@@ -412,6 +467,7 @@ class VolumeMixerFlyout(QWidget):
         self._digits_value = None   # o primeiro número do tema novo aparece sem pulo
         for row in self._rows:
             row.apply_theme(theme)
+        self._master_drawer.apply_theme(theme)
         self._update_margins()
         # A janela SEMPRE acompanha as margens (mesmo com o flyout na tela, ex.: trocar de tema no Hub): o card
         # fica no mesmo ponto da tela por construção, então não há salto; sem isso o card sairia cortado.
@@ -435,9 +491,12 @@ class VolumeMixerFlyout(QWidget):
         self.master_volume = volume
         self.master_muted = is_muted
         if not self.master_slider.is_dragging:
-            self.master_slider.value = volume
+            # vindo de fora (troca de dispositivo, teclas de volume): desliza; o arrasto e a roda já puseram o valor
+            self.master_slider.glide_to(volume)
         self.master_slider.is_muted = is_muted
         if self.isVisible():
+            if self.master_slider.is_gliding():
+                self._start_anim_timer()
             self.update()
 
     def on_sessions_updated(self, sessions: list[AppAudioSession]):
@@ -466,6 +525,8 @@ class VolumeMixerFlyout(QWidget):
                 row.apply_theme(self.theme)
                 new_rows.append(row)
         self._rows = new_rows
+        if self.isVisible() and any(r.slider.is_gliding() for r in new_rows):
+            self._start_anim_timer()
         self._clamp_scroll()
         if not self._has_scrollable_content():
             self._target_scroll_y = 0.0
@@ -582,6 +643,7 @@ class VolumeMixerFlyout(QWidget):
                 self._slide_t = 0.0
                 for r in self._rows:
                     r.reset_routing()
+                self._master_drawer.reset_routing()
                 self._target_scroll_y = 0.0
                 self._scroll_y = 0.0
                 self.show()
@@ -674,16 +736,22 @@ class VolumeMixerFlyout(QWidget):
         else:
             self._slide_t = self._slide_target_t
 
+        # 1.1 Gaveta de dispositivos do volume principal: anda antes da altura do card, que depende dela
+        if self._master_drawer.step_animation(dt):
+            needs_update = True
+            self._clamp_scroll()
+
         # 2. Animação de Expansão / Retração do Mixer de Apps
         if abs(self._expand_t - self._expand_target_t) > 0.004:
             raw_e = min(1.0, max(0.0, (now - self._expand_anim_start) / self.EXPAND_DURATION_S))
             eased_e = 1.0 - (1.0 - raw_e) ** 3
             self._expand_t = self._expand_start_t + (self._expand_target_t - self._expand_start_t) * eased_e
-            self._anim_card_h = self.COLLAPSED_H + (self._target_expanded_height() - self.COLLAPSED_H) * self._expand_t
+            collapsed_h = self._collapsed_height()
+            self._anim_card_h = collapsed_h + (self._target_expanded_height() - collapsed_h) * self._expand_t
             needs_update = True
             if raw_e >= 1.0 and not self.is_expanded:
                 self._expand_t = 0.0
-                self._anim_card_h = float(self.COLLAPSED_H)
+                self._anim_card_h = self._collapsed_height()
                 self._apply_window_canvas_size()
                 for r in self._rows:
                     r.reset_routing()
@@ -693,7 +761,7 @@ class VolumeMixerFlyout(QWidget):
             if self._expand_t != self._expand_target_t:
                 self._expand_t = self._expand_target_t
                 if not self.is_expanded:
-                    self._anim_card_h = float(self.COLLAPSED_H)
+                    self._anim_card_h = self._collapsed_height()
                     self._apply_window_canvas_size()
                     for r in self._rows:
                         r.reset_routing()
@@ -711,6 +779,12 @@ class VolumeMixerFlyout(QWidget):
                     needs_update = True
                 else:
                     self._anim_card_h = target_card_h
+            elif not self.is_expanded:
+                # Recolhido: o card acompanha a gaveta do volume principal quadro a quadro (mesma linha do tempo)
+                collapsed_h = self._collapsed_height()
+                if self._anim_card_h != collapsed_h:
+                    self._anim_card_h = collapsed_h
+                    needs_update = True
 
         # 3. Interpolação suave de Scroll independente de FPS (rápida e fluida a 144 Hz)
         if abs(self._scroll_y - self._target_scroll_y) > 0.15:
@@ -757,7 +831,7 @@ class VolumeMixerFlyout(QWidget):
         if needs_update:
             self.update()
 
-        target_card_h = self._target_expanded_height() if self.is_expanded else float(self.COLLAPSED_H)
+        target_card_h = self._target_expanded_height() if self.is_expanded else self._collapsed_height(target=True)
         if (
             abs(self._slide_t - self._slide_target_t) <= 0.004
             and self._stack_offset == self._stack_offset_target
@@ -772,6 +846,7 @@ class VolumeMixerFlyout(QWidget):
                 self.hide()   # hideEvent avisa o Caps Lock que o mixer saiu
                 for r in self._rows:
                     r.reset_routing()
+                self._master_drawer.reset_routing()
                 self._target_scroll_y = 0.0
                 self._scroll_y = 0.0
 
@@ -841,7 +916,7 @@ class VolumeMixerFlyout(QWidget):
             p.drawText(
                 num_rect,
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                str(self.master_slider.value),
+                str(self.master_slider.display_value()),
             )
 
         # Botão Retrátil (^ / v) em x0 + 203, y0 + 11 (26x26px)
@@ -855,15 +930,15 @@ class VolumeMixerFlyout(QWidget):
             p.setClipPath(clip_path)
 
             # Linha divisória horizontal em y0 + 48.5 (#313131)
-            sep_y = y0 + self.HEADER_H
+            sep_y = y0 + self._list_top()
             p.setPen(QPen(th.divider, hairline(th)))
             p.drawLine(QPointF(x0 + 1.0, sep_y), QPointF(x0 + self.CARD_W - 1.0, sep_y))
 
             # Recorte exclusivo para a área da lista de aplicativos (abaixo do divisor)
-            list_clip = QRectF(x0, sep_y + 1.0, float(self.CARD_W), card_rect.height() - self.HEADER_H - 2.0)
+            list_clip = QRectF(x0, sep_y + 1.0, float(self.CARD_W), card_rect.height() - self._list_top() - 2.0)
             p.setClipRect(list_clip, Qt.ClipOperation.IntersectClip)
 
-            curr_y = y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5) - self._scroll_y
+            curr_y = self._list_rows_top(y0)
             for row in self._rows:
                 row_h = row.get_total_height()
                 if curr_y + row_h >= sep_y and curr_y <= card_rect.bottom():
@@ -880,19 +955,36 @@ class VolumeMixerFlyout(QWidget):
 
         # 6. Número do volume em imagem (tema com `digits`), com o pulo ao mudar
         if th.digits is not None:
-            value = self.master_slider.value
+            value = self.master_slider.value   # o pulo é por mudança de volume, não por número contado no deslize
             now = time.perf_counter()
             if value != self._digits_value:
                 if self._digits_value is not None and th.digits.pop:
                     self._digits_pop_start = now
                     self._start_anim_timer()
                 self._digits_value = value
-            paint_digits(p, card_rect, th.digits, value, self.master_muted,
+            paint_digits(p, card_rect, th.digits, self.master_slider.display_value(), self.master_muted,
                          pop_amount(now - self._digits_pop_start))
+
+        # 7. Gaveta de dispositivos do volume principal, logo abaixo do cabeçalho. Por último, por cima da arte do
+        # tema: com `digits` o número em imagem pode descer do cabeçalho e cobriria os nomes dos dispositivos.
+        if self._master_drawer.extra_height() > 0.0:
+            p.save()
+            clip_path = QPainterPath()
+            clip_path.addRoundedRect(bg_rect, th.radius, th.radius)
+            p.setClipPath(clip_path)
+            self._master_drawer.draw_drawer(p, x0, y0 + self.HEADER_H)
+            p.restore()
 
     def _draw_speaker_icon(self, p: QPainter, cx: float, cy: float):
         """Desenha o ícone vetorial de alto-falante fiel ao Windows 11 (com ondas dinâmicas ou mudo)."""
-        if self._speaker_hovered:
+        if self._master_drawer.is_routing_open:
+            # gaveta de dispositivos aberta: o mesmo realce em cor de destaque dos ícones dos apps com a gaveta aberta
+            tint = QColor(self.theme.accent)
+            tint.setAlpha(45)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(tint)
+            p.drawRoundedRect(QRectF(cx - 12.0, cy - 12.0, 24.0, 24.0), 4.0, 4.0)
+        elif self._speaker_hovered:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(255, 255, 255, 20))
             p.drawRoundedRect(QRectF(cx - 12.0, cy - 12.0, 24.0, 24.0), 4.0, 4.0)
@@ -1029,7 +1121,7 @@ class VolumeMixerFlyout(QWidget):
         self._start_anim_timer()
 
     def _scrollbar_track_rect(self, x0: float, y0: float, card_h: float) -> QRectF:
-        track_top = y0 + self.HEADER_H + 4.0
+        track_top = y0 + self._list_top() + 4.0
         track_bottom = y0 + card_h - 10.0
         track_h = max(20.0, track_bottom - track_top)
         return QRectF(x0 + 224.0, track_top, 15.0, track_h)
@@ -1037,12 +1129,12 @@ class VolumeMixerFlyout(QWidget):
     def _scrollbar_thumb_rect(self, x0: float, y0: float, card_h: float) -> QRectF:
         if not self._has_scrollable_content():
             return QRectF()
-        track_top = y0 + self.HEADER_H + 6.0
+        track_top = y0 + self._list_top() + 6.0
         track_bottom = y0 + card_h - 12.0
         track_h = max(20.0, track_bottom - track_top)
         mx = self._max_scroll()
         total_rows_h = max(1.0, sum(r.get_total_height() for r in self._rows))
-        visible_h = max(60.0, card_h - self.HEADER_H - 8.0)
+        visible_h = max(60.0, card_h - self._list_top() - 8.0)
         ratio = min(1.0, visible_h / total_rows_h)
         thumb_h = max(28.0, track_h * ratio)
         scroll_ratio = max(0.0, min(1.0, self._scroll_y / mx)) if mx > 0.0 else 0.0
@@ -1087,6 +1179,21 @@ class VolumeMixerFlyout(QWidget):
         x0, y0 = card_rect.left(), card_rect.top()
         self._restart_hide_timer()
 
+        # Botão DIREITO no alto-falante do cabeçalho: gaveta dos dispositivos padrão (recolhido ou expandido)
+        if event.button() == Qt.MouseButton.RightButton and self._speaker_hit_rect(x0, y0).contains(pt):
+            self.toggle_master_drawer()
+            return
+
+        # Cliques dentro da gaveta de dispositivos do volume principal (✕, abas, dispositivos)
+        md = self._master_drawer
+        if md.is_routing_open and pt.y() > y0 + self.HEADER_H and pt.y() <= y0 + self._list_top():
+            if event.button() == Qt.MouseButton.LeftButton and md.handle_drawer_press(pt, x0, y0 + self.HEADER_H):
+                self._clamp_scroll()
+                self._start_anim_timer()
+                self._notify_card_top()
+                self.update()
+            return
+
         # Interações de botão esquerdo no cabeçalho
         if event.button() == Qt.MouseButton.LeftButton:
             # 1. Clique no botão retrátil (^ / v)
@@ -1112,7 +1219,7 @@ class VolumeMixerFlyout(QWidget):
                 return
 
         # 4. Interação na gaveta do Mixer de Apps (quando expandida)
-        if self._expand_t > 0.5 and pt.y() > y0 + self.HEADER_H:
+        if self._expand_t > 0.5 and pt.y() > y0 + self._list_top():
             # Scrollbar apenas no botão esquerdo
             if event.button() == Qt.MouseButton.LeftButton and self._has_scrollable_content():
                 track_rect = self._scrollbar_track_rect(x0, y0, card_rect.height())
@@ -1125,7 +1232,7 @@ class VolumeMixerFlyout(QWidget):
                     self._scrollbar_fade_timer.stop()
                     # Se clicou no track fora do thumb, centraliza o thumb na posição clicada
                     if not thumb_rect.contains(pt):
-                        track_top = y0 + self.HEADER_H + 6.0
+                        track_top = y0 + self._list_top() + 6.0
                         track_bottom = y0 + card_rect.height() - 12.0
                         track_h = max(20.0, track_bottom - track_top)
                         thumb_h = thumb_rect.height()
@@ -1138,10 +1245,10 @@ class VolumeMixerFlyout(QWidget):
                     self.update()
                     return
 
-            curr_y = y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5) - self._scroll_y
+            curr_y = self._list_rows_top(y0)
             for idx, row in enumerate(self._rows):
                 row_h = row.get_total_height()
-                if curr_y + row_h >= y0 + self.HEADER_H and curr_y <= card_rect.bottom():
+                if curr_y + row_h >= y0 + self._list_top() and curr_y <= card_rect.bottom():
                     cy = curr_y + row.MAIN_ROW_CY
 
                     # A) Botão DIREITO: abre/fecha gaveta inline de roteamento (Opção B)
@@ -1151,6 +1258,8 @@ class VolumeMixerFlyout(QWidget):
                             for other in self._rows:
                                 if other is not row:
                                     other.close_routing()
+                            if not row.is_routing_open:
+                                self._master_drawer.close_routing()
                             row.handle_mouse_press(pt, Qt.MouseButton.RightButton, x0, curr_y)
                             # Se a gaveta acabou de abrir, acomoda com auto-scroll e Guard Rail
                             if row.is_routing_open:
@@ -1220,7 +1329,7 @@ class VolumeMixerFlyout(QWidget):
 
         # 3. Arrastando Scrollbar
         if self._dragging_scrollbar and self._has_scrollable_content():
-            track_top = y0 + self.HEADER_H + 6.0
+            track_top = y0 + self._list_top() + 6.0
             track_bottom = y0 + card_rect.height() - 12.0
             track_h = max(20.0, track_bottom - track_top)
             thumb_rect = self._scrollbar_thumb_rect(x0, y0, card_rect.height())
@@ -1241,7 +1350,7 @@ class VolumeMixerFlyout(QWidget):
         ms_hov = self.master_slider.contains(pt)
 
         # Hover na scrollbar
-        if self._has_scrollable_content() and self._expand_t > 0.5 and pt.y() > y0 + self.HEADER_H:
+        if self._has_scrollable_content() and self._expand_t > 0.5 and pt.y() > y0 + self._list_top():
             track_rect = self._scrollbar_track_rect(x0, y0, card_rect.height())
             sb_hov = track_rect.contains(pt)
             if sb_hov != self._scrollbar_hovered:
@@ -1270,11 +1379,15 @@ class VolumeMixerFlyout(QWidget):
         self._chevron_hovered = chv_hov
         self.master_slider.is_hovered = ms_hov
 
+        if self._master_drawer.is_routing_open:
+            if self._master_drawer.handle_drawer_move(pt, x0, y0 + self.HEADER_H):
+                changed = True
+
         hovered_app_name = ""
-        curr_y = y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5) - self._scroll_y
+        curr_y = self._list_rows_top(y0)
         for idx, row in enumerate(self._rows):
             row_h = row.get_total_height()
-            visible = self._expand_t > 0.5 and (curr_y + row_h >= y0 + self.HEADER_H and curr_y <= card_rect.bottom())
+            visible = self._expand_t > 0.5 and (curr_y + row_h >= y0 + self._list_top() and curr_y <= card_rect.bottom())
             cy = curr_y + row.MAIN_ROW_CY
             ic_hov = visible and row.icon_hit_rect(x0, cy).contains(pt)
             row.slider.set_geometry(x0 + 45.0, x0 + 186.0, cy)
@@ -1358,6 +1471,8 @@ class VolumeMixerFlyout(QWidget):
         for row in self._rows:
             row.icon_hovered = False
             row.slider.is_hovered = False
+        far = QPointF(-1e5, -1e5)
+        self._master_drawer.handle_drawer_move(far, 0.0, 0.0)   # limpa o hover da gaveta do volume principal
         self._start_anim_timer()
         self._restart_hide_timer()
         self.update()
@@ -1367,9 +1482,9 @@ class VolumeMixerFlyout(QWidget):
         if self._expand_t <= 0.5:
             return None
         x0, y0 = card_rect.left(), card_rect.top()
-        if pt.y() <= y0 + self.HEADER_H or pt.y() >= card_rect.bottom():
+        if pt.y() <= y0 + self._list_top() or pt.y() >= card_rect.bottom():
             return None
-        curr_y = y0 + (self.FIRST_ROW_OFFSET_Y - self.ROW_PITCH * 0.5) - self._scroll_y
+        curr_y = self._list_rows_top(y0)
         for row in self._rows:
             row.slider.set_geometry(x0 + 45.0, x0 + 186.0, curr_y + row.MAIN_ROW_CY)
             if row.slider.contains(pt):
@@ -1385,6 +1500,10 @@ class VolumeMixerFlyout(QWidget):
         if delta == 0:
             return
         self._restart_hide_timer()
+
+        # Sobre a gaveta de dispositivos do volume principal a roda não faz nada (nem volume, nem rolar a lista)
+        if self._master_drawer.extra_height() > 0.0 and y0 + self.HEADER_H < pt.y() <= y0 + self._list_top():
+            return
 
         # Se rolar o scroll sobre o cabeçalho (ou com mixer fechado), ajusta o volume Master em +-2%
         if not self.is_expanded or pt.y() <= y0 + self.HEADER_H:

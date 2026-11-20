@@ -15,6 +15,8 @@ from app.core.widget_animator import AnimatedVisibilityMixin, animations_enabled
 from app.services.fps_service import FpsReading, FpsService
 from app.services.performance_service import PerformanceService, PerformanceSnapshot
 from app.ui_components.floating_card import (
+    MAX_SCALE,
+    MIN_SCALE,
     SCREEN_MARGIN,
     is_rect_on_screen,
     place_card_default,
@@ -51,6 +53,9 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
             selected_metric=str(config_manager.get_performance("selected_metric", "cpu") or "cpu"),
             fps_enabled=fps_on,
         )
+        self.skin.scale_auto = bool(config_manager.get_performance("scale_auto", False))
+        if self.skin.scale_auto:
+            self.skin.set_scale(self.skin.auto_scale_target())
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
@@ -80,10 +85,23 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
             self.skin.kick()
             self.metric_changed.emit(metric)
 
-    def set_scale(self, scale: float):
+    def set_scale(self, scale: float | None):
+        """Tamanho do cartão (menu, Hub ou arraste do canto), com movimento; None = automático (segue a tela)."""
+        auto = scale is None
+        config_manager.set_performance("scale_auto", auto)
+        self.skin.scale_auto = auto
+        target = self.skin.auto_scale_target() if auto else max(MIN_SCALE, min(MAX_SCALE, float(scale)))
+        self.skin.animate_scale_to(target)
+        config_manager.set_performance("scale", round(target, 3))
+        self.scale_changed.emit(target)
+
+    def apply_scale_live(self, scale: float):
+        """Arraste do controle de tamanho no Hub: aplica na hora (o ponteiro já é o movimento), sem gravar."""
+        self.skin.stop_scale_animation()
         self.skin.set_scale(scale)
-        config_manager.set_performance("scale", round(self.skin.scale(), 3))
-        self.scale_changed.emit(self.skin.scale())
+
+    def is_scale_auto(self) -> bool:
+        return bool(self.skin.scale_auto)
 
     def set_desktop_mode(self, enabled: bool):
         config_manager.set_performance("desktop_mode", bool(enabled))

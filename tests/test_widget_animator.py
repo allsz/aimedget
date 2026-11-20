@@ -199,7 +199,8 @@ class TestControllerInteractions(unittest.TestCase):
         QTest.qWait(80)                          # no meio do deslize
         self.assertNotEqual(c.skin.pos(), QPoint(310, 210))
         c.skin._toggle_remember_position(True)   # ex.: clicar no menu aberto durante a saída
-        self.assertEqual(config_manager.get_music_saved_position(), (310, 210))
+        m = c.skin.art_margin                    # a posição salva é a do CARTÃO (a janela tem a folga do brilho)
+        self.assertEqual(config_manager.get_music_saved_position(), (310 + m, 210 + m))
 
     def test_music_resuming_mid_fade_out_reverses_instead_of_hiding(self):
         c = self.ctrl

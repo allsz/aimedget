@@ -23,6 +23,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
 
     manage_skins_requested = Signal()
     volume_wheel_requested = Signal(float)
+    desktop_mode_changed = Signal(bool)   # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
     AVAILABLE_SKINS = {
         "vinyl": VinylMusicSkin,
         "fullcover": FullCoverSkin,
@@ -109,6 +110,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
                 if repeat_signal is not None:
                     repeat_signal.disconnect(self.skin.on_repeat_state)
                 self.skin.scale_changed.disconnect(self._on_skin_scale_changed)
+                self.skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
             except Exception:
                 pass
             self.skin.close()
@@ -126,6 +128,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
             repeat_signal.connect(self.skin.on_repeat_state)
             self.skin.on_repeat_state(getattr(self.media_worker, "_last_repeat_ui", -1))
         self.skin.scale_changed.connect(self._on_skin_scale_changed)
+        self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
 
         if last_state is not None:
             self.skin.on_media_updated(*last_state)
@@ -142,6 +145,16 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
 
         self.skin_changed.emit(skin_name)
 
+    def set_desktop_mode(self, enabled: bool):
+        """"Fixar na área de trabalho" (menu do widget ou Hub): aplica com a onda de pontos, grava e avisa o Hub."""
+        config_manager.set_widget_desktop_mode("music_widget", bool(enabled))
+        if self.skin:
+            self.skin.set_desktop_mode(enabled)
+        self.desktop_mode_changed.emit(bool(enabled))
+
+    def is_desktop_mode(self) -> bool:
+        return bool(self.skin.desktop_mode_target()) if self.skin else False
+
     def _on_skin_scale_changed(self, scale: float):
         self.scale_changed.emit(scale)
 
@@ -150,8 +163,14 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
         config_manager.set_music_scale(scale)
         if self.skin:
             effective = config_manager.get_effective_music_scale(screen=self.skin.screen() if hasattr(self.skin, "screen") else None)
-            self.skin.set_scale(effective, save_preference=False)
+            self.skin.animate_scale_to(effective)   # anima (sem animações do Windows, vale na hora)
         self.scale_changed.emit(scale)
+
+    def apply_scale_live(self, scale: float):
+        """Arraste do controle de tamanho: aplica na hora (sem mola, o ponteiro já é o movimento) e sem gravar."""
+        if self.skin:
+            self.skin.stop_scale_animation()
+            self.skin.set_scale(scale, save_preference=False)
 
     def restore_or_center_position(self):
         """Restaura a posição favorita salva pelo usuário ou centraliza na tela primária."""

@@ -573,6 +573,16 @@ class ConfigManager:
     # location_mode ('auto'/'manual'), location / auto_location ({name, lat, lon, detail}), auto_location_at,
     # cache (última previsão), hotkey.
 
+    # --- "Fixar na área de trabalho" da Música e do Timer (Clima e Desempenho guardam na própria seção) ---
+
+    def get_widget_desktop_mode(self, section: str) -> bool:
+        """`section`: "music_widget" ou "timer_widget"."""
+        return bool(self._data.get(section, {}).get("desktop_mode", False))
+
+    def set_widget_desktop_mode(self, section: str, enabled: bool):
+        self._data.setdefault(section, {})["desktop_mode"] = bool(enabled)
+        self._save()
+
     def get_weather(self, key: str, default: Any = None) -> Any:
         return self._data.get("weather_widget", {}).get(key, default)
 

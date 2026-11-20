@@ -14,7 +14,7 @@ import time
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QPainter
 
-from app.core.anchor_manager import add_anchor_actions
+from app.core.anchor_manager import anchor_bar_items
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
@@ -30,6 +30,7 @@ from app.ui_components.floating_card import (
     FloatingCard,
 )
 from app.ui_components.fluent_menu import FluentMusicMenu
+from app.ui_components.menu_action_bar import ActionBarItem
 from app.widgets.weather import conditions as cond
 from app.widgets.weather.card_painter import paint_card, tab_at, tab_rect
 from app.widgets.weather.card_state import CardState
@@ -170,10 +171,34 @@ class WeatherCard(FloatingCard):
         theme = resolve_theme(config_manager.get_hub_theme("system"))
         menu = FluentMusicMenu(parent=self, theme=theme)
 
-        act_refresh = QAction(t("weather_menu_refresh"), self)
-        act_refresh.triggered.connect(self.refresh_requested.emit)
-        menu.addAction(act_refresh)
-        menu.addSeparator()
+        remembered = bool(config_manager.get_weather("remember_position", False))
+        bar_items = [
+            ActionBarItem(
+                key="refresh",
+                icon="refresh",
+                tooltip=t("weather_menu_refresh"),
+                spin_on_click=True,
+                on_trigger=self.refresh_requested.emit,
+            ),
+            ActionBarItem(
+                key="pin",
+                icon="pin",
+                tooltip=t("timer_menu_remember"),
+                toggle=True,
+                checked=remembered,
+                on_trigger=self.remember_position_changed.emit,
+            ),
+            ActionBarItem(
+                key="desktop",
+                icon="desktop",
+                tooltip=t("weather_menu_desktop"),
+                toggle=True,
+                checked=self._desktop_mode,
+                on_trigger=self.desktop_mode_changed.emit,
+            ),
+            *anchor_bar_items(self),
+        ]
+        menu.add_action_bar(bar_items)
 
         city_menu = FluentMusicMenu(t("weather_menu_city"), menu, theme=theme)
         for i, name in enumerate(self.city_names):
@@ -205,24 +230,15 @@ class WeatherCard(FloatingCard):
             size_menu.addAction(act)
         menu.addMenu(size_menu)
 
-        remembered = bool(config_manager.get_weather("remember_position", False))
-        act_remember = QAction(t("timer_menu_remember"), self)
-        menu.set_trailing_check(act_remember, remembered)
-        act_remember.triggered.connect(lambda: self.remember_position_changed.emit(not remembered))
-        menu.addAction(act_remember)
-
-        act_desktop = QAction(t("weather_menu_desktop"), self)
-        menu.set_trailing_check(act_desktop, self._desktop_mode)
-        act_desktop.triggered.connect(lambda: self.desktop_mode_changed.emit(not self._desktop_mode))
-        menu.addAction(act_desktop)
-        add_anchor_actions(menu, self)
-
         if dev_tools_enabled() and self.state.days:
             menu.addSeparator()
             preview_menu = FluentMusicMenu(t("weather_menu_preview"), menu, theme=theme)
             current = self.state.days[self.state.selected].condition
             for key in cond.ALL_CONDITIONS:
-                act = QAction(t(f"weather_cond_{key}"), self)
+                label = t(f"weather_cond_{cond.name_key(key)}")
+                if key in cond.DAY_OF:
+                    label += " " + t("weather_menu_night_suffix")
+                act = QAction(label, self)
                 preview_menu.set_trailing_check(act, key == current)
                 act.triggered.connect(lambda checked=False, k=key: self.preview_condition_requested.emit(k))
                 preview_menu.addAction(act)

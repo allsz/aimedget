@@ -15,6 +15,7 @@ import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
+from app.core.refresh_rate import refresh_interval_ms
 
 from app.hub.components import tab_pill
 from app.hub.components.city_list import Spring
@@ -103,6 +104,7 @@ class PositionPicker(QWidget):
         for k, v in targets.items():
             self._edges[k].t = v
         self._last = time.monotonic()
+        self._timer.setInterval(refresh_interval_ms(self))
         self._timer.start()
         self.update()
 

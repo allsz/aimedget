@@ -11,6 +11,7 @@ import time
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QAbstractButton
+from app.core.refresh_rate import refresh_interval_ms
 
 from app.core.widget_animator import animations_enabled
 from app.hub.components.city_list import Spring
@@ -109,6 +110,7 @@ class PillSwitch(QAbstractButton):
             self._stretch.t = 0.0
             self._stretch.v = STRETCH_KICK
             self._last = time.monotonic()
+            self._timer.setInterval(refresh_interval_ms(self))
             self._timer.start()
         else:
             self._snap(checked)

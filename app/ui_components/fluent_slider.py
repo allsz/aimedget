@@ -2,6 +2,9 @@ import math
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 
+from app.core.widget_animator import animations_enabled
+from app.widgets.weather.motion import EASE_OUT
+
 
 class FluentSlider:
     """
@@ -24,11 +27,20 @@ class FluentSlider:
     COLOR_THUMB_BORDER = QColor(54, 54, 54)
     COLOR_THUMB_INNER = QColor(77, 178, 255)
 
+    # Mudança de volume vinda de fora (troca de dispositivo, teclas de volume): o botão desliza até o valor novo e o
+    # número conta junto. Escolhido no protótipo mockups/volume-device-glide.html: 180 ms, ease-out, duração fixa.
+    GLIDE_DURATION_S = 0.180
+    GLIDE_CURVE = staticmethod(EASE_OUT)
+
     def __init__(self, x_start: float = 45.0, x_end: float = 162.0, cy: float = 24.5):
         self.x_start = x_start
         self.x_end = x_end
         self.cy = cy
-        self.value = 50       # 0 a 100
+        self._value = 50          # 0 a 100: o valor de verdade (alvo)
+        self._shown = 50.0        # o que está desenhado: igual a _value, ou a caminho dele durante o deslize
+        self._glide_from = 50.0
+        self._glide_elapsed = 0.0
+        self._gliding = False
         self.is_muted = False
         self.is_hovered = False
         self.is_dragging = False
@@ -64,13 +76,59 @@ class FluentSlider:
         if track_inactive is not None:
             self.track_inactive = QColor(track_inactive)
 
+    @property
+    def value(self) -> int:
+        return self._value
+
+    @value.setter
+    def value(self, v: int):
+        """Valor posto pelo usuário (arrastar, roda) ou sem animação: vai na hora, sem deslize."""
+        self._value = int(v)
+        self._shown = float(self._value)
+        self._gliding = False
+
+    def glide_to(self, v: int):
+        """Valor vindo de fora: desliza do que está desenhado até `v` (na hora, sem as animações do Windows)."""
+        v = int(v)
+        if v == self._value and not self._gliding:
+            return
+        if not animations_enabled():
+            self.value = v
+            return
+        self._value = v
+        self._glide_from = self._shown
+        self._glide_elapsed = 0.0
+        self._gliding = abs(self._shown - v) > 1e-6
+
+    def is_gliding(self) -> bool:
+        return self._gliding
+
+    def display_value(self) -> int:
+        """O número a mostrar: conta junto com o botão durante o deslize."""
+        return int(round(self._shown))
+
     def set_geometry(self, x_start: float, x_end: float, cy: float):
         self.x_start = x_start
         self.x_end = x_end
         self.cy = cy
 
     def step_animation(self, dt: float = 0.016) -> bool:
-        """Interpola suavemente o raio do círculo interno do thumb independente da taxa de Hz."""
+        """Interpola suavemente o raio do círculo interno do thumb e o deslize do valor, independente da taxa de Hz."""
+        gliding = self._step_glide(dt)
+        return self._step_thumb(dt) or gliding
+
+    def _step_glide(self, dt: float) -> bool:
+        if not self._gliding:
+            return False
+        self._glide_elapsed += max(0.001, min(0.05, dt))
+        t = min(1.0, self._glide_elapsed / self.GLIDE_DURATION_S)
+        self._shown = self._glide_from + (self._value - self._glide_from) * self.GLIDE_CURVE(t)
+        if t >= 1.0:
+            self._shown = float(self._value)
+            self._gliding = False
+        return True
+
+    def _step_thumb(self, dt: float) -> bool:
         target = (
             self.THUMB_INNER_R_PRESSED
             if self.is_dragging
@@ -85,7 +143,7 @@ class FluentSlider:
         return False
 
     def thumb_x(self) -> float:
-        t = max(0.0, min(1.0, self.value / 100.0))
+        t = max(0.0, min(1.0, self._shown / 100.0))
         return self.x_start + (self.x_end - self.x_start) * t
 
     def hit_rect(self) -> QRectF:
