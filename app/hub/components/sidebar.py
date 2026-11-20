@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.i18n import t
+from app.hub.components.tab_pill import TabPill
 from app.hub.theme import HubTheme, THEME_LIGHT
 
 
@@ -77,6 +78,8 @@ class HubSidebar(QWidget):
         ("keys", "sidebar_keys"),
         ("vol", "sidebar_volume"),
         ("timer", "sidebar_timer"),
+        ("weather", "sidebar_weather"),
+        ("performance", "sidebar_performance"),
         ("gen", "sidebar_general"),
     ]
 
@@ -100,11 +103,15 @@ class HubSidebar(QWidget):
         brand.setObjectName("HubBrand")
         layout.addWidget(brand)
 
+        # Pílula que desliza (eixo Y) atrás do item ativo; o fundo do item ativo no QSS é transparente
+        self._pill = TabPill(self, vertical=True, color=self._theme.panel2, radius=6.0)
+
         # Lista de itens
         for key, i18n_key in self.NAV_ITEMS:
             btn = NavItemButton(key, t(i18n_key), count=0, parent=self)
             btn.clicked.connect(lambda checked=False, k=key: self.select_page(k))
             self._buttons[key] = btn
+            self._pill.track(key, btn)
             layout.addWidget(btn)
 
         layout.addStretch()
@@ -122,6 +129,7 @@ class HubSidebar(QWidget):
         self._current_page = key
         for k, btn in self._buttons.items():
             btn.set_active(k == key, self._theme)
+        self._pill.select(key)
 
         if emit_signal:
             self.page_changed.emit(key)
@@ -132,5 +140,6 @@ class HubSidebar(QWidget):
 
     def update_theme(self, theme: HubTheme):
         self._theme = theme
+        self._pill.set_colors(theme.panel2)
         for k, btn in self._buttons.items():
             btn.set_active(k == self._current_page, self._theme)

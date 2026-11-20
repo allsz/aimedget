@@ -9,8 +9,8 @@ Design refinado com integração nativa ao Windows 11 DWM:
 
 import sys
 import time
-from PySide6.QtCore import QPoint, QRect, QTimer
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QEasingCurve, QPoint, QRect, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QCloseEvent, QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -25,11 +25,14 @@ from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
 from app.hub.components.accent_wipe import AccentWipe
+from app.hub.components.page_transition import PageTransition
 from app.hub.components.message_dialog import confirm
 from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
 from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
+from app.hub.performance_page import PerformancePage
+from app.hub.weather_page import WeatherPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
 from app.hub.tray_manager import AimedgetTrayIcon
@@ -69,6 +72,16 @@ class AimedgetHubWindow(QMainWindow):
         self._accent_timer.setSingleShot(True)
         self._accent_timer.setInterval(30)
         self._accent_timer.timeout.connect(self._flush_accent)
+
+        # Fade-in sutil ao exibir/restaurar o Hub: esconde o 1º frame branco do Win32/DWM
+        self._reveal_anim = QVariantAnimation(self)
+        self._reveal_anim.setDuration(170)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._reveal_anim.valueChanged.connect(lambda v: self.setWindowOpacity(float(v)))
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.setInterval(16)
+        self._reveal_timer.timeout.connect(self._start_reveal_anim)
 
         # Inicializar Tray Icon
         self._quitting = False
@@ -180,17 +193,69 @@ class AimedgetHubWindow(QMainWindow):
             self.show_and_activate()
             self._offer_update()
 
-    def show_and_activate(self):
-        """Traz a janela do Hub para o primeiro plano."""
-        self.show()
+    def _bring_to_front(self):
+        """Garante restauração, foco e Z-order no Windows (inclusive após fechar um QMenu de widget flutuante)."""
+        if not self.isVisible():
+            return
+        if self.isMinimized():
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         self.raise_()
         self.activateWindow()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                user32 = ctypes.windll.user32
+                if user32.IsIconic(hwnd):
+                    user32.ShowWindow(hwnd, 9)   # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+    def _start_reveal_anim(self):
+        """Inicia o fade-in suave após o primeiro frame pintado (evitando o flash branco do Win32/DWM)."""
+        if not self.isVisible():
+            self.setWindowOpacity(1.0)
+            return
+        if not animations_enabled():
+            self.setWindowOpacity(1.0)
+            return
+        self._reveal_anim.stop()
+        self._reveal_anim.setStartValue(self.windowOpacity())
+        self._reveal_anim.setEndValue(1.0)
+        self._reveal_anim.start()
+
+    def show_and_activate(self):
+        """Traz a janela do Hub para o primeiro plano com fade-in suave (sem flash branco do Windows)."""
+        needs_reveal = (not self.isVisible()) or self.isMinimized()
+        self._reveal_timer.stop()
+        self._reveal_anim.stop()
+        if needs_reveal:
+            self.setWindowOpacity(0.0)
+        if self.isMinimized():
+            self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
+        self.show()
+        self._bring_to_front()
         self._apply_asymmetric_windows_icons()
+        # Quando disparado de dentro de um QMenu.exec() de widget flutuante, o fechamento do popup pode devolver
+        # o foco ao widget logo após `triggered`: reforça a ativação no próximo tick do loop de eventos.
+        QTimer.singleShot(0, self._bring_to_front)
+        if needs_reveal:
+            self._reveal_timer.start()
+        elif self.windowOpacity() < 1.0:
+            self.setWindowOpacity(1.0)
 
     def show_music_skins(self):
-        """Abre o Hub direto na página do Music Player (gerenciamento de skins)."""
-        self.show_and_activate()
+        """Abre o Hub direto na seção de skins da página do Music Player."""
         self.sidebar.select_page("music")
+        self.show_and_activate()
+        self.page_music.focus_skins()
+
+    def show_weather_cities(self):
+        """Abre o Hub direto na seção de cidades da página do Clima (pelo menu do cartão)."""
+        self.sidebar.select_page("weather")
+        self.show_and_activate()
+        self.page_weather.focus_cities()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -232,6 +297,8 @@ class AimedgetHubWindow(QMainWindow):
 
     def hideEvent(self, event):
         """Garante que a geometria seja salva mesmo ao ocultar a janela."""
+        self._reveal_timer.stop()
+        self._reveal_anim.stop()
         if not self.isMaximized() and not self.isMinimized():
             geo = self.geometry()
             config_manager.save_hub_geometry(geo.x(), geo.y(), geo.width(), geo.height())
@@ -254,6 +321,7 @@ class AimedgetHubWindow(QMainWindow):
         # Stack de páginas
         self.stack = QStackedWidget(self.shell)
         main_layout.addWidget(self.stack, stretch=1)
+        self._page_transition = PageTransition(self.stack)
 
         # Instanciar as páginas
         self.page_overview = OverviewPage(theme=self._current_theme, parent=self.stack)
@@ -263,6 +331,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys = LockKeysPage(theme=self._current_theme, parent=self.stack)
         self.page_vol = VolumePage(theme=self._current_theme, parent=self.stack)
         self.page_timer = TimerPage(theme=self._current_theme, parent=self.stack)
+        self.page_weather = WeatherPage(theme=self._current_theme, parent=self.stack)
+        self.page_performance = PerformancePage(theme=self._current_theme, parent=self.stack)
         self.page_gen = GeneralPage(
             on_theme_change=self._change_theme_mode,
             on_language_change=self._change_language,
@@ -273,12 +343,14 @@ class AimedgetHubWindow(QMainWindow):
             parent=self.stack,
         )
 
-        self.stack.addWidget(self.page_overview)  # index 0: ov
-        self.stack.addWidget(self.page_music)     # index 1: music
-        self.stack.addWidget(self.page_keys)      # index 2: keys
-        self.stack.addWidget(self.page_vol)       # index 3: vol
-        self.stack.addWidget(self.page_timer)     # index 4: timer
-        self.stack.addWidget(self.page_gen)       # index 5: gen
+        self.stack.addWidget(self.page_overview)     # index 0: ov
+        self.stack.addWidget(self.page_music)        # index 1: music
+        self.stack.addWidget(self.page_keys)         # index 2: keys
+        self.stack.addWidget(self.page_vol)          # index 3: vol
+        self.stack.addWidget(self.page_timer)        # index 4: timer
+        self.stack.addWidget(self.page_weather)      # index 5: weather
+        self.stack.addWidget(self.page_performance)  # index 6: performance
+        self.stack.addWidget(self.page_gen)          # index 7: gen
 
         self._page_map = {
             "ov": 0,
@@ -286,7 +358,9 @@ class AimedgetHubWindow(QMainWindow):
             "keys": 2,
             "vol": 3,
             "timer": 4,
-            "gen": 5,
+            "weather": 5,
+            "performance": 6,
+            "gen": 7,
         }
 
         # Inicializar contadores na sidebar
@@ -298,6 +372,8 @@ class AimedgetHubWindow(QMainWindow):
         self.sidebar.set_badge_count("keys", 0)
         self.sidebar.set_badge_count("vol", 0)
         self.sidebar.set_badge_count("timer", 0)
+        self.sidebar.set_badge_count("weather", 0)
+        self.sidebar.set_badge_count("performance", 0)
         self.sidebar.set_badge_count("gen", 0)
 
         get_service_bridge().active_skins_changed.connect(self._on_active_skins_changed)
@@ -308,8 +384,9 @@ class AimedgetHubWindow(QMainWindow):
 
     def _on_navigation(self, page_key: str):
         self._stop_wipe()   # a foto é da página antiga
-        if page_key in self._page_map:
-            self.stack.setCurrentIndex(self._page_map[page_key])
+        if page_key not in self._page_map:
+            return
+        self.stack.setCurrentIndex(self._page_map[page_key])
 
     def _on_customize_requested(self, widget_id: str):
         target_map = {
@@ -317,6 +394,8 @@ class AimedgetHubWindow(QMainWindow):
             "keys_osd": "keys",
             "vol_mixer": "vol",
             "timer": "timer",
+            "weather": "weather",
+            "performance": "performance",
         }
         target_page = target_map.get(widget_id, "ov")
         self.sidebar.select_page(target_page)
@@ -334,6 +413,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys.retranslate_ui()
         self.page_vol.retranslate_ui()
         self.page_timer.retranslate_ui()
+        self.page_weather.retranslate_ui()
+        self.page_performance.retranslate_ui()
         self.page_gen.retranslate_ui()
         if hasattr(self, "tray_icon") and self.tray_icon:
             self.tray_icon.retranslate_ui()
@@ -419,6 +500,9 @@ class AimedgetHubWindow(QMainWindow):
 
     def _apply_theme(self, theme: HubTheme):
         self._current_theme = theme
+        pal = self.palette()
+        pal.setColor(QPalette.ColorRole.Window, QColor(theme.bg))
+        self.setPalette(pal)
         self.setStyleSheet(get_hub_stylesheet(theme))
         self.sidebar.update_theme(theme)
         self.page_overview.set_theme(theme)
@@ -426,6 +510,8 @@ class AimedgetHubWindow(QMainWindow):
         self.page_keys.set_theme(theme)
         self.page_vol.set_theme(theme)
         self.page_timer.set_theme(theme)
+        self.page_weather.set_theme(theme)
+        self.page_performance.set_theme(theme)
         self.page_gen.set_theme(theme)
 
         # Atualiza a paleta do menu do Tray em tempo real

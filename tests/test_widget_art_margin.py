@@ -100,13 +100,14 @@ class MusicMarginTests(_Isolated):
         self.addCleanup(skin.close)
         return skin
 
-    def test_without_peeking_art_the_window_is_exactly_the_card(self):
+    def test_without_peeking_art_the_window_is_the_card_plus_the_glow_room(self):
         skin = self.make()
-        self.assertEqual(skin.art_margin, 0)
-        self.assertEqual((skin.width(), skin.height()), (490, 240))
+        room = skin.ANCHOR_GLOW_ROOM      # folga fixa do brilho de ancorado (ancorar não muda o tamanho da janela)
+        self.assertEqual(skin.art_margin, room)
+        self.assertEqual((skin.width(), skin.height()), (490 + 2 * room, 240 + 2 * room))
         self.install(stack_theme.loader, "i", dict(INSIDE, adaptive=True))
         skin.reload_skin_theme()
-        self.assertEqual(skin.art_margin, 0)
+        self.assertEqual(skin.art_margin, room)
 
     def test_peeking_art_grows_the_window_but_not_the_card(self):
         skin = self.make()
@@ -127,7 +128,7 @@ class MusicMarginTests(_Isolated):
         self.assertEqual(skin.card_origin(), before)
         stack_theme.loader.set_active("default")
         skin.reload_skin_theme()
-        self.assertEqual(skin.art_margin, 0)
+        self.assertEqual(skin.art_margin, skin.ANCHOR_GLOW_ROOM)
         self.assertEqual(skin.card_origin(), before)
         self.assertEqual(skin.pos(), QPoint(300, 200))
 
@@ -227,20 +228,24 @@ class TimerMarginTests(_Isolated):
         self.addCleanup(skin.close)
         return skin
 
-    def test_without_peeking_art_nothing_changes(self):
+    def _room(self, skin):
+        return int(round(skin.ANCHOR_GLOW_ROOM - skin.ART_FREE_PAD))
+
+    def test_without_peeking_art_only_the_glow_room(self):
         skin = self.make()
-        self.assertEqual(skin.art_margin, 0)
-        self.assertEqual((skin.width(), skin.square_side()), (164, 164))
+        room = self._room(skin)
+        self.assertEqual(skin.art_margin, room)
+        self.assertEqual((skin.width(), skin.square_side()), (164 + 2 * room, 164))
         self.install(timer_theme.loader, "i", INSIDE)
         skin.reload_skin_theme()
-        self.assertEqual(skin.art_margin, 0)
+        self.assertEqual(skin.art_margin, room)
 
     def test_small_overflow_fits_in_the_existing_shadow_padding(self):
         skin = self.make()
         self.install(timer_theme.loader, "s", {"stickers": [{"image": "s.png", "anchor": "top-left", "x": 6, "y": 6,
                                                               "width": 20}]})
         skin.reload_skin_theme()
-        self.assertEqual(skin.art_margin, 0)    # passa ~4 px: cabe nos 8 px de folga que já existem
+        self.assertEqual(skin.art_margin, self._room(skin))   # passa ~4 px: cabe na folga que já existe
 
     def test_peeking_art_grows_the_window_but_not_the_square(self):
         skin = self.make()
@@ -256,7 +261,8 @@ class TimerMarginTests(_Isolated):
         self.assertEqual(skin.get_card_rect().left(), skin.SHADOW_PAD + m)
         timer_theme.loader.set_active("default")
         skin.reload_skin_theme()
-        self.assertEqual((skin.art_margin, skin.width(), skin.pos()), (0, 164, QPoint(300, 200)))
+        room = self._room(skin)
+        self.assertEqual((skin.art_margin, skin.width(), skin.square_origin()), (room, 164 + 2 * room, origin))
 
     def test_initial_size_from_settings_is_the_square(self):
         self.install(timer_theme.loader, "p", PEEK)

@@ -568,6 +568,50 @@ class ConfigManager:
         hub_cfg["geometry"] = [int(x), int(y), int(w), int(h)]
         self._save()
 
+    # --- Helpers de Configuração: Weather Widget ---
+    # Seção "weather_widget": enabled, show_on_startup, remember_position, position [x, y], scale, skin, units ('c'/'f'),
+    # location_mode ('auto'/'manual'), location / auto_location ({name, lat, lon, detail}), auto_location_at,
+    # cache (última previsão), hotkey.
+
+    # --- "Fixar na área de trabalho" da Música e do Timer (Clima e Desempenho guardam na própria seção) ---
+
+    def get_widget_desktop_mode(self, section: str) -> bool:
+        """`section`: "music_widget" ou "timer_widget"."""
+        return bool(self._data.get(section, {}).get("desktop_mode", False))
+
+    def set_widget_desktop_mode(self, section: str, enabled: bool):
+        self._data.setdefault(section, {})["desktop_mode"] = bool(enabled)
+        self._save()
+
+    def get_weather(self, key: str, default: Any = None) -> Any:
+        return self._data.get("weather_widget", {}).get(key, default)
+
+    def set_weather(self, key: str, value: Any):
+        self._data.setdefault("weather_widget", {})[key] = value
+        self._save()
+
+    # --- Helpers de Configuração: Performance Widget ---
+    # Seção "performance_widget": enabled, show_on_startup, remember_position, position [x, y], scale,
+    # desktop_mode, selected_metric ('cpu'/'gpu'/'vram'/'ram'), hotkey.
+
+    def get_performance(self, key: str, default: Any = None) -> Any:
+        return self._data.get("performance_widget", {}).get(key, default)
+
+    def set_performance(self, key: str, value: Any):
+        self._data.setdefault("performance_widget", {})[key] = value
+        self._save()
+
+    # --- Helpers de Configuração: Ancoragem de widgets ---
+    # Seção "anchor": net_style ('dots'/'lines'/'both'), boom ('ring'/'sweep'), groups (árvores de junção salvas,
+    # ver app/core/anchor_geometry.py), sizes ({chave: [w, h]} do último tamanho visto de cada membro).
+
+    def get_anchor(self, key: str, default: Any = None) -> Any:
+        return self._data.get("anchor", {}).get(key, default)
+
+    def set_anchor(self, key: str, value: Any):
+        self._data.setdefault("anchor", {})[key] = value
+        self._save()
+
     # --- Atalhos Globais de Teclado (Hotkeys) ---
 
     def get_music_hotkey(self, default: str = "Win+Alt+M") -> str:

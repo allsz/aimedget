@@ -16,6 +16,7 @@ def _get_headless(skin_id: str, skin_class_loader):
     if skin_id not in _cached_instances:
         SkinClass = skin_class_loader()
         skin = SkinClass(scale=0.50)
+        skin.set_glow_room(False)   # miniatura: sem a folga do brilho de ancorado (a imagem é o cartão)
         if hasattr(skin, "timer"):
             skin.timer.stop()
         skin.title_text = "Nome da Música"

@@ -4,6 +4,24 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [Não lançado]
+
+### Adicionado
+- **Widget de Clima** (Win+Alt+W): previsão de 5 dias clicáveis com céu animado para 10 condições (ensolarado,
+  céu limpo à noite, parcialmente nublado, nublado, neblina, chuva fraca, chuva, chuva forte, tempestade e neve).
+  Trocar de dia anima o fundo, o ícone, os números e o nome do dia. Dados da Open-Meteo, com local automático
+  (pela conexão) ou cidade buscada no Hub, °C ou °F e skins por fonte (`assets/fonts/weather`).
+- Clima: redimensionar arrastando o canto (o tamanho fica salvo) e **Fixar na área de trabalho**, que deixa o
+  cartão no nível do papel de parede, atrás de qualquer janela. A troca passa por uma onda de pontos na diagonal
+  e o cartão "assenta" com uma sombra menor, sem o quadro preto de antes. Fixado, o cartão continua na tela depois
+  do Win+D e do "espiar a área de trabalho", como as skins do Rainmeter, e convive com elas. Sem fixar, o Win+D o
+  esconde junto com as janelas e ele volta quando a área de trabalho é recolhida.
+- Clima: até **5 cidades** (incluindo "Minha localização"). A roda do mouse sobre o cartão troca de cidade (dá a
+  volta na lista), Ctrl+roda muda o tamanho, ↑/↓ também trocam, e o menu tem "Cidade". Pontos ao lado do nome
+  mostram a posição; o dia escolhido é mantido. No Hub, a lista de cidades se reordena arrastando. Uma única
+  consulta atualiza todas as cidades. Remover uma cidade vira um check na cor de destaque antes de ela subir e
+  sumir; uma cidade nova entra abrindo espaço e subindo de um desfoque.
+
 ## [1.0.5] - 2026-11-15
 
 ### Adicionado

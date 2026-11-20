@@ -198,34 +198,40 @@ class TestScreenMetrics(unittest.TestCase):
         vinyl.close()
         vinyl.deleteLater()
 
-    def test_music_page_scale_chips_selection_states(self):
-        """Valida que nenhum chip fica selecionado quando o usuário escolhe um tamanho customizado."""
+    def test_music_page_scale_slider_and_auto_chip(self):
+        """O chip Automático só fica marcado no modo automático; o controle acompanha a escala efetiva."""
         from app.hub.pages import MusicPage
         from app.hub.theme import THEME_LIGHT
 
+        orig = config_manager.get_music_scale()
         page = MusicPage(theme=THEME_LIGHT)
+        try:
+            config_manager.set_music_scale(None)
+            page.update_scale_selection()
+            self.assertEqual(page.scale_card.chips["auto"].property("selected"), "true")
 
-        # 1. Modo Automático -> chip 'auto' selecionado
-        page.update_scale_selection(None)
-        self.assertEqual(page._scale_chips["auto"].property("selected"), "true")
-        self.assertEqual(page._scale_chips["0.50"].property("selected"), "false")
+            config_manager.set_music_scale(0.625)
+            page.update_scale_selection()
+            self.assertEqual(page.scale_card.chips["auto"].property("selected"), "false")
 
-        # 2. Preset 100% (0.50) -> chip '0.50' selecionado
-        page.update_scale_selection(0.50)
-        self.assertEqual(page._scale_chips["auto"].property("selected"), "false")
-        self.assertEqual(page._scale_chips["0.50"].property("selected"), "true")
-        self.assertEqual(page._scale_chips["0.75"].property("selected"), "false")
+            # Mexer no controle sai do automático e vira escala manual
+            page.scale_card._on_slider_changed(110)
+            self.assertEqual(page.scale_card.chips["auto"].property("selected"), "false")
+            page.scale_card._commit()
+            self.assertAlmostEqual(config_manager.get_music_scale(), 0.55, places=3)
+        finally:
+            config_manager.set_music_scale(orig)
+            page.deleteLater()
 
-        # 3. Tamanho custom do usuário (ex: 0.44 ou 0.58) -> NENHUM chip selecionado!
-        page.update_scale_selection(0.44)
-        for k, btn in page._scale_chips.items():
-            self.assertEqual(btn.property("selected"), "false", f"Chip {k} não deveria estar selecionado para escala custom 0.44")
+    def test_scale_percent_range_is_safe(self):
+        from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN, pct_to_scale, scale_to_pct
+        from app.widgets.music.skins.base_skin import BaseMusicSkin
 
-        page.update_scale_selection(0.582)
-        for k, btn in page._scale_chips.items():
-            self.assertEqual(btn.property("selected"), "false", f"Chip {k} não deveria estar selecionado para escala custom 0.582")
-
-        page.deleteLater()
+        self.assertGreaterEqual(pct_to_scale(SCALE_PCT_MIN), BaseMusicSkin.MIN_SAFE_SCALE)
+        self.assertLessEqual(pct_to_scale(SCALE_PCT_MAX), BaseMusicSkin.MAX_SAFE_SCALE)
+        self.assertEqual(scale_to_pct(pct_to_scale(100)), 100)
+        self.assertEqual(scale_to_pct(0.25), SCALE_PCT_MIN)   # automático de 720p: ponta mais próxima
+        self.assertEqual(scale_to_pct(0.9), SCALE_PCT_MAX)
 
     def test_timer_widget_safe_bounds(self):
         """Valida que o Timer Widget respeita o range seguro de aumento proporcional."""

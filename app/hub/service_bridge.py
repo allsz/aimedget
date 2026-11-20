@@ -19,6 +19,8 @@ from app.widgets.music.music_controller import MusicWidgetController
 from app.widgets.music.volume_osd import MusicVolumeOSD
 from app.widgets.timer.timer_controller import TimerWidgetController
 from app.widgets.volume_mixer.mixer_flyout import VolumeMixerFlyout
+from app.widgets.performance.performance_controller import PerformanceWidgetController
+from app.widgets.weather.weather_controller import WeatherWidgetController
 
 
 # Passo do volume por entalhe da roda do mouse sobre o Music Widget (em % do volume master)
@@ -37,6 +39,8 @@ class HubServiceBridge(QObject):
     music_scale_changed = Signal(object)  # float or None
     active_skins_changed = Signal(list)  # list of active skin ids
     timer_skin_changed = Signal(str)  # skin_name
+    weather_skin_changed = Signal(str)  # id da skin (fonte)
+    manage_weather_cities_requested = Signal()
     osd_anchor_changed = Signal(str, str)  # (flyout 'keylock'/'mixer', âncora)
 
     def __init__(self, parent=None):
@@ -83,6 +87,8 @@ class HubServiceBridge(QObject):
             )
         )
         self.volume_flyout.app_routing_changed.connect(self.endpoint_service.set_app_device)
+        # Gaveta do ícone do volume principal (botão direito): troca o dispositivo PADRÃO do Windows
+        self.volume_flyout.default_device_changed.connect(self.endpoint_service.set_default_device)
         # O mixer precisa saber a rota de cada app para mostrar o volume da sessão certa quando o app tem sessões em
         # mais de um dispositivo (ex.: Chrome roteado para o fone, com uma sessão parada nas caixas)
         self.audio_service.set_route_resolver(lambda app_id: self.endpoint_service.get_app_device(app_id, "output"))
@@ -103,7 +109,17 @@ class HubServiceBridge(QObject):
         self.timer_controller.status_changed.connect(self._on_timer_status_changed)
         self.timer_controller.skin_changed.connect(self.timer_skin_changed.emit)
 
-        # 5. Serviço Global de Atalhos (Hotkeys)
+        # 5. Módulo de Clima (a rede só é consultada com o cartão na tela)
+        self.weather_controller = WeatherWidgetController()
+        self.weather_controller.status_changed.connect(self._on_weather_status_changed)
+        self.weather_controller.skin_changed.connect(self.weather_skin_changed.emit)
+        self.weather_controller.manage_cities_requested.connect(self.manage_weather_cities_requested.emit)
+
+        # 5b. Módulo de Desempenho (sampler Win32 só roda com o cartão na tela)
+        self.performance_controller = PerformanceWidgetController()
+        self.performance_controller.status_changed.connect(self._on_performance_status_changed)
+
+        # 6. Serviço Global de Atalhos (Hotkeys)
         self.hotkey_service = get_hotkey_service()
         self._init_hotkeys()
 
@@ -113,6 +129,8 @@ class HubServiceBridge(QObject):
             "keys_osd": True,
             "vol_mixer": True,
             "timer": config_manager.is_timer_show_on_startup(),
+            "weather": bool(config_manager.get_weather("show_on_startup", False)),
+            "performance": bool(config_manager.get_performance("show_on_startup", False)),
         }
 
     def start_all(self):
@@ -126,6 +144,12 @@ class HubServiceBridge(QObject):
         if config_manager.is_timer_show_on_startup():
             self.timer_controller.start()
 
+        if config_manager.get_weather("show_on_startup", False):
+            self.weather_controller.start()
+
+        if config_manager.get_performance("show_on_startup", False):
+            self.performance_controller.start()
+
     # --- Atalhos Globais e Ações de Toggle ---
 
     def _init_hotkeys(self):
@@ -136,6 +160,14 @@ class HubServiceBridge(QObject):
         # Timer Widget (padrão Win+Alt+T)
         timer_hk = config_manager.get_timer_hotkey("Win+Alt+T")
         self.hotkey_service.register("timer_toggle", timer_hk, self.toggle_timer_widget)
+
+        # Weather Widget (padrão Win+Alt+W)
+        weather_hk = config_manager.get_weather("hotkey", "Win+Alt+W")
+        self.hotkey_service.register("weather_toggle", weather_hk, self.toggle_weather_widget)
+
+        # Performance Widget (padrão Win+Alt+P)
+        perf_hk = config_manager.get_performance("hotkey", "Win+Alt+P")
+        self.hotkey_service.register("performance_toggle", perf_hk, self.toggle_performance_widget)
 
         # Volume Mixer (padrão Win+Alt+V)
         vol_hk = config_manager.get_volume_hotkey("Win+Alt+V")
@@ -168,6 +200,24 @@ class HubServiceBridge(QObject):
                 self.timer_controller.skin.raise_()
                 self.timer_controller.skin.activateWindow()
 
+    def toggle_weather_widget(self):
+        """Alterna a visibilidade do Weather Widget."""
+        if self.weather_controller.is_shown():
+            self.set_weather_enabled(False)
+        else:
+            self.set_weather_enabled(True)
+            self.weather_controller.skin.raise_()
+            self.weather_controller.skin.activateWindow()
+
+    def toggle_performance_widget(self):
+        """Alterna a visibilidade do Performance Widget."""
+        if self.performance_controller.is_shown():
+            self.set_performance_enabled(False)
+        else:
+            self.set_performance_enabled(True)
+            self.performance_controller.skin.raise_()
+            self.performance_controller.skin.activateWindow()
+
     def toggle_volume_mixer(self):
         """Alterna a visibilidade do Volume Mixer."""
         if self.volume_flyout.isVisible():
@@ -182,6 +232,14 @@ class HubServiceBridge(QObject):
     def update_timer_hotkey(self, hotkey: str):
         config_manager.set_timer_hotkey(hotkey)
         self.hotkey_service.register("timer_toggle", hotkey, self.toggle_timer_widget)
+
+    def update_weather_hotkey(self, hotkey: str):
+        config_manager.set_weather("hotkey", hotkey)
+        self.hotkey_service.register("weather_toggle", hotkey, self.toggle_weather_widget)
+
+    def update_performance_hotkey(self, hotkey: str):
+        config_manager.set_performance("hotkey", hotkey)
+        self.hotkey_service.register("performance_toggle", hotkey, self.toggle_performance_widget)
 
     def update_volume_hotkey(self, hotkey: str):
         config_manager.set_volume_hotkey(hotkey)
@@ -296,6 +354,10 @@ class HubServiceBridge(QObject):
     def set_music_scale(self, scale: Optional[float]):
         """Ajusta o fator de escala proporcional do widget de música."""
         self.music_controller.set_scale(scale)
+
+    def apply_music_scale_live(self, scale: float):
+        """Aplica a escala enquanto o controle é arrastado, sem gravar (a gravação vem ao soltar)."""
+        self.music_controller.apply_scale_live(scale)
 
     def move_music_to_screen_position(self, pos_key: str):
         """
@@ -413,6 +475,72 @@ class HubServiceBridge(QObject):
         self.timer_controller.skin.glide_square_to(x, y)   # na tela, o quadrado desliza até o lugar escolhido
         config_manager.set_timer_position_remembered(True, x, y)
 
+    # --- Controles do Weather Widget ---
+
+    def set_weather_enabled(self, enabled: bool):
+        self._states["weather"] = enabled
+        config_manager.set_weather("enabled", enabled)
+        if enabled:
+            self.weather_controller.show()
+        else:
+            self.weather_controller.hide()
+        self.status_changed.emit("weather", enabled)
+
+    def is_weather_enabled(self) -> bool:
+        return self._states.get("weather", False)
+
+    def set_weather_skin(self, skin_id: str):
+        if skin_id in self.weather_controller.available_skins():
+            self.weather_controller.set_skin(skin_id)
+
+    def _on_weather_status_changed(self, is_active: bool):
+        self._states["weather"] = is_active
+        self.status_changed.emit("weather", is_active)
+
+    def move_weather_to_screen_position(self, pos_key: str):
+        """Posiciona o cartão de clima num dos quadrantes da tela."""
+        app = QApplication.instance()
+        if not app or not app.primaryScreen():
+            return
+        w, h = self.weather_controller.skin.card_size()
+        x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
+        self.weather_controller.settle()
+        self.weather_controller.skin.glide_card_to(x, y)
+        config_manager.set_weather("remember_position", True)
+        config_manager.set_weather("position", [x, y])
+        self.weather_controller.remember_position_changed.emit(True)
+
+    # --- Controles do Performance Widget ---
+
+    def set_performance_enabled(self, enabled: bool):
+        self._states["performance"] = enabled
+        config_manager.set_performance("enabled", enabled)
+        if enabled:
+            self.performance_controller.show()
+        else:
+            self.performance_controller.hide()
+        self.status_changed.emit("performance", enabled)
+
+    def is_performance_enabled(self) -> bool:
+        return self._states.get("performance", False)
+
+    def _on_performance_status_changed(self, is_active: bool):
+        self._states["performance"] = is_active
+        self.status_changed.emit("performance", is_active)
+
+    def move_performance_to_screen_position(self, pos_key: str):
+        """Posiciona o cartão de desempenho num dos quadrantes da tela."""
+        app = QApplication.instance()
+        if not app or not app.primaryScreen():
+            return
+        w, h = self.performance_controller.skin.card_size()
+        x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
+        self.performance_controller.settle()
+        self.performance_controller.skin.glide_card_to(x, y)
+        config_manager.set_performance("remember_position", True)
+        config_manager.set_performance("position", [x, y])
+        self.performance_controller.remember_position_changed.emit(True)
+
     def on_theme_changed(self, theme=None):
         """Notifica os widgets sobre alterações de tema global."""
         if hasattr(self, "timer_controller") and self.timer_controller:
@@ -422,6 +550,8 @@ class HubServiceBridge(QObject):
         """Desinstala hooks e encerra recursos em background de forma segura."""
         if hasattr(self, "hotkey_service") and self.hotkey_service:
             self.hotkey_service.cleanup()
+        if hasattr(self, "performance_controller") and self.performance_controller:
+            self.performance_controller.stop()
         worker = getattr(getattr(self, "music_controller", None), "media_worker", None)
         if worker is not None:
             try:

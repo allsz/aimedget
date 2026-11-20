@@ -16,3 +16,28 @@ except ModuleNotFoundError:   # sem winrt (dependências do app não instaladas)
 
 if _media_worker is not None:
     _media_worker.WindowsMediaWorker._thread_main = lambda self: None
+
+# O Weather Widget nunca consulta a rede nos testes (previsão, cidade e local pelo IP): toda chamada falha como
+# "sem conexão", e os testes que precisam de dados montam a resposta à mão.
+try:
+    from app.services import weather_service as _weather_service
+except ModuleNotFoundError:
+    _weather_service = None
+
+if _weather_service is not None:
+    def _no_network(url):
+        raise OSError("rede desligada nos testes")
+
+    _weather_service._http_get_json = _no_network
+
+# A ancoragem (grupos de widgets salvos) nunca lê nem grava a configuração do usuário nos testes: com grupos salvos
+# no PC, um cartão mostrado num teste qualquer seria puxado para a pilha dele e as posições conferidas mudariam.
+try:
+    from app.core.config_manager import config_manager as _config_manager
+except ModuleNotFoundError:
+    _config_manager = None
+
+if _config_manager is not None:
+    _anchor_store: dict = {}
+    _config_manager.get_anchor = lambda key, default=None: _anchor_store.get(key, default)
+    _config_manager.set_anchor = lambda key, value: _anchor_store.__setitem__(key, value)

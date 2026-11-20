@@ -3,14 +3,17 @@ from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QWidget
 
+from app.core.anchor_manager import anchor_bar_items, anchor_manager
 from app.core.config_manager import config_manager
 from app.core.i18n import i18n, t
 from app.core.position_glide import glide_widget_to
 from app.core.widget_animator import AnimatedSkinMixin
+from app.core.desktop_pin import DesktopPinMixin
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
 from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.fluent_menu import get_fluent_menu_stylesheet
+from app.ui_components.menu_action_bar import ActionBarItem, attach_action_bar
 from app.widgets.timer import theme as timer_theme
 
 
@@ -27,6 +30,16 @@ class FluentTimerMenu(QMenu):
             super().__init__(title_or_parent)
         self.theme = theme
         self._trailing_checked_actions = set()
+        self._action_bar = None
+
+    @property
+    def action_bar(self):
+        return self._action_bar
+
+    def add_action_bar(self, items):
+        theme = self.theme or resolve_theme(config_manager.get_hub_theme("system"))
+        self._action_bar = attach_action_bar(self, items, theme)
+        return self._action_bar
 
     def set_trailing_check(self, action: QAction, is_checked: bool):
         if is_checked:
@@ -75,7 +88,7 @@ class FluentTimerMenu(QMenu):
         p.end()
 
 
-class BaseTimerSkin(AnimatedSkinMixin, QWidget):
+class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     """
     Classe base para skins do Timer Widget:
     - Janela frameless flutuante com fundo translúcido e Always-On-Top
@@ -92,7 +105,9 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
     mode_changed = Signal(str)
     close_requested = Signal()
     skin_switch_requested = Signal(str)
+    desktop_mode_changed = Signal(bool)   # "Fixar na área de trabalho" no menu (o controller aplica e grava)
 
+    ANCHOR_KEY = "timer"   # chave na ancoragem (ver anchor_manager)
     DEFAULT_SIZE = 164
     MIN_SCALE_RATIO = 0.75
     MAX_SCALE_RATIO = 1.55
@@ -113,6 +128,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self._init_animator()   # surgir/sumir como o widget de música (ver widget_animator.py)
+        self._init_desktop_pin(config_manager.get_widget_desktop_mode("timer_widget"))
 
         # Tema visual escolhido no Hub (themes/timer/): cores por cima das do app, fundo e figurinhas
         self.skin_theme: timer_theme.TimerTheme = timer_theme.load_user_theme()
@@ -122,7 +138,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         # O "quadrado" é o cartão com a folga da sombra (o que sempre foi a janela). Figurinhas que passam da borda
         # pedem uma margem transparente EXTRA em volta dele: a janela fica maior, o quadrado não muda.
         side = max(self.MIN_WIDTH, width)
-        self.art_margin = self._wanted_art_margin(side)
+        self.art_margin = self._effective_art_margin(side)
         self.resize(side + 2 * self.art_margin, side + 2 * self.art_margin)
 
         # Estado do Timer
@@ -177,16 +193,46 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         card = self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD   # px lógicos do cartão no tamanho padrão
         return art_margin_px(self.skin_theme.stickers, card, card, k=scale, free=self.ART_FREE_PAD)
 
+    ANCHOR_GLOW_ROOM = 16      # px de janela em volta do cartão enquanto o brilho de "ancorado" está aceso
+    _anchor_room = False
+
+    def _effective_art_margin(self, side: int) -> int:
+        """Margem extra da janela: a do tema e, com o brilho de ancorado aceso, o que falta da folga para ele."""
+        # A folga do brilho é fixa, como no widget de música: mudar o tamanho da janela translúcida ao ancorar
+        # mostrava um quadro com o quadrado fora do lugar.
+        return max(self._wanted_art_margin(side), int(round(self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD)))
+
+    def anchor_glow_room(self, on: bool):
+        """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o quadrado fica onde está."""
+        self._anchor_room = bool(on)
+        self.set_square_side(self.square_side())
+
     def set_square_side(self, side: int):
         """
         Dá ao quadrado o lado `side` (já dentro de MIN/MAX) e ajusta a margem ao tema e à escala, mantendo o
         canto do quadrado exatamente onde está (a janela cresce/encolhe em volta dele).
         """
         origin = self.square_origin()
-        self.art_margin = self._wanted_art_margin(side)
+        self.art_margin = self._effective_art_margin(side)
         full = side + 2 * self.art_margin
         self.setGeometry(origin.x() - self.art_margin, origin.y() - self.art_margin, full, full)
+        if self.isVisible():
+            anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
+
+    def _drag_window_to(self, pos: QPoint):
+        """Arraste da janela: move o grupo ancorado inteiro e aplica o ímã de alinhamento."""
+        anchor_manager().drag_to(self, pos)
+
+    def _drag_window_end(self):
+        """Ao soltar o arraste: firma o ímã (e junta ao grupo, se estava travado)."""
+        anchor_manager().drag_end(self)
+
+    def anchor_position_committed(self):
+        """Num grupo, este widget foi movido junto com outro: grava a posição se ela é lembrada."""
+        if config_manager.is_timer_position_remembered():
+            origin = self.square_origin()
+            config_manager.save_timer_position(origin.x(), origin.y())
 
     def _resolve_active_theme(self) -> HubTheme:
         hub_pref = config_manager.get_hub_theme("system")
@@ -211,6 +257,15 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
     def showEvent(self, event):
         self.reload_skin_theme()
         super().showEvent(event)
+        self._desktop_pin_shown()          # camada: logo acima do desktop (fixado) ou sempre no topo
+        anchor_manager().register(self)   # num grupo, volta ao lugar dele em relação aos outros widgets
+
+    def hideEvent(self, event):
+        self._desktop_pin_hidden()
+        super().hideEvent(event)
+
+    def nativeEvent(self, event_type, message):
+        return self.desktop_pin_native_event(event_type, message)
 
     def set_time_state(self, current_seconds: float, is_running: bool, mode: str):
         """Atualiza o estado de contagem vindo do TimerController."""
@@ -289,22 +344,46 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
         menu.setFont(get_ui_font(13))
         menu.setStyleSheet(menu_qss)
 
-        # 1. Lembrar posição
+        # Barra superior Fluent Rail: ações rápidas sem submenu
         is_remembered = config_manager.is_timer_position_remembered()
-        act_remember = QAction(t("timer_menu_remember"), self)
-        menu.set_trailing_check(act_remember, is_remembered)
-        act_remember.triggered.connect(lambda: self._toggle_remember_position(not is_remembered))
-        menu.addAction(act_remember)
-
-        # 2. Ajuste inteligente de tempo (hover & scroll por dígito)
         is_smart = config_manager.is_timer_smart_hover_enabled()
-        act_smart = QAction(t("timer_menu_smart_hover"), self)
-        menu.set_trailing_check(act_smart, is_smart)
-        act_smart.triggered.connect(lambda: self._toggle_smart_hover(not is_smart))
-        menu.addAction(act_smart)
-        menu.addSeparator()
+        bar_items = [
+            ActionBarItem(
+                key="pin",
+                icon="pin",
+                tooltip=t("timer_menu_remember"),
+                toggle=True,
+                checked=is_remembered,
+                on_trigger=self._toggle_remember_position,
+            ),
+            ActionBarItem(
+                key="smart_hover",
+                icon="smart_hover",
+                tooltip=t("timer_menu_smart_hover"),
+                toggle=True,
+                checked=is_smart,
+                on_trigger=self._toggle_smart_hover,
+            ),
+            ActionBarItem(
+                key="reset_size",
+                icon="reset_size",
+                tooltip=t("timer_menu_reset_size"),
+                spin_on_click=True,
+                on_trigger=self._reset_default_size,
+            ),
+            ActionBarItem(
+                key="desktop",
+                icon="desktop",
+                tooltip=t("weather_menu_desktop"),     # "Fixar na área de trabalho" (o mesmo texto em todo widget)
+                toggle=True,
+                checked=self.desktop_mode_target(),
+                on_trigger=self.desktop_mode_changed.emit,
+            ),
+            *anchor_bar_items(self),
+        ]
+        menu.add_action_bar(bar_items)
 
-        # 3. Alternar Modo (Temporizador vs Cronômetro)
+        # Alternar Modo (Temporizador vs Cronômetro vs Alarme)
         mode_menu = FluentTimerMenu(t("timer_menu_mode"), menu, theme=self._hub_theme)
         mode_menu.setFont(get_ui_font(13))
         mode_menu.setStyleSheet(menu_qss)
@@ -327,14 +406,7 @@ class BaseTimerSkin(AnimatedSkinMixin, QWidget):
 
         menu.addSeparator()
 
-        # 4. Redefinir tamanho
-        act_reset_size = QAction(t("timer_menu_reset_size"), self)
-        act_reset_size.triggered.connect(self._reset_default_size)
-        menu.addAction(act_reset_size)
-
-        menu.addSeparator()
-
-        # 6. Fechar Widget
+        # Fechar Widget
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

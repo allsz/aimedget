@@ -29,6 +29,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
+    desktop_mode_changed = Signal(bool)      # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
 
     @staticmethod
     def available_skins() -> dict[str, Type[BaseTimerSkin]]:
@@ -93,6 +94,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
                 self.skin.mode_changed.disconnect(self.set_mode)
                 self.skin.close_requested.disconnect(self.on_skin_closed)
                 self.skin.skin_switch_requested.disconnect(self.set_skin)
+                self.skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
             except Exception:
                 pass
             self.skin.close()
@@ -106,6 +108,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.mode_changed.connect(self.set_mode)
         self.skin.close_requested.connect(self.on_skin_closed)
         self.skin.skin_switch_requested.connect(self.set_skin)
+        self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
 
         self._sync_skin()
 
@@ -120,6 +123,16 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
             self.skin.show()
 
         self.skin_changed.emit(skin_name)
+
+    def set_desktop_mode(self, enabled: bool):
+        """"Fixar na área de trabalho" (menu do widget ou Hub): aplica com a onda de pontos, grava e avisa o Hub."""
+        config_manager.set_widget_desktop_mode("timer_widget", bool(enabled))
+        if self.skin:
+            self.skin.set_desktop_mode(enabled)
+        self.desktop_mode_changed.emit(bool(enabled))
+
+    def is_desktop_mode(self) -> bool:
+        return bool(self.skin.desktop_mode_target()) if self.skin else False
 
     def restore_or_place_at_top(self):
         """

@@ -35,6 +35,13 @@ Licença / License: MIT
 https://github.com/pywinrt/pywinrt
 
 
+Intel PresentMon 2.6.0
+----------------------
+Copyright (c) Intel Corporation
+Licença / License: MIT
+https://github.com/GameTechDev/PresentMon
+
+
 OpenSSL (via Python)
 --------------------
 Licença / License: Apache License 2.0

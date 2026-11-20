@@ -46,6 +46,11 @@ class PROPVARIANT(ctypes.Structure):
 CLSID_MMDeviceEnumerator = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
 IID_IMMDeviceEnumerator = GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
 IID_IAudioPolicyConfigFactory = GUID("{ab3d4648-e242-459f-b02f-541c70306324}")
+# IPolicyConfig (não documentada, estável desde o Windows 7): é o que o painel de Som do Windows usa para trocar o
+# dispositivo PADRÃO do sistema. Slot 13 = SetDefaultEndpoint(LPCWSTR deviceId, ERole role).
+CLSID_PolicyConfigClient = GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}")
+IID_IPolicyConfig = GUID("{f8679f50-850a-41cf-9c72-430f290290c8}")
+POLICY_SET_DEFAULT_SLOT = 13
 
 DEVINTERFACE_AUDIO_RENDER = "#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
 DEVINTERFACE_AUDIO_CAPTURE = "#{2eef81be-33fa-4800-9670-1cd474972c3f}"
@@ -294,6 +299,33 @@ class AudioEndpointService(QObject):
 
         self.app_routing_changed.emit(app_id, flow, device_id)
 
+    def set_default_device(self, flow: str, device_id: str) -> bool:
+        """
+        Troca o dispositivo PADRÃO do Windows (Saída ou Entrada) para todos os papéis (Console, Multimídia,
+        Comunicações), como o painel de Som faz. Depois relê a lista para o mixer marcar o novo padrão.
+        """
+        if not self._ole32 or not device_id or device_id == self.DEFAULT_ID:
+            return False
+        policy = c_void_p()
+        ok = False
+        try:
+            hr = self._ole32.CoCreateInstance(
+                byref(CLSID_PolicyConfigClient), None, 1, byref(IID_IPolicyConfig), byref(policy)
+            )
+            if hr != 0 or not policy.value:
+                return False
+            set_default = _vcall(policy, POLICY_SET_DEFAULT_SLOT, HRESULT, wintypes.LPCWSTR, c_int)
+            ok = True
+            for role in (0, 1, 2):
+                if set_default(policy, device_id, role) != 0:
+                    ok = False
+        except Exception:
+            ok = False
+        finally:
+            _com_release(policy)
+        self.refresh_endpoints()
+        return ok
+
     def refresh_endpoints(self):
         """Enumera os dispositivos de áudio ativos via CoreAudio IMMDeviceEnumerator."""
         if not self._ole32:
@@ -314,11 +346,12 @@ class AudioEndpointService(QObject):
             new_outputs = self._enum_flow(enum_ptr, flow_idx=0, flow_name="output")
             new_inputs = self._enum_flow(enum_ptr, flow_idx=1, flow_name="input")
 
-            # Verifica se houve alteração na lista de dispositivos
-            out_ids = [d.device_id for d in new_outputs]
-            cur_out_ids = [d.device_id for d in self._cached_outputs]
-            in_ids = [d.device_id for d in new_inputs]
-            cur_in_ids = [d.device_id for d in self._cached_inputs]
+            # Verifica se houve alteração na lista de dispositivos ou em qual é o padrão do Windows (a gaveta do
+            # volume principal marca o padrão; trocá-lo pelo painel de Som também precisa aparecer)
+            out_ids = [(d.device_id, d.is_default) for d in new_outputs]
+            cur_out_ids = [(d.device_id, d.is_default) for d in self._cached_outputs]
+            in_ids = [(d.device_id, d.is_default) for d in new_inputs]
+            cur_in_ids = [(d.device_id, d.is_default) for d in self._cached_inputs]
 
             if out_ids != cur_out_ids or in_ids != cur_in_ids:
                 self._cached_outputs = new_outputs

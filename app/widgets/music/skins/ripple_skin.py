@@ -298,6 +298,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
+        painter.translate(self.art_margin, self.art_margin)   # o cartão começa depois da margem da janela
         painter.scale(self.scale, self.scale)
 
         # --- 1. Card Arredondado (960x540, radius 42 = 28px * 1.5) ---
@@ -463,7 +464,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
             return
 
         if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
+            pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
             hit = self._hit_test(pos)
             if hit == "bar":
                 self.pressed_btn = "bar"
@@ -480,17 +481,17 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         if self.handle_resize_move(event):
             return
 
-        pos = event.position()
+        pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.pressed_btn == "bar":
             self._seek_to_x(pos.x())
             self.update()
             return
 
         if (event.buttons() & Qt.MouseButton.LeftButton) and not self._drag_pos.isNull():
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            self._drag_window_to(event.globalPosition().toPoint() - self._drag_pos)
             return
 
-        if self.handle_resize_hover(pos):
+        if self.handle_resize_hover(event.position()):
             return
 
         hit = self._hit_test(pos)
@@ -505,7 +506,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
 
         if event.button() == Qt.MouseButton.LeftButton:
             was_dragging_window = not self._drag_pos.isNull()
-            pos = event.position()
+            pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
             hit = self._hit_test(pos)
 
             if self.pressed_btn == "main" and hit == "main":

@@ -80,6 +80,17 @@ APP_ICON_CLEAN_SVG = os.path.join(ASSETS_DIR, "icons", "aimedget_icon_clean.svg"
 APP_ICON_SVG = APP_ICON_CLEAN_SVG  # Ícone sem fundo (transparente) para uso interno do app
 APP_ICON_ICO = os.path.join(ASSETS_DIR, "icons", "aimedget_icon.ico")  # Ícone com fundo para OS/Barra de Tarefas
 APP_ICON_PNG = os.path.join(ASSETS_DIR, "icons", "aimedget_icon_with_bg.png")
+PRESENTMON_EXE = os.path.join(ASSETS_DIR, "bin", "PresentMon.exe")
+
+
+def get_presentmon_path() -> str | None:
+    """Retorna o caminho do PresentMon.exe empacotado (ou em %LOCALAPPDATA%/Aimedget/bin), ou None."""
+    if os.path.isfile(PRESENTMON_EXE):
+        return PRESENTMON_EXE
+    user_bin = os.path.join(get_app_data_dir(), "bin", "PresentMon.exe")
+    if os.path.isfile(user_bin):
+        return user_bin
+    return None
 
 
 def get_vinyl_asset(filename: str) -> str:

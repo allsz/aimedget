@@ -345,6 +345,7 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
 
+        painter.translate(self.art_margin, self.art_margin)   # o cartão começa depois da margem da janela
         painter.scale(self.scale, self.scale)
 
         # --- 1. Card Arredondado (960x540, radius 40) com Colorimetria Dinâmica (Passo 4) ---
@@ -527,7 +528,7 @@ class VinylMusicSkin(BaseMusicSkin):
             return
 
         if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
+            pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
             hit = self._hit_test(pos)
 
             if hit == "arm":
@@ -571,7 +572,7 @@ class VinylMusicSkin(BaseMusicSkin):
         if self.handle_resize_move(event):
             return
 
-        pos = event.position()
+        pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
 
         # Arraste físico do Braço do Toca-Discos
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.pressed_btn == "arm":
@@ -617,11 +618,11 @@ class VinylMusicSkin(BaseMusicSkin):
 
         # Movimentação da janela na área de trabalho
         if (event.buttons() & Qt.MouseButton.LeftButton) and not self._drag_pos.isNull():
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            self._drag_window_to(event.globalPosition().toPoint() - self._drag_pos)
             return
 
         # Atualização dinâmica de hover e cursores
-        if self.handle_resize_hover(pos):
+        if self.handle_resize_hover(event.position()):
             return
 
         hit = self._hit_test(pos)
@@ -641,7 +642,7 @@ class VinylMusicSkin(BaseMusicSkin):
 
         if event.button() == Qt.MouseButton.LeftButton:
             was_dragging_window = not self._drag_pos.isNull()
-            pos = event.position()
+            pos = self.card_pos(event)   # coordenadas do cartão (sem a margem da janela)
             hit = self._hit_test(pos)
 
             if self.pressed_btn == "arm":

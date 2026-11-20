@@ -112,7 +112,7 @@ class AppVolumeRow:
     def sync_from_session(self, volume: int, is_muted: bool, icon: QImage):
         if not self.slider.is_dragging:
             self.volume = volume
-            self.slider.value = volume
+            self.slider.glide_to(volume)   # vindo de fora (ex.: o app trocou de dispositivo): desliza
         self.is_muted = is_muted
         self.slider.is_muted = is_muted
         if self._scaled_icon.isNull() and not icon.isNull():
@@ -473,7 +473,7 @@ class AppVolumeRow:
         p.drawText(
             num_rect,
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            str(self.slider.value),
+            str(self.slider.display_value()),
         )
 
         # ---------------------------------------------------------------------
@@ -510,7 +510,9 @@ class AppVolumeRow:
             # Folga para a borda inteira passar; o recorte do card já segura o que vazar mais longe.
             clip_rect = clip_rect.adjusted(-2.0, -2.0, 2.0, 2.0)
         p.setClipRect(clip_rect, Qt.ClipOperation.IntersectClip)
-        p.setOpacity(min(1.0, self._expand_t * 1.25))
+        # Multiplica (não substitui) a opacidade do card: senão, na saída do flyout, a gaveta ficava 100% opaca enquanto
+        # o resto desaparecia, e o Windows a apagava parada no lugar ao esconder a janela
+        p.setOpacity(p.opacity() * min(1.0, self._expand_t * 1.25))
 
         # Fundo da gaveta (#242424 com borda fina #363636) acompanhando a altura dinâmica
         bg_rect = QRectF(drawer_x, drawer_y, drawer_w, self._current_drawer_h)
@@ -640,3 +642,70 @@ class AppVolumeRow:
         p.restore()
 
         p.restore()
+
+
+class MasterDeviceDrawer(AppVolumeRow):
+    """
+    Gaveta do ícone do volume principal (botão direito): escolhe o dispositivo PADRÃO do Windows de Saída e de Entrada.
+    Reaproveita a gaveta das linhas de app (nome, ✕, abas, lista com PillSwitch, mesma animação); não tem linha
+    principal própria, porque ela é o cabeçalho do card. Abre logo abaixo do cabeçalho, com o mixer recolhido
+    (o card cresce só o suficiente para ela) ou expandido (empurra a lista de apps para baixo).
+    """
+
+    APP_ID = "__master__"
+    GAP = 6.0   # respiro entre a gaveta e o que vem embaixo (borda do card ou a lista de apps)
+
+    def __init__(self, on_routing_changed: Callable[[str, str, str], None] | None = None):
+        super().__init__(self.APP_ID, "", 0, False, QImage(), on_routing_changed)
+
+    def display_name(self) -> str:
+        return t("volume_system_devices")
+
+    def set_system_endpoints(self, outputs: list[AudioEndpoint], inputs: list[AudioEndpoint]):
+        """Lista os dispositivos reais (sem o item "Padrão do Windows", que aqui não faz sentido) e marca o padrão atual."""
+        outs = [e for e in outputs if e.device_id != "__default__"]
+        ins = [e for e in inputs if e.device_id != "__default__"]
+        sel_out = next((e.device_id for e in outs if e.is_default), "")
+        sel_in = next((e.device_id for e in ins if e.is_default), "")
+        self.set_endpoints(outs, ins, sel_out, sel_in)
+
+    def snap(self):
+        """Sem animações do Windows: a gaveta abre/fecha na hora."""
+        self._expand_t = self._expand_target_t
+        self._expand_start_t = self._expand_target_t
+        self._current_drawer_h = self._target_drawer_h
+
+    def extra_height(self) -> float:
+        """Quanto a gaveta ocupa agora (anima junto com ela)."""
+        if self._expand_t <= 0.001:
+            return 0.0
+        return (self._current_drawer_h + self.GAP) * self._expand_t
+
+    def target_extra_height(self) -> float:
+        """Quanto a gaveta vai ocupar ao fim da animação."""
+        if not self.is_routing_open:
+            return 0.0
+        return self._calc_drawer_height(self.active_flow) + self.GAP
+
+    def y_top_for(self, header_bottom: float) -> float:
+        """A gaveta das linhas começa em `y_top + ROW_PITCH + 1`: aqui ela começa logo abaixo do cabeçalho."""
+        return header_bottom - self.ROW_PITCH
+
+    def draw_drawer(self, p: QPainter, x0: float, header_bottom: float):
+        y_top = self.y_top_for(header_bottom)
+        self.last_x0 = x0
+        self.last_y_top = y_top
+        if self._expand_t > 0.01:
+            self._draw_inline_drawer(p, x0, y_top)
+
+    def handle_drawer_press(self, pt: QPointF, x0: float, header_bottom: float) -> bool:
+        """Clique esquerdo dentro da gaveta (✕, abas, dispositivos). O ícone não é dela: é o alto-falante do card."""
+        y_top = self.y_top_for(header_bottom)
+        if self.icon_hit_rect(x0, y_top + self.MAIN_ROW_CY).contains(pt):
+            return False
+        return self.handle_mouse_press(pt, Qt.MouseButton.LeftButton, x0, y_top)
+
+    def handle_drawer_move(self, pt: QPointF, x0: float, header_bottom: float) -> bool:
+        changed = self.handle_mouse_move(pt, x0, self.y_top_for(header_bottom))
+        self.icon_hovered = False   # o realce do ícone é o do alto-falante, desenhado pelo card
+        return changed

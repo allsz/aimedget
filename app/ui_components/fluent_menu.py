@@ -6,7 +6,7 @@ Menu de contexto com design system unificado (Fluent / Notion / Linear):
 """
 
 import os
-from typing import Optional
+from typing import Optional, Sequence
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu
@@ -15,6 +15,7 @@ from app.core.config_manager import config_manager
 from app.core.paths import ASSETS_DIR
 from app.core.typography import get_ui_font
 from app.hub.theme import HubTheme, resolve_theme
+from app.ui_components.menu_action_bar import ActionBarItem, FluentActionBar, attach_action_bar
 
 
 def get_fluent_menu_stylesheet(theme: HubTheme) -> str:
@@ -92,6 +93,7 @@ class FluentMusicMenu(QMenu):
             super().__init__(title_or_parent)
 
         self._trailing_checked_actions = set()
+        self._action_bar: Optional[FluentActionBar] = None
 
         if theme is not None:
             self._theme = theme
@@ -106,6 +108,17 @@ class FluentMusicMenu(QMenu):
     def set_theme(self, theme: HubTheme):
         self._theme = theme
         self._apply_style()
+        if self._action_bar is not None:
+            self._action_bar.set_theme(theme)
+
+    @property
+    def action_bar(self) -> Optional[FluentActionBar]:
+        return self._action_bar
+
+    def add_action_bar(self, items: Sequence[ActionBarItem]) -> Optional[FluentActionBar]:
+        """Adiciona a barra superior estilo Windows 11 Fluent Rail (ícones mínimos auto-espaçados)."""
+        self._action_bar = attach_action_bar(self, items, self._theme)
+        return self._action_bar
 
     def _apply_style(self):
         self.setFont(get_ui_font(13))

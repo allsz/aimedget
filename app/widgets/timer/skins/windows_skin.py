@@ -404,7 +404,7 @@ class WindowsTimerSkin(BaseTimerSkin):
 
         # 2. Arraste livre de janela (Free drag)
         if not self._drag_pos.isNull() and (event.buttons() & Qt.MouseButton.LeftButton):
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            self._drag_window_to(event.globalPosition().toPoint() - self._drag_pos)
             return
 
         # 3. Teste de hover e atualização de cursor
@@ -542,6 +542,7 @@ class WindowsTimerSkin(BaseTimerSkin):
 
             if was_dragging:
                 self._drag_pos = QPoint()
+                self._drag_window_end()
                 if config_manager.is_timer_position_remembered():
                     origin = self.square_origin()
                     config_manager.save_timer_position(origin.x(), origin.y())

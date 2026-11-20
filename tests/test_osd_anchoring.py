@@ -160,14 +160,15 @@ class TestLiveAnchoring(unittest.TestCase):
         after = self.body()
         self.assertEqual(after.x() - before.x(), 50)
         self.assertEqual(after.y() - before.y(), 40)
-        self.assertEqual(after.x(), self.skin.x() + self.skin.width() + EDGE_GAP)
+        card = self.skin.card_rect()                  # o OSD encosta no CARTÃO (a janela tem a folga do brilho)
+        self.assertEqual(after.x(), self.skin.x() + int(card.right()) + EDGE_GAP)
 
     def test_drag_into_right_wall_flips_left_and_back_with_hysteresis(self):
         screen = self.skin.screen().availableGeometry()
         wall_x = screen.right() + 1 - self.skin.width() - 4
         self.skin.move(wall_x, 150)
         self.assertLess(self.body().x(), self.skin.x())                 # foi para a esquerda
-        self.assertEqual(self.body().x(), self.skin.x() - EDGE_GAP - BAR_W)
+        self.assertEqual(self.body().x(), self.skin.x() + int(self.skin.card_rect().left()) - EDGE_GAP - BAR_W)
         self.skin.move(wall_x - 10, 150)                                # recuo curto: não oscila
         self.assertLess(self.body().x(), self.skin.x())
         self.skin.move(100, 150)                                        # longe da parede: volta
