@@ -21,7 +21,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget
 
 from app.core import widget_animator
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 from app.hub.theme import HubTheme, THEME_DARK
 from app.core.frame_clock import FrameTimer
 
@@ -33,7 +33,7 @@ GLIDE = (420.0, 34.0)      # deslize suave pelo teclado
 DROP_LAG = (260.0, 18.0)   # atraso horizontal da gota (cria a inclinação)
 POP = (520.0, 16.0)        # escala de hover / clique do polegar
 
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 

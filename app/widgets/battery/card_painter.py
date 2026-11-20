@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.i18n import t
-from app.core.typography import APP_FONT_FAMILY
+from app.core.typography import card_font
 from app.services.battery.models import (
     KIND_CONTROLLER,
     KIND_HEADSET,
@@ -89,16 +89,7 @@ def _icon(kind: str, color: QColor) -> QSvgRenderer:
 
 
 def _font(px: float, weight: QFont.Weight = QFont.Weight.Normal, tabular: bool = False) -> QFont:
-    f = QFont(APP_FONT_FAMILY)
-    f.setPixelSize(max(6, int(round(px))))
-    f.setWeight(weight)
-    f.setStyleStrategy(QFont.StyleStrategy.PreferQuality | QFont.StyleStrategy.PreferAntialias)
-    if tabular:
-        try:
-            f.setFeature(QFont.Tag("tnum"), 1)
-        except Exception:  # noqa: BLE001 - Qt antigo sem setFeature
-            pass
-    return f
+    return card_font(px, weight, tabular, min_px=6)
 
 
 def _baseline(top: float, h: float, fm: QFontMetricsF) -> float:

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.core import widget_animator
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 from app.hub.theme import HubTheme, THEME_DARK
 from app.core.frame_clock import FrameTimer
 
@@ -67,7 +67,7 @@ BAR_SHRINK = (900.0, 52.0)
 DOT_FADE = (1600.0, 72.0)
 COLOR_BLEND = (1100.0, 54.0)
 
-FRAME_MS = 16
+
 SUBSTEPS = 4
 SPIN_DURATION_S = 0.44
 

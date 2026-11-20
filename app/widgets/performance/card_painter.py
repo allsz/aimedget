@@ -134,16 +134,7 @@ def _lerp_color(c0: QColor, c1: QColor, k: float) -> QColor:
 
 
 def _font(px: float, weight: QFont.Weight = QFont.Weight.Normal, tabular: bool = False) -> QFont:
-    f = QFont(typography.APP_FONT_FAMILY)
-    f.setPixelSize(max(1, int(round(px))))
-    f.setWeight(weight)
-    f.setStyleStrategy(QFont.StyleStrategy.PreferQuality | QFont.StyleStrategy.PreferAntialias)
-    if tabular:
-        try:
-            f.setFeature(QFont.Tag("tnum"), 1)
-        except Exception:
-            pass
-    return f
+    return typography.card_font(px, weight, tabular)
 
 
 def _white(alpha: float) -> QColor:

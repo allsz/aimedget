@@ -15,14 +15,14 @@ import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.hub.components import tab_pill
 from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.core.frame_clock import FrameTimer
 
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 

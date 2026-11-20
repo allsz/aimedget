@@ -50,16 +50,7 @@ def tab_rect(i: int, count: int = 5) -> QRectF:
 
 
 def _font(family: str, px: float, weight: QFont.Weight = QFont.Weight.Normal, tabular: bool = False) -> QFont:
-    f = QFont(family or typography.APP_FONT_FAMILY)
-    f.setPixelSize(max(1, int(round(px))))
-    f.setWeight(weight)
-    f.setStyleStrategy(QFont.StyleStrategy.PreferQuality | QFont.StyleStrategy.PreferAntialias)
-    if tabular:
-        try:
-            f.setFeature(QFont.Tag("tnum"), 1)   # algarismos de mesma largura (font-variant-numeric: tabular-nums)
-        except Exception:
-            pass
-    return f
+    return typography.card_font(px, weight, tabular, family=family)
 
 
 def _baseline(top: float, line_h: float, fm: QFontMetricsF) -> float:

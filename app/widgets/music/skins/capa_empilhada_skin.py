@@ -779,23 +779,8 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         if dur > 0 or track_changed:
             self.duration = dur
 
-        can_sync_pos = (
-            not self.is_dragging_bar
-            and self.pressed_btn != "bar"
-            and (now - self._last_seek_sent > 1.5)
-        )
-        if can_sync_pos and (dur > 0 or track_changed):
-            if track_changed:
-                self.current_time = min(self.duration, max(0.0, pos))
-                changed = True
-            else:
-                drift = pos - self.current_time
-                if abs(drift) > 1.5:
-                    self.current_time = min(self.duration, max(0.0, pos))
-                    changed = True
-                elif abs(drift) > 0.15:
-                    self.current_time = min(self.duration, max(0.0, self.current_time + drift * 0.35))
-                    changed = True
+        if self._sync_playback_position(pos, dur, track_changed, now):
+            changed = True
 
         if changed:
             self.update()

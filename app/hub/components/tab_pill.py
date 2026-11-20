@@ -20,7 +20,7 @@ import time
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QPushButton, QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.core import widget_animator
 from app.hub.components.city_list import Spring
@@ -32,7 +32,7 @@ from app.core.frame_clock import FrameTimer
 LEAD = (3200.0, 98.0)    # ponta que vai na frente
 TRAIL = (1500.0, 62.0)   # ponta que fica para trás (é ela que dá o esticar)
 FADE = (900.0, 48.0)     # a pílula aparece/some quando não há seleção
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 

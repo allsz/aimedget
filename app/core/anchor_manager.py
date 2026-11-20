@@ -31,7 +31,7 @@ import shiboken6
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.core import anchor_geometry as geo
 from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dist_to_seg, smooth
@@ -46,7 +46,7 @@ BOOM_STYLES = ("ring", "sweep")
 DEFAULT_NET_STYLE = "dots"
 DEFAULT_BOOM = "ring"
 
-FRAME_MS = 16
+
 BOOM_DUR = 1.5 / geo.WAVE_SPEED   # s
 GLOW_PERIOD = 2.8                 # s: um pulso lento do brilho da borda enquanto o widget está ancorado
 GLOW_RATE = 7.0                   # 1/s: o brilho acende/apaga suavemente (sem piscar)

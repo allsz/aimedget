@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 DEFAULT_HZ = 60.0   # quando o Qt não informa a taxa (ou informa algo implausível)
 MAX_HZ = 240.0      # acima disso o ganho é imperceptível e o timer só gasta CPU
 MIN_MS = 4
+FRAME_MS = 16    # quadro de partida (~60 Hz) de cada animação; ao rodar, vale `refresh_interval_ms()`
 
 
 def refresh_interval_ms(widget: QWidget | None = None) -> int:

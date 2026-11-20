@@ -11,7 +11,7 @@ import time
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QAbstractButton
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.core.widget_animator import animations_enabled
 from app.hub.components.city_list import Spring
@@ -23,7 +23,7 @@ POSITION = (320.0, 18.0)     # onde o botão está (0 desligado, 1 ligado; passa
 STRETCH = (300.0, 20.0)      # quanto o botão está esticado (chutada ao virar)
 STRETCH_KICK = 60.0
 STRETCH_MAX = 10.0 / 32.0    # crescimento máximo, em fração da altura (10px numa chave de 32px)
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 

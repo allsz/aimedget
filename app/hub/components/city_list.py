@@ -27,14 +27,14 @@ from PySide6.QtWidgets import (
 )
 
 from app.core.i18n import t
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme
 from app.widgets.weather.motion import cubic_bezier
 from app.core.frame_clock import FrameTimer
 
 ROW_GAP = 6                  # espaço entre linhas (fica DENTRO da linha, para fechar junto com ela ao sair)
-FRAME_MS = 16
+
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 # Molas (rigidez, amortecimento) do botão de referência ("hold button")
