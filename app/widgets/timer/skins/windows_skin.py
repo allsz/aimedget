@@ -12,6 +12,7 @@ from app.widgets.timer.duration_rules import (
 from app.core.typography import get_ui_font
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
+from app.core.frame_clock import FrameTimer
 
 
 class WindowsTimerSkin(BaseTimerSkin):
@@ -50,7 +51,7 @@ class WindowsTimerSkin(BaseTimerSkin):
         self._sweep_segment: str | None = None
         self._sweep_progress = 0.0
         self._sweep_clock = QElapsedTimer()
-        self._sweep_timer = QTimer(self)
+        self._sweep_timer = FrameTimer(self)
         self._sweep_timer.setInterval(16)
         self._sweep_timer.timeout.connect(self._step_sweep)
 

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QWidget
 from app.core import widget_animator
 from app.core.refresh_rate import refresh_interval_ms
 from app.hub.theme import HubTheme, THEME_DARK
+from app.core.frame_clock import FrameTimer
 
 # Molas exatas do Jelly Slider (DesignBookmark)
 FOLLOW = (900.0, 50.0)     # polegar seguindo o ponteiro
@@ -179,7 +180,7 @@ class JellySlider(QWidget):
         self._last = 0.0
         self._last_live = float(self._value)
         self._dirty_commit = False
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(refresh_interval_ms(self))
         self._timer.timeout.connect(self._tick)

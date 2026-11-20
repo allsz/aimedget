@@ -38,6 +38,7 @@ from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dis
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
+from app.core.frame_clock import FrameTimer
 
 KNOWN_KEYS = ("music", "timer", "weather", "performance", "storage", "battery")
 NET_STYLES = ("dots", "lines", "both")
@@ -213,7 +214,7 @@ class AnchorManager(QObject):
         self._layer_sync = False
         self._overlay = None
         self._arrange: Optional[dict] = None   # alinhamento em curso: {group, root, ref, save, st: {key: [x, y, vx, vy]}}
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)

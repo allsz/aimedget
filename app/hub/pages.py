@@ -496,10 +496,9 @@ class OverviewPage(BaseHubPage):
         self.content_layout.addStretch()
 
     def _refresh_grid(self):
+        # Tira do layout sem desparentar: setParent(None) num widget visível o vira janela solta por um instante.
         for i in reversed(range(self.grid_layout.count())):
-            item = self.grid_layout.takeAt(i)
-            if item.widget():
-                item.widget().setParent(None)
+            self.grid_layout.takeAt(i)
 
         filtered = []
         for card in self._cards:
@@ -519,6 +518,11 @@ class OverviewPage(BaseHubPage):
             r = idx // cols
             c = idx % cols
             self.grid_layout.addWidget(card, r, c)
+            card.show()
+        shown = set(map(id, filtered))
+        for card in self._cards:
+            if id(card) not in shown:
+                card.hide()   # continua filho da grade, só fora do layout
 
     def _set_filter(self, category: str):
         self._current_filter = category

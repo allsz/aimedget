@@ -280,7 +280,7 @@ def test_performance_state_and_paint_with_fps_and_lossless_scaling(qapp):
     state.push_fps(FpsReading(fps=120.0, base_fps=60.0, app_name="EldenRing", is_lossless_scaling=True))
     assert state.pct_text("fps") == "60/120"
     assert state.hero_text("fps") == "120"
-    assert "60 → 120 FPS · LSFG" in state.detail_text("fps")
+    assert "60 → 120 · LSFG" in state.detail_text("fps")
     assert state.chart_ceiling("fps") == 120.0
 
     # Paint 5-pill card mid-transition and settled without error

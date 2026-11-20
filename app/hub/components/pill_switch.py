@@ -16,6 +16,7 @@ from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.core.frame_clock import FrameTimer
 
 
 POSITION = (320.0, 18.0)     # onde o botão está (0 desligado, 1 ligado; passa um pouco de 1 ao chegar)
@@ -55,7 +56,7 @@ class PillSwitch(QAbstractButton):
         self._pos = Spring(self._thumb_position, POSITION)
         self._stretch = Spring(0.0, STRETCH)
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
 

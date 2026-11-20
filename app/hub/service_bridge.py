@@ -485,6 +485,10 @@ class HubServiceBridge(QObject):
                 self.keylock_service.keylock_changed.disconnect(self._on_keylock_changed)
         except Exception:
             pass
+        if enabled:
+            self.keylock_service.start()
+        else:
+            self.keylock_service.stop()
         self.status_changed.emit("keys_osd", enabled)
 
     def _on_keylock_changed(self, key_name: str, is_on: bool):
@@ -510,6 +514,8 @@ class HubServiceBridge(QObject):
                 self.audio_service.osd_requested.disconnect(self.volume_flyout.show_osd)
         except Exception:
             pass
+        # Desligado: não engole mais as teclas de volume, então o OSD nativo do Windows volta a aparecer
+        self.audio_service.set_intercept_volume_keys(enabled)
         self.status_changed.emit("vol_mixer", enabled)
 
     def is_volume_mixer_enabled(self) -> bool:

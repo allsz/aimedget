@@ -26,6 +26,7 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
@@ -83,7 +84,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
 
         # Loop a ~60 FPS
         self.last_tick = time.perf_counter()
-        self.timer = QTimer(self)
+        self.timer = FrameTimer(self)
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._on_tick)  # iniciado/pausado pela base (show/hide)
 
@@ -245,7 +246,8 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         if self.is_playing and not self.is_dragging_bar:
             if self.duration > 0:
                 self.current_time = min(self.duration, self.current_time + dt)
-            needs_update = True
+            if self._playhead_moved():   # só quando a barra/o tempo exibido mudam (não 60x/s inteiro)
+                needs_update = True
 
         if needs_update:
             self.update()

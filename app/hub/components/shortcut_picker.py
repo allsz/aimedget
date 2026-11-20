@@ -204,8 +204,7 @@ class ShortcutPicker(QWidget):
             w = item.widget()
             if w:
                 w.hide()
-                w.setParent(None)
-                w.deleteLater()
+                w.deleteLater()   # sem setParent(None): fora do layout e oculto, o deleteLater basta
 
         if self._is_recording:
             rec_badge = RecordingBadge(self._theme, self.badge_box)

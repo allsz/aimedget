@@ -15,6 +15,7 @@ from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.fluent_menu import get_fluent_menu_stylesheet
 from app.ui_components.menu_action_bar import ActionBarItem, attach_action_bar
 from app.widgets.timer import theme as timer_theme
+from app.core.frame_clock import FrameTimer
 
 
 class FluentTimerMenu(QMenu):
@@ -165,7 +166,7 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         # Animação de revelação do botão fechar (Fade-in no hover)
         self._close_opacity = 0.0
         self._close_target_opacity = 0.0
-        self._close_anim_timer = QTimer(self)
+        self._close_anim_timer = FrameTimer(self)
         self._close_anim_timer.setInterval(16)
         self._close_anim_timer.timeout.connect(self._step_close_anim)
 

@@ -37,6 +37,7 @@ from PySide6.QtWidgets import QWidget
 
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
+from app.core.frame_clock import FrameTimer
 
 MIN_MS = 220
 MAX_MS = 420
@@ -66,7 +67,7 @@ class PositionGlide(QObject):
         self._duration = 1.0
         self._t0 = 0.0
         self._running = False
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._on_tick)

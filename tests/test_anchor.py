@@ -312,6 +312,17 @@ def test_anchor_mode_is_a_pulsing_glow_not_a_grid_flash(env, monkeypatch):
     assert not env.mgr.is_busy()                                                 # custo zero de novo
 
 
+def test_glow_layer_always_reaches_zero_from_a_tiny_level(env):
+    """A dedup de variações < 0.002 não pode engolir o apagar: um resto ínfimo ficaria aceso para sempre."""
+    from app.ui_components.anchor_net import GlowLayer
+    a = env.make("weather", 200, 200)
+    layer = GlowLayer(a, lambda: (am.card_rect(a), am.card_radius(a)))
+    layer.set_level(0.0015, 1.0, None)
+    assert layer.level() == pytest.approx(0.0015)
+    layer.set_level(0.0, 1.0, None)
+    assert layer.level() == 0.0
+
+
 def test_glow_lives_in_the_widget_window_and_follows_it(env):
     """Na janela do próprio widget: mesma camada (área de trabalho ou por cima) e mesmo quadro no arraste."""
     env.state["anim"] = True

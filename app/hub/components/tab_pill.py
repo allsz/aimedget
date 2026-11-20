@@ -25,6 +25,7 @@ from app.core.refresh_rate import refresh_interval_ms
 from app.core import widget_animator
 from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.core.frame_clock import FrameTimer
 
 # Mais duras que as do exemplo original (620/40 e 170/19) para o app ficar ágil: ~180 ms para assentar num salto
 # de 200 px (e ~130 ms num salto curto), ainda com o esticar visível.
@@ -56,7 +57,7 @@ class Blend(QObject):
         self._spring = Spring(value, spring)
         self._on_change = on_change
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
 
@@ -108,7 +109,7 @@ class TabPill(QWidget):
         self._alpha = Spring(0.0, FADE)
         self._cross = (0.0, 0.0)         # posição e tamanho no eixo que não anima
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
         parent.installEventFilter(self)

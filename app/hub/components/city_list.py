@@ -31,6 +31,7 @@ from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme
 from app.widgets.weather.motion import cubic_bezier
+from app.core.frame_clock import FrameTimer
 
 ROW_GAP = 6                  # espaço entre linhas (fica DENTRO da linha, para fechar junto com ela ao sair)
 FRAME_MS = 16
@@ -613,7 +614,7 @@ class CityList(QWidget):
         self._reorder: _Reorder | None = None
         self._last_change = None       # última entrada/saída iniciada (os vizinhos acompanham o progresso dela)
         self._populated = False
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._on_frame)

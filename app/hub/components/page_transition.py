@@ -10,6 +10,7 @@ from PySide6.QtCore import QRect, Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 from app.core.refresh_rate import refresh_interval_ms
+from app.core.frame_clock import FrameTimer
 
 DURATION_MS = 180
 SHIFT_PX = 12
@@ -31,7 +32,7 @@ class PageTransition(QWidget):
         self._dir = 1
         self._t0 = 0.0
         self._progress = 1.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
         self.hide()

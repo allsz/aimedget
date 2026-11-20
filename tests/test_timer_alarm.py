@@ -244,19 +244,24 @@ class AlarmControllerTests(unittest.TestCase):
         import app.widgets.timer.skins.base_skin as bs
         from PySide6.QtGui import QContextMenuEvent
         i18n._current_lang = "en"
-        seen = []
+        seen, tips = [], []
 
         def fake_exec(menu, *a):
             for act in menu.actions():
                 seen.append(act.text())
                 if act.menu() is not None:
                     seen.extend(a.text() for a in act.menu().actions())
+            bar = getattr(menu, "_action_bar", None)   # ações rápidas (ícones) ficam na barra, com o texto na dica
+            if bar is not None:
+                tips.extend(b.toolTip() for b in bar.buttons.values())
 
         with mock.patch.object(bs.FluentTimerMenu, "exec", fake_exec):
             self.c.skin.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(5, 5), QPoint(5, 5)))
-        for text in ("Remember position", "Mode", "Timer (Countdown)", "Stopwatch", "Alarm (Time of day)",
-                     "Reset to default size", "Close widget"):
+        for text in ("Mode", "Timer (Countdown)", "Stopwatch", "Alarm (Time of day)", "Close widget"):
             self.assertIn(text, seen)
+        for text in ("Remember position", "Reset to default size"):
+            self.assertIn(text, tips)
+        self.assertNotIn("Lembrar posição", tips)
 
     def _state(self):
         return TimerState(mode=self.c.mode, is_running=self.c.is_running, current_seconds=self.c.current_seconds,

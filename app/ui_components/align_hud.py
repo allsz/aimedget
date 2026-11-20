@@ -29,6 +29,7 @@ from app.core.screen_metrics import get_screen_for_widget
 from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.jelly_slider import JellySlider
 from app.ui_components.menu_action_bar import ActionBarItem, FluentActionBar
+from app.core.frame_clock import FrameTimer
 
 APPEAR_DUR_S = 0.145   # entrada rápida e sutil (~145 ms)
 DISMISS_DUR_S = 0.110  # saída rápida (~110 ms)
@@ -84,7 +85,7 @@ class AlignHudWindow(QWidget):
         # Animação sutil e rápida de entrada/saída na taxa do monitor (até 240 Hz)
         self._anim_dir: int = 0   # +1 aparecendo, -1 sumindo, 0 parado
         self._anim_t0: float = 0.0
-        self._anim_timer = QTimer(self)
+        self._anim_timer = FrameTimer(self)
         self._anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim_timer.timeout.connect(self._tick_anim)
 

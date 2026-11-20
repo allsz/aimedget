@@ -268,6 +268,9 @@ class AimedgetHubWindow(QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._apply_asymmetric_windows_icons()
+        # Depois do fade-in, monta as miniaturas da página Música em segundo plano (a 1ª visita não trava mais).
+        from app.widgets.music.skins.specs import warm_previews
+        warm_previews()
 
     def quit_app(self):
         """

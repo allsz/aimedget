@@ -27,6 +27,7 @@ from app.core.screen_metrics import get_screen_scale_ratio
 from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
 from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
+from app.core.frame_clock import FrameTimer
 
 CARD_W = 300.0
 CARD_H = 262.0
@@ -211,7 +212,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._pin_guard = DesktopPinGuard(self)
         self._sd_suspended = False
         self._sd_subscribed = False
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.timeout.connect(self._on_frame)
 

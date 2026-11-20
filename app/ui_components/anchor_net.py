@@ -189,7 +189,9 @@ class GlowLayer(QWidget):
     def set_level(self, level: float, breathe: float, color: Optional[QColor]):
         if color is not None:
             self._color = color
-        if abs(level - self._level) < 0.002 and abs(breathe - self._breathe) < 0.002:
+        # Ignora variações mínimas, mas nunca o apagar: sem isso um resto < 0.002 ficava aceso para sempre.
+        if (abs(level - self._level) < 0.002 and abs(breathe - self._breathe) < 0.002
+                and (level > 0.0) == (self._level > 0.0)):
             return
         self._level, self._breathe = level, breathe
         self.update(self._band())

@@ -231,16 +231,35 @@ class AudioMixerService(QObject):
         except Exception:
             pass
 
-    def stop(self):
+    def _remove_volume_key_hook(self):
         global _ACTIVE_LL_HOOK
-        self._fast_timer.stop()
-        self._session_timer.stop()
         if self._user32 and _ACTIVE_LL_HOOK:
             try:
                 self._user32.UnhookWindowsHookEx(_ACTIVE_LL_HOOK)
             except Exception:
                 pass
-            _ACTIVE_LL_HOOK = None
+        _ACTIVE_LL_HOOK = None
+        self._pending_vk_actions.clear()
+
+    def is_intercepting_volume_keys(self) -> bool:
+        return bool(_ACTIVE_LL_HOOK)
+
+    def set_intercept_volume_keys(self, enabled: bool):
+        """
+        Com o nosso mixer ligado, as teclas de volume passam por nós (e o OSD do Windows é suprimido). Desligado,
+        o hook sai: o Windows trata as teclas e mostra o OSD dele, como se o Aimedget não estivesse aqui.
+        """
+        if enabled == self.is_intercepting_volume_keys():
+            return
+        if enabled:
+            self._install_volume_key_hook()
+        else:
+            self._remove_volume_key_hook()
+
+    def stop(self):
+        self._fast_timer.stop()
+        self._session_timer.stop()
+        self._remove_volume_key_hook()
         self._release_device_managers()
         _com_release(self._ep_vol_ptr)
         _com_release(self._enum_ptr)

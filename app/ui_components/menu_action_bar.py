@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from app.core import widget_animator
 from app.core.refresh_rate import refresh_interval_ms
 from app.hub.theme import HubTheme, THEME_DARK
+from app.core.frame_clock import FrameTimer
 
 
 class _Spring:
@@ -293,7 +294,7 @@ class FluentRailButton(QAbstractButton):
         self._spin_angle: float = 0.0
         self._last = 0.0
 
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(refresh_interval_ms(self))
         self._timer.timeout.connect(self._tick)
@@ -458,7 +459,7 @@ class _RailHoverPill(QWidget):
         self._alpha = _Spring(0.0, FADE)
         self._y = (2.0, 32.0)
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(refresh_interval_ms(self))
         self._timer.timeout.connect(self._tick)

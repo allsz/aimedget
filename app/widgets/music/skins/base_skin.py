@@ -9,6 +9,7 @@ from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
 from app.core.desktop_pin import DesktopPinMixin
 from app.core.scale_animator import ScaleAnimator
 from app.core.position_glide import glide_widget_to
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.i18n import t
 from app.services.repeat_modes import next_repeat_mode
 from app.core.colorimetry import (
@@ -55,6 +56,19 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     MIN_SAFE_SCALE: float = 0.35  # ~70% do baseline 0.50 (tamanho seguro e legível)
     MAX_SAFE_SCALE: float = 0.80  # ~160% do baseline 0.50 (proporção segura sem estourar limites)
     CARD_RADIUS: float = 44.0
+    # Resolução da barra de progresso: mais fina que a barra em qualquer escala (movimento subpixel continua suave),
+    # mas tocando só se redesenha quando a barra ou o tempo exibido muda, não 60x/s.
+    PLAYHEAD_STEPS: int = 2000
+
+    def _playhead_moved(self) -> bool:
+        """True se o segundo exibido ou a posição da barra mudou desde o último quadro pedido por ela."""
+        dur = float(getattr(self, "duration", 0.0) or 0.0)
+        cur = float(getattr(self, "current_time", 0.0) or 0.0)
+        key = (int(cur), int(cur / dur * self.PLAYHEAD_STEPS) if dur > 0 else 0)
+        if key == getattr(self, "_playhead_key", None):
+            return False
+        self._playhead_key = key
+        return True
 
     def __init__(self, base_width: int, base_height: int, scale: float | None = None):
         super().__init__()
@@ -549,6 +563,7 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         if timer is not None and not timer.isActive():
             if hasattr(self, "last_tick"):
                 self.last_tick = time.perf_counter()  # evita um dt grande no primeiro frame
+            timer.setInterval(refresh_interval_ms(self))   # na taxa do monitor onde o widget está (não 16 ms fixos)
             timer.start()
         super().showEvent(event)
         self._desktop_pin_shown()          # camada: logo acima do desktop (fixado) ou sempre no topo

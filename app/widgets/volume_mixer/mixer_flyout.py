@@ -25,6 +25,7 @@ from app.widgets.volume_mixer.theme_shape import (
 )
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
+from app.core.frame_clock import FrameTimer
 
 
 class VolumeMixerFlyout(QWidget):
@@ -157,7 +158,7 @@ class VolumeMixerFlyout(QWidget):
 
         # Timer de renderização sincronizado com o Refresh Rate (Hz) do monitor via PreciseTimer
         self._last_tick_time = time.perf_counter()
-        self._anim_timer = QTimer(self)
+        self._anim_timer = FrameTimer(self)
         self._anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._sync_refresh_rate_interval()
         self._anim_timer.timeout.connect(self._on_tick)

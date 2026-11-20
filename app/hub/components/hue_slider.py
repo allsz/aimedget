@@ -35,6 +35,7 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme, THEME_DARK, derive_accent
+from app.core.frame_clock import FrameTimer
 
 TRACK_H = 10.0
 KNOB_R = 10.0
@@ -76,7 +77,7 @@ class HueSlider(QWidget):
         self._prev_kx: float | None = None
         self._last_tick = 0.0
         self._grad_cache: tuple[bool, list[QColor]] | None = None   # cores da trilha para o modo atual
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(16)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._on_tick)
