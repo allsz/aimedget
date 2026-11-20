@@ -93,7 +93,8 @@ class BatteryPage(BaseHubPage):
         sub = QLabel(t(sub_key))
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        sub.setVisible(bool(t(sub_key)))
+        if not bool(t(sub_key)):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            sub.hide()
         box.addWidget(title)
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]

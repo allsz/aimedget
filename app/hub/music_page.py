@@ -90,7 +90,8 @@ class MusicPage(BaseHubPage):
         self.sk_desc = QLabel(t("music_style_sub"))
         self.sk_desc.setWordWrap(True)
         self.sk_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        self.sk_desc.setVisible(bool(t("music_style_sub")))
+        if not bool(t("music_style_sub")):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            self.sk_desc.hide()
         header_layout.addWidget(self.sk_header)
         header_layout.addWidget(self.sk_desc)
         sk_layout.addLayout(header_layout)

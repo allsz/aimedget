@@ -55,7 +55,8 @@ class PerformancePage(BaseHubPage):
         sub = QLabel(sub_txt)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        sub.setVisible(bool(sub_txt))
+        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            sub.hide()
         box.addWidget(title)
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]

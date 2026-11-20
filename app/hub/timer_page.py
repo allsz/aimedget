@@ -72,7 +72,8 @@ class TimerPage(BaseHubPage):
         self.sk_desc = QLabel(t("timer_style_sub"))
         self.sk_desc.setWordWrap(True)
         self.sk_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        self.sk_desc.setVisible(bool(t("timer_style_sub")))
+        if not bool(t("timer_style_sub")):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            self.sk_desc.hide()
         header_layout.addWidget(self.sk_header)
         header_layout.addWidget(self.sk_desc)
         sk_layout.addLayout(header_layout)
@@ -231,7 +232,8 @@ class TimerPage(BaseHubPage):
         self.la_sub = QLabel(t("timer_opt_alarm_sub"))
         self.la_sub.setWordWrap(True)
         self.la_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        self.la_sub.setVisible(bool(t("timer_opt_alarm_sub")))
+        if not bool(t("timer_opt_alarm_sub")):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            self.la_sub.hide()
         info_alarm.addWidget(self.la_title)
         info_alarm.addWidget(self.la_sub)
         self.sw_alarm = PillSwitch(
@@ -258,7 +260,8 @@ class TimerPage(BaseHubPage):
         self.l2_sub = QLabel(t("timer_opt_show_sub"))
         self.l2_sub.setWordWrap(True)
         self.l2_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        self.l2_sub.setVisible(bool(t("timer_opt_show_sub")))
+        if not bool(t("timer_opt_show_sub")):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            self.l2_sub.hide()
         info2.addWidget(self.l2_title)
         info2.addWidget(self.l2_sub)
 

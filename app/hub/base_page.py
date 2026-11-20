@@ -49,7 +49,8 @@ class BaseHubPage(QWidget):
         self.lbl_sub = QLabel(subtitle)
         self.lbl_sub.setProperty("class", "SectionSubtitle")
         self.lbl_sub.setWordWrap(True)
-        self.lbl_sub.setVisible(bool(subtitle))
+        if not bool(subtitle):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            self.lbl_sub.hide()
         self.content_layout.addWidget(self.lbl_sub)
 
         self.scroll.setWidget(self.content_widget)

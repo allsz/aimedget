@@ -99,7 +99,8 @@ class LockKeysPage(BaseHubPage):
             lbl_d = QLabel(t(desc_key))
             lbl_d.setWordWrap(True)
             lbl_d.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-            lbl_d.setVisible(bool(t(desc_key)))
+            if not bool(t(desc_key)):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+                lbl_d.hide()
             info.addWidget(lbl_n)
             info.addWidget(lbl_d)
             self._opt_labels.append((lbl_n, name_key, lbl_d, desc_key))
