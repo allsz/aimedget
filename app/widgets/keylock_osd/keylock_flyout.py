@@ -10,6 +10,7 @@ from app.core.theme_art import overflow_margins
 from app.core.typography import get_ui_font
 from app.widgets.keylock_osd.skin import KeyLockState, card_size, paint_keylock
 from app.widgets.keylock_osd.theme import DEFAULT_THEME, effective_scale, load_user_theme
+from app.core.frame_clock import FrameTimer
 
 
 class KeyLockFlyout(QWidget):
@@ -97,7 +98,7 @@ class KeyLockFlyout(QWidget):
         self.GAP_BETWEEN_FLYOUTS = osd_anchor.STACK_GAP_PX
 
         # Timer de renderização sincronizado com o Refresh Rate (Hz) do monitor via PreciseTimer
-        self._anim_timer = QTimer(self)
+        self._anim_timer = FrameTimer(self)
         self._anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._sync_refresh_rate_interval()
         self._anim_timer.timeout.connect(self._on_tick)

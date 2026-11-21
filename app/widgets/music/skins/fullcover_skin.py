@@ -17,8 +17,6 @@ from PySide6.QtSvg import QSvgRenderer
 from app.core.paths import get_vinyl_asset, get_provider_icon_path
 from app.core.typography import get_ui_font
 from app.core.colorimetry import (
-    lerp_palette,
-    palettes_are_close,
     render_adaptive_card_background,
     extract_palette_from_image,
     get_default_palette,
@@ -26,6 +24,7 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
@@ -72,7 +71,7 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
 
         # Loop a ~60 FPS
         self.last_tick = time.perf_counter()
-        self.timer = QTimer(self)
+        self.timer = FrameTimer(self)
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._on_tick)  # iniciado/pausado pela base (show/hide)
 
@@ -165,47 +164,10 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
         if dur > 0 or track_changed:
             self.duration = dur
 
-        can_sync_pos = (
-            not self.is_dragging_bar
-            and self.pressed_btn != "bar"
-            and (now - self._last_seek_sent > 1.5)
-        )
-        if can_sync_pos and (dur > 0 or track_changed):
-            if track_changed:
-                self.current_time = min(self.duration, max(0.0, pos))
-                changed = True
-            else:
-                drift = pos - self.current_time
-                if abs(drift) > 1.5:
-                    self.current_time = min(self.duration, max(0.0, pos))
-                    changed = True
-                elif abs(drift) > 0.15:
-                    self.current_time = min(self.duration, max(0.0, self.current_time + drift * 0.35))
-                    changed = True
+        if self._sync_playback_position(pos, dur, track_changed, now):
+            changed = True
 
         if changed:
-            self.update()
-
-    def _on_tick(self):
-        now = time.perf_counter()
-        dt = min(0.05, now - self.last_tick)
-        self.last_tick = now
-        needs_update = False
-
-        if not palettes_are_close(self.current_palette, self.target_palette):
-            self.current_palette = lerp_palette(self.current_palette, self.target_palette, min(1.0, dt * 4.5))
-            needs_update = True
-
-        self.soundwave.update(dt, self.is_playing)
-        if self.provider == "generic" and self.is_playing:
-            needs_update = True
-
-        if self.is_playing and not self.is_dragging_bar:
-            if self.duration > 0:
-                self.current_time = min(self.duration, self.current_time + dt)
-            needs_update = True
-
-        if needs_update:
             self.update()
 
     def _draw_fullbleed_cover(self, painter: QPainter, card_rect: QRectF):

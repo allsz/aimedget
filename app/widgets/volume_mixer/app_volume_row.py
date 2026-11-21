@@ -654,6 +654,7 @@ class MasterDeviceDrawer(AppVolumeRow):
 
     APP_ID = "__master__"
     GAP = 6.0   # respiro entre a gaveta e o que vem embaixo (borda do card ou a lista de apps)
+    lead = 0.0  # espaço extra no topo (px, com a gaveta aberta): o tema pode ter um número que desce do cabeçalho
 
     def __init__(self, on_routing_changed: Callable[[str, str, str], None] | None = None):
         super().__init__(self.APP_ID, "", 0, False, QImage(), on_routing_changed)
@@ -679,17 +680,17 @@ class MasterDeviceDrawer(AppVolumeRow):
         """Quanto a gaveta ocupa agora (anima junto com ela)."""
         if self._expand_t <= 0.001:
             return 0.0
-        return (self._current_drawer_h + self.GAP) * self._expand_t
+        return (self._current_drawer_h + self.GAP + self.lead) * self._expand_t
 
     def target_extra_height(self) -> float:
         """Quanto a gaveta vai ocupar ao fim da animação."""
         if not self.is_routing_open:
             return 0.0
-        return self._calc_drawer_height(self.active_flow) + self.GAP
+        return self._calc_drawer_height(self.active_flow) + self.GAP + self.lead
 
     def y_top_for(self, header_bottom: float) -> float:
         """A gaveta das linhas começa em `y_top + ROW_PITCH + 1`: aqui ela começa logo abaixo do cabeçalho."""
-        return header_bottom - self.ROW_PITCH
+        return header_bottom - self.ROW_PITCH + self.lead * self._expand_t   # a folga cresce junto com a gaveta
 
     def draw_drawer(self, p: QPainter, x0: float, header_bottom: float):
         y_top = self.y_top_for(header_bottom)

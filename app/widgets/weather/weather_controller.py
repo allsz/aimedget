@@ -40,7 +40,10 @@ def condition_names() -> dict:
 
 
 def build_days(report: WeatherReport, unit: str) -> list:
-    """Dias para o cartão: hoje usa a temperatura e a condição de agora; os seguintes, a média e a do dia."""
+    """
+    Dias para o cartão: hoje usa a temperatura e a condição de agora; os seguintes, a máxima (como os apps de
+    previsão mostram; a média ficava bem abaixo do que se espera ver) e a condição que domina o dia.
+    """
     short, full = weekday_labels()
     days = []
     for i, d in enumerate(report.days[:FORECAST_DAYS]):
@@ -53,10 +56,59 @@ def build_days(report: WeatherReport, unit: str) -> list:
             temp = report.current_temp
         else:
             condition = cond.condition_from_wmo(d.code, True)
-            temp = d.t_mean
+            temp = d.t_max
         days.append(DayView(short[wd], full[wd], condition, to_unit(temp, unit),
                             to_unit(d.t_max, unit), to_unit(d.t_min, unit)))
     return days
+
+
+def build_hours(report: WeatherReport, unit: str) -> list:
+    """
+    Horas do dia para a skin Nothing Hourly: Agora + 4 horários espaçados de 3 em 3 horas (+3h, +6h, +9h, +12h).
+    Mantém a máxima/mínima de hoje; se o cache antigo ainda não trouxe `hours`, sintetiza os horários sem quebrar.
+    """
+    now_lbl = t("weather_now")
+    today_hi = to_unit(report.days[0].t_max, unit) if report.days else to_unit(report.current_temp, unit)
+    today_lo = to_unit(report.days[0].t_min, unit) if report.days else to_unit(report.current_temp, unit)
+    now_cond = cond.condition_from_wmo(report.current_code, report.is_day)
+    slots = [DayView(now_lbl, now_lbl, now_cond, to_unit(report.current_temp, unit), today_hi, today_lo)]
+
+    start_idx = -1
+    if report.hours:
+        ref = report.current_time[:13] if len(report.current_time) >= 13 else datetime.datetime.now().strftime("%Y-%m-%dT%H")
+        for idx, h in enumerate(report.hours):
+            if h.time[:13] >= ref:
+                start_idx = idx
+                break
+        if start_idx < 0:
+            start_idx = 0
+
+    base_hour = datetime.datetime.now().hour
+    if len(report.current_time) >= 13:
+        try:
+            base_hour = int(report.current_time[11:13])
+        except ValueError:
+            pass
+
+    for step in (3, 6, 9, 12):
+        idx = start_idx + step if start_idx >= 0 else -1
+        if 0 <= idx < len(report.hours):
+            h = report.hours[idx]
+            hh = h.time[11:13]
+            slots.append(DayView(
+                f"{hh}h", f"{hh}:00",
+                cond.condition_from_wmo(h.code, h.is_day),
+                to_unit(h.temp, unit), today_hi, today_lo,
+            ))
+        else:
+            hh = (base_hour + step) % 24
+            is_day = 6 <= hh < 19
+            slots.append(DayView(
+                f"{hh:02d}h", f"{hh:02d}:00",
+                cond.condition_from_wmo(report.current_code, is_day),
+                to_unit(report.current_temp, unit), today_hi, today_lo,
+            ))
+    return slots
 
 
 def placeholder_days() -> list:
@@ -66,12 +118,25 @@ def placeholder_days() -> list:
     return [DayView(short[(today + i) % 7], full[(today + i) % 7], cond.CLOUDY, 0, 0, 0) for i in range(5)]
 
 
+def placeholder_hours() -> list:
+    """Abas sem dados para a skin Nothing Hourly: Agora + próximos 4 horários de 3 em 3h."""
+    now_lbl = t("weather_now")
+    base_hour = datetime.datetime.now().hour
+    slots = [DayView(now_lbl, now_lbl, cond.CLOUDY, 0, 0, 0)]
+    for step in (3, 6, 9, 12):
+        hh = (base_hour + step) % 24
+        slots.append(DayView(f"{hh:02d}h", f"{hh:02d}:00", cond.CLOUDY, 0, 0, 0))
+    return slots
+
+
 class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
     skin_changed = Signal(str)
     scale_changed = Signal(float)
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
+    units_changed = Signal(str)
+    forecast_mode_changed = Signal(str)
 
     manage_cities_requested = Signal()   # "Gerenciar cidades…" no menu do cartão
 
@@ -118,6 +183,9 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
     def units(self) -> str:
         return "f" if config_manager.get_weather("units", "c") == "f" else "c"
 
+    def forecast_mode(self) -> str:
+        return "hourly" if config_manager.get_weather("forecast_mode", "daily") == "hourly" else "daily"
+
     def city_display_names(self) -> list:
         """Nomes da lista na ordem do cartão; o automático ainda sem local aparece como "Minha localização"."""
         return [self.service.city_name(c) or t("weather_my_location") for c in self.service.cities()]
@@ -136,12 +204,14 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.city_names = names
         state.set_city(index, len(names), now)
         report = self._report
+        hourly_mode = self.forecast_mode() == "hourly"
         if report is not None:
             place = names[index] if names else report.place
-            state.set_days(place, build_days(report, self.units()), condition_names(), now,
+            slots = build_hours(report, self.units()) if hourly_mode else build_days(report, self.units())
+            state.set_days(place, slots, condition_names(), now,
                            animate=now != PAST, direction=direction)
         else:
-            state.days = placeholder_days()
+            state.days = placeholder_hours() if hourly_mode else placeholder_days()
             state.set_place(names[index] if names else "", now, direction)
             if not names or self._failure == FAIL_NO_LOCATION:
                 state.set_message(MSG_NO_LOCATION, t("weather_no_location_detail"))
@@ -204,8 +274,20 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.kick()
 
     def set_units(self, unit: str):
-        config_manager.set_weather("units", "f" if unit == "f" else "c")
+        u = "f" if unit == "f" else "c"
+        config_manager.set_weather("units", u)
         self._apply_report(animate=True)
+        self.units_changed.emit(u)
+
+    def set_forecast_mode(self, mode: str):
+        m = "hourly" if mode == "hourly" else "daily"
+        if m == self.forecast_mode():
+            return
+        config_manager.set_weather("forecast_mode", m)
+        self._apply_report(animate=True)
+        if m == "hourly" and self.is_shown() and self._report is not None and not self._report.hours:
+            self.service.refresh(force=True)
+        self.forecast_mode_changed.emit(m)
 
     def set_scale(self, scale: float | None):
         """Tamanho do cartão (menu, Hub ou arraste do canto), com movimento; None = automático (segue a tela)."""
@@ -241,7 +323,11 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
 
     def set_skin(self, skin_id: str, save: bool = True):
         skin = font_skins.skin_by_id(skin_id)
+        changed = (skin.id != self.active_skin_name) or (skin.family != self.skin.state.font_family)
+        if changed:
+            self.skin.begin_skin_crossfade()
         self.active_skin_name = skin.id
+        self.skin.state.skin_id = skin.id
         self.skin.state.font_family = skin.family
         if save:
             config_manager.set_weather("skin", skin.id)

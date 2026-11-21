@@ -22,8 +22,14 @@ from app.hub.components.message_dialog import confirm
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.theme import HubTheme
 
-TARGET_KEYS = {"keylock": "theme_import_target_keylock", "mixer": "theme_import_target_mixer",
-               "music": "theme_import_target_music", "timer": "theme_import_target_timer"}
+TARGET_KEYS = {
+    "keylock": "theme_import_target_keylock",
+    "mixer": "theme_import_target_mixer",
+    "music": "theme_import_target_music",
+    "timer": "theme_import_target_timer",
+    "weather": "theme_import_target_weather",
+    "performance": "theme_import_target_performance",
+}
 
 CONTENT_WIDTH = 500
 DETAILS_MAX_HEIGHT = 200

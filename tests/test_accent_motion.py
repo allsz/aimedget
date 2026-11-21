@@ -323,6 +323,16 @@ class AccentWipeTests(unittest.TestCase):
         self.assertEqual(img.pixelColor(230, 40).alpha(), 0)    # o seletor continua vivo
         self.assertEqual(img.pixelColor(230, 90).red(), 255)    # o resto está coberto
 
+    def test_carved_area_is_painted_by_the_wave_even_inside_an_excluded_margin(self):
+        """A margem do seletor invadia o pé dos círculos de tema: só o arco de baixo do anel ficava ao vivo."""
+        from PySide6.QtCore import QRect
+        self.wipe.start(self.snapshot, [QRect(200, 20, 60, 40)], [QRect(200, 20, 60, 10)])
+        self.wipe._anim.pause()
+        self.wipe._on_progress(0.0)
+        img = self._render()
+        self.assertEqual(img.pixelColor(230, 25).red(), 255)    # dentro do `carve`: coberto, como o resto da foto
+        self.assertEqual(img.pixelColor(230, 40).alpha(), 0)    # o seletor de verdade continua vivo
+
     def test_stop_releases_the_layer_and_resizing_cancels_it(self):
         self.wipe.start(self.snapshot, [])
         self.assertTrue(self.wipe.is_running())
@@ -368,6 +378,25 @@ class HubAccentFlowTests(unittest.TestCase):
         self.assertTrue(hub._accent_wipe.is_running())
         hub._accent_wipe._anim.setCurrentTime(accent_wipe.DURATION_MS)   # fim da animação, sem esperar tempo real
         self.assertFalse(hub._accent_wipe.is_running())
+
+    def test_no_theme_circle_is_ever_half_live_half_covered(self):
+        """Vídeo do bug: o anel do 4º círculo ganhava só um arco novo (a margem do seletor invadia o pé dele) e o
+        resto só mudava quando a onda chegava. Nenhum círculo pode ficar em parte na zona ao vivo."""
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QRegion
+        hub = self._hub()
+        live = QRegion()
+        for r in hub._wipe_excluded_rects():
+            live = live.united(QRegion(r))
+        for r in hub._wipe_carved_rects():
+            live = live.subtracted(QRegion(r))
+        buttons = hub.page_gen._theme_group.buttons
+        self.assertEqual(len(buttons), 4)
+        for key, b in buttons.items():
+            rect = QRect(b.mapTo(hub.shell, QPoint(0, 0)), b.size())
+            self.assertFalse(live.intersects(rect), key)
+        self.assertTrue(live.intersects(QRect(hub.page_gen.hue_slider.mapTo(hub.shell, QPoint(0, 0)),
+                                              hub.page_gen.hue_slider.size())))   # o seletor segue ao vivo
 
     def test_repeating_the_same_color_does_not_replay_the_animation(self):
         hub = self._hub()

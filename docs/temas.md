@@ -1,11 +1,15 @@
 # Temas do Aimedget — guia completo
 
-Este guia ensina a criar **temas visuais** para quatro partes do Aimedget (os **destinos** do tema):
+Este guia ensina a criar **temas visuais** para seis partes do Aimedget (os **destinos** do tema):
 
 - **Caps/Num Lock** (o indicador que aparece ao apertar Caps Lock ou Num Lock) — chamado de `keylock` nos arquivos;
 - **Volume e mixer** (o painel de volume com os aplicativos) — chamado de `mixer` nos arquivos;
 - **Música**, skin **Capa Empilhada** do widget de música — chamado de `music` nos arquivos;
-- **Timer**, skin **Padrão** do widget de timer — chamado de `timer` nos arquivos.
+- **Timer**, skin **Padrão** do widget de timer — chamado de `timer` nos arquivos;
+- **Clima**, skin **Nothing Dot** do widget de clima — chamado de `weather` nos arquivos;
+- **Desempenho**, skin **Nothing Dot** do widget de desempenho — chamado de `performance` nos arquivos.
+
+Tokens suportados em `weather` e `performance` (skin **Nothing Dot**, todos opcionais): `card_bg`, `border`, `text`, `muted_text`, `dot_on`, `dot_off`, `accent`, `background` e `stickers`.
 
 Os dois primeiros são **flyouts** (aparecem e somem); os dois últimos são **widgets** (ficam na área de trabalho).
 

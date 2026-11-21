@@ -726,6 +726,26 @@ class ConfigManager:
         cfg["hotkey"] = str(hotkey)
         self._save()
 
+    def get_storage(self, key: str, default: Any = None) -> Any:
+        cfg = self._data.get("storage_widget", {})
+        return cfg.get(key, default)
+
+    def set_storage(self, key: str, value: Any):
+        cfg = self._data.setdefault("storage_widget", {})
+        cfg[key] = value
+        self._save()
+
+    # Seção "battery_widget": enabled, show_on_startup, remember_position, position [x, y], size [w, h],
+    # desktop_mode, hotkey, face, label, show, odd
+    def get_battery(self, key: str, default: Any = None) -> Any:
+        cfg = self._data.get("battery_widget", {})
+        return cfg.get(key, default)
+
+    def set_battery(self, key: str, value: Any):
+        cfg = self._data.setdefault("battery_widget", {})
+        cfg[key] = value
+        self._save()
+
     def get_theme_choice(self, container_id: str) -> Optional[str]:
         """Tema visual escolhido para um container (ex.: 'keylock', 'mixer'); None = nunca escolheu."""
         themes = self._data.get("themes")

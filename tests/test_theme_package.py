@@ -141,8 +141,9 @@ class AnalysisTests(_Base):
         self.assertFalse(os.path.exists(os.path.join(r.targets[0].folder, "programa.exe")))
 
     def test_files_outside_flyout_folders_are_ignored(self):
+        from app.core.theme_validation import container_folders_text
         r = self.analyze({"keylock/theme.json": KL, "outra/coisa.png": png_bytes()})
-        self.assertIn(("outra/coisa.png", "fora das pastas keylock/, mixer/, music/ e timer/"), r.ignored_files)
+        self.assertIn(("outra/coisa.png", f"fora das pastas {container_folders_text()}"), r.ignored_files)
 
     def test_unsafe_svg_and_bad_values_are_reported_not_installed_silently(self):
         theme = json.dumps({"name": "N", "card_bg": "azul", "stickers": [{"image": "mau.svg"}, {"image": "ok.svg"}]})

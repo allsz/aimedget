@@ -6,11 +6,12 @@ Usa o mesmo `paint_performance_card` do widget vivo com um estado de exemplo par
 from PySide6.QtCore import QRectF, QSizeF
 from PySide6.QtGui import QPainter
 
-from app.core.preview_registry import WidgetSpec, get_widget_spec, register_widget
+from app.core.i18n import t
+from app.core.preview_registry import SkinSpec, WidgetSpec, get_widget_spec, register_skin, register_widget
 from app.services.performance_service import PerformanceSnapshot
 from app.ui_components.floating_card import CARD_H, CARD_W
 from app.widgets.performance.card_painter import paint_performance_card
-from app.widgets.performance.card_state import PerformanceState
+from app.widgets.performance.card_state import PerformanceState, SKIN_FLUENT, SKIN_NOTHING_DOT
 
 _MOCK_CPU_SERIES = (
     18, 22, 20, 26, 32, 28, 24, 19, 17, 21, 29, 38, 44, 39, 34, 30, 27, 25, 22, 24,
@@ -18,8 +19,8 @@ _MOCK_CPU_SERIES = (
 )
 
 
-def mock_state() -> PerformanceState:
-    state = PerformanceState(selected="cpu")
+def mock_state(skin_id: str = SKIN_FLUENT) -> PerformanceState:
+    state = PerformanceState(selected="cpu", skin_id=skin_id)
     for val in _MOCK_CPU_SERIES:
         state.history["cpu"].append(float(val))
     state.latest = PerformanceSnapshot(
@@ -61,3 +62,29 @@ def init_performance_spec() -> WidgetSpec:
     )
     register_widget(spec)
     return spec
+
+
+def init_performance_skin_specs() -> list[SkinSpec]:
+    specs = [
+        SkinSpec(
+            id=SKIN_FLUENT,
+            widget_id="performance",
+            title=t("perf_skin_label"),
+            subtitle="",
+            natural_size=QSizeF(CARD_W, CARD_H),
+            paint=paint_performance,
+            mock_state=lambda: mock_state(SKIN_FLUENT),
+        ),
+        SkinSpec(
+            id=SKIN_NOTHING_DOT,
+            widget_id="performance",
+            title="Nothing Dot",
+            subtitle="",
+            natural_size=QSizeF(CARD_W, CARD_H),
+            paint=paint_performance,
+            mock_state=lambda: mock_state(SKIN_NOTHING_DOT),
+        ),
+    ]
+    for s in specs:
+        register_skin(s)
+    return specs

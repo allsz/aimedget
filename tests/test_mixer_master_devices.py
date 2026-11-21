@@ -51,6 +51,10 @@ class MasterDeviceDrawerTests(unittest.TestCase):
         self.anim = anim_patch.start()
         self.addCleanup(anim_patch.stop)
 
+        # Isolado do tema escolhido pelo usuário: estas medidas valem para o tema padrão
+        theme_patch = mock.patch.object(mf, "load_user_theme", return_value=DEFAULT_THEME)
+        theme_patch.start()
+        self.addCleanup(theme_patch.stop)
         self.fly = mf.VolumeMixerFlyout()
         self.fly._click_timer.stop()
         buttons = mock.patch.object(self.fly, "_buttons_down", return_value=False)

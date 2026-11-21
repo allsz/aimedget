@@ -30,7 +30,33 @@ def _get_headless(skin_id: str, skin_class_loader):
     return _cached_instances[skin_id]
 
 
+_loaders: dict = {}   # skin_id -> loader, para o aquecimento em segundo plano
+
+
+def warm_previews(delay_ms: int = 700):
+    """
+    Monta as skins das miniaturas aos poucos (uma por volta do laço de eventos), depois de `delay_ms`. Sem isso a
+    primeira visita à página Música montava as quatro de uma vez no paint (~100 ms de travada no clique).
+    """
+    from PySide6.QtCore import QTimer
+
+    pending = [sid for sid in _loaders if sid not in _cached_instances]
+
+    def _next():
+        while pending:
+            sid = pending.pop(0)
+            if sid not in _cached_instances:
+                _get_headless(sid, _loaders[sid])
+                break
+        if pending:
+            QTimer.singleShot(0, _next)
+
+    if pending:
+        QTimer.singleShot(max(0, int(delay_ms)), _next)
+
+
 def _make_skin_paint(skin_id: str, skin_class_loader):
+    _loaders[skin_id] = skin_class_loader
     def paint_fn(p, rect, state, theme):
         skin = _get_headless(skin_id, skin_class_loader)
         skin.render(p, QPoint(int(rect.x()), int(rect.y())))

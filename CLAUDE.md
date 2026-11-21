@@ -9,7 +9,8 @@ que estiverem secas.
 
 - **Referência:** https://designbookmark.com/motion. Molas no modelo de lá (massa 1, Euler semi-implícito, 4
   subpassos): veja `Spring` em `app/hub/components/city_list.py`. Valores já usados: MORPH 320/20, PRESS 520/20,
-  LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30. Curvas: `app/widgets/weather/motion.py`.
+  LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30, CLOSE 280/34 (fechar/reabrir fileiras de
+  um grupo de ancoragem, sem passar do ponto; `app/core/anchor_manager.py`). Curvas: `app/widgets/weather/motion.py`.
 - **Exemplos prontos no app:** entrada "Unfold and rise", remoção com check, arrastar para reordenar (levanta, as
   vizinhas deslizam, assenta) em `city_list.py`; onda de pontos e assentar do cartão no Weather Widget.
 - **Respeite o Windows:** com `animations_enabled()` (app/core/widget_animator.py) falso, tudo acontece na hora.
@@ -21,6 +22,20 @@ que estiverem secas.
   confira: a altura total do contêiner deve variar sem dente (só cresce ou só diminui) durante a animação.
 - **Teste:** um teste que confirme que anima (não pula) e que termina limpo, mais o caso sem animações. Para listas,
   inclua a altura do contêiner pai ao longo da animação (sem encolher-e-crescer).
+
+## Textos e rótulos de opções (obrigatório em toda opção nova)
+
+O app adota redação minimalista e precisa (veja a skill completa em `.agents/skills/ui-copy-guidelines/SKILL.md`):
+
+- **Sem subtítulo redundante:** se o título + controle (chips, switch, slider) já explicam a opção, deixe o subtítulo
+  vazio (`""`), como em `Unidade de temperatura`, `Fonte do cartão` e `Fonte da previsão`.
+- **Subtítulo curto quando necessário:** no máximo 1 frase curta (3–8 palavras) dizendo a consequência prática — nunca
+  repita o título nem comece com "Escolha qual..." / "Permite...".
+- **Detalhes extras no `HelpBadge` (`?`):** dicas condicionais ou explicações adicionais vão em `help_key` (`HelpBadge`),
+  nunca inflam o cartão.
+- **Zero jargão interno:** não exponha nomes de APIs/bibliotecas (`Open-Meteo`, `GSMTC`, etc.) nem termos de código em
+  rótulos voltados ao usuário.
+- **Botões e chips:** 1–2 palavras no máximo; paridade natural entre `pt` e `en` em `app/core/i18n.py`.
 
 ## Armadilhas do Qt já encontradas
 

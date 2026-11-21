@@ -30,6 +30,21 @@ class KeyLockService(QObject):
         self._timer.timeout.connect(self._poll_keys)
         self._timer.start()
 
+    def start(self):
+        """Volta a vigiar. Relê o estado antes: o que mudou enquanto parado não vira um aviso atrasado."""
+        if self._timer.isActive():
+            return
+        self._caps_on = self.is_caps_lock_on()
+        self._num_on = self.is_num_lock_on()
+        self._timer.start()
+
+    def stop(self):
+        """Indicador desligado: nada de acordar 40x/s só para ninguém ver."""
+        self._timer.stop()
+
+    def is_active(self) -> bool:
+        return self._timer.isActive()
+
     def is_caps_lock_on(self) -> bool:
         if not self._user32:
             return False

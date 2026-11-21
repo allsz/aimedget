@@ -10,6 +10,7 @@ from app.core.config_manager import config_manager
 from app.core.i18n import i18n, t
 from app.core.preview_card import PreviewCard
 from app.hub.components.city_list import CityList
+from app.hub.components.collapsible_section import skin_and_theme_block
 from app.hub.components.fold import Fold
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
@@ -18,11 +19,14 @@ from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
 from app.hub.components.scale_card import ScaleCard
 from app.hub.components.tab_pill import ChipGroup
+from app.hub.components.theme_gallery import ThemeGalleryCard
 from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
-from app.widgets.weather import init_weather_skin_specs
+from app.widgets.weather import font_skins, init_weather_skin_specs
+from app.widgets.weather.theme import loader as weather_theme_loader
+from app.widgets.weather.theme_specs import make_theme_spec as make_weather_theme_spec
 from app.services.weather_service import MAX_CITIES, city_key
 
 SEARCH_DEBOUNCE_MS = 450
@@ -81,7 +85,8 @@ class WeatherPage(BaseHubPage):
         sub = QLabel(sub_txt)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        sub.setVisible(bool(sub_txt))
+        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            sub.hide()
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]
         self._subs.append(sub)
@@ -117,16 +122,6 @@ class WeatherPage(BaseHubPage):
         row.addWidget(self.pos_picker)
         self.content_layout.addWidget(card)
 
-        # 1b. Tamanho (Automático + controle em %; os presets do menu do cartão continuam valendo)
-        self.scale_card = ScaleCard("weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
-        self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
-        self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
-        self.scale_card.committed.connect(lambda pct: self.controller.set_scale(pct / 100.0))
-        self.content_layout.addWidget(self.scale_card)
-        self.controller.skin.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
-        self.controller.scale_changed.connect(lambda _s: self._sync_size())
-        self._sync_size()
-
         # 2. Estilo (uma skin por fonte)
         card, col = self._card(vertical=True)
         col.setContentsMargins(22, 20, 22, 22)
@@ -141,7 +136,34 @@ class WeatherPage(BaseHubPage):
             self._skin_cards[spec.id] = pc
             self._skin_grid.add_card(pc)
         col.addWidget(self._skin_grid)
-        self.content_layout.addWidget(card)
+        self.theme_picker = ThemeGalleryCard(
+            weather_theme_loader,
+            "weather",
+            make_weather_theme_spec,
+            self.bridge.apply_weather_theme,
+            self._theme,
+            appliers=self.bridge.theme_appliers(),
+            parent=self,
+            subtitle_key="theme_picker_sub_weather",
+            default_title_key="theme_default_timer",
+        )
+        skin_block, self.theme_section = skin_and_theme_block(
+            card,
+            self.theme_picker,
+            self.content_layout.spacing(),
+            font_skins.is_nothing_skin(self.controller.active_skin_name),
+        )
+        self.content_layout.addWidget(skin_block)
+
+        # 2b. Tamanho (depois de escolher a skin)
+        self.scale_card = ScaleCard("weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
+        self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: self.controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        self.controller.skin.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
+        self.controller.scale_changed.connect(lambda _s: self._sync_size())
+        self._sync_size()
 
         # 3. Cidades (até 5, na ordem do cartão; a roda do mouse troca entre elas)
         # Tudo o que aparece/some aqui fica num Fold que abre/fecha junto com as linhas da lista (sem o cartão
@@ -193,6 +215,23 @@ class WeatherPage(BaseHubPage):
         self._last_query_places: list = []
         self._refresh_cities()
 
+        # 3b. Modo de previsão (5 dias / Por hora — funciona em todas as skins)
+        card, row = self._card()
+        mode_info = self._info("weather_mode_title", "weather_mode_sub", 14)
+        row.addLayout(mode_info, stretch=1)
+        row.setAlignment(mode_info, Qt.AlignmentFlag.AlignVCenter)
+        self._forecast_group = ChipGroup(
+            [("daily", t("weather_mode_daily")), ("hourly", t("weather_mode_hourly"))],
+            self._on_forecast_mode,
+            self._theme,
+            selected=self.controller.forecast_mode(),
+            parent=card,
+            segmented=True,
+        )
+        row.addWidget(self._forecast_group, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self.controller.forecast_mode_changed.connect(lambda _m: self._sync_forecast_mode())
+        self.content_layout.addWidget(card)
+
         # 4. Unidade
         card, row = self._card()
         unit_info = self._info("weather_units_title", "weather_units_sub", 14)
@@ -201,6 +240,22 @@ class WeatherPage(BaseHubPage):
         self._unit_group = ChipGroup([("c", "°C"), ("f", "°F")], self._on_unit, self._theme, parent=card)
         row.addWidget(self._unit_group, alignment=Qt.AlignmentFlag.AlignVCenter)
         self._sync_units(animated=False)
+        self.controller.units_changed.connect(lambda _u: self._sync_units())
+        self.content_layout.addWidget(card)
+
+        # 4b. Fonte da previsão (Open-Meteo: Automático, ICON, ECMWF, GFS)
+        card, row = self._card()
+        model_info = self._info("weather_model_title", "weather_model_sub", 14, help_key="weather_model_help")
+        row.addLayout(model_info, stretch=1)
+        row.setAlignment(model_info, Qt.AlignmentFlag.AlignVCenter)
+        self._model_group = ChipGroup(
+            [("auto", t("weather_model_auto")), ("icon", "ICON"), ("ecmwf", "ECMWF"), ("gfs", "GFS")],
+            self._on_model,
+            self._theme,
+            parent=card,
+        )
+        row.addWidget(self._model_group, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._sync_model(animated=False)
         self.content_layout.addWidget(card)
 
         # 5. Comportamento
@@ -359,12 +414,25 @@ class WeatherPage(BaseHubPage):
 
     # --- Unidade, skin, comportamento ---
 
+    def _on_forecast_mode(self, mode: str):
+        self.controller.set_forecast_mode(mode)
+
+    def _sync_forecast_mode(self, animated: bool = True):
+        self._forecast_group.set_selected(self.controller.forecast_mode(), animated=animated)
+
     def _on_unit(self, unit: str):
         self.controller.set_units(unit)
         self._sync_units()
 
     def _sync_units(self, animated: bool = True):
         self._unit_group.set_selected(self.controller.units(), animated=animated)
+
+    def _on_model(self, model: str):
+        self.service.set_forecast_model(model)
+        self._sync_model()
+
+    def _sync_model(self, animated: bool = True):
+        self._model_group.set_selected(self.service.forecast_model(), animated=animated)
 
     def _sync_size(self):
         """Chip Automático e polegar seguem o cartão (inclusive enquanto ele anima até o tamanho novo)."""
@@ -380,6 +448,8 @@ class WeatherPage(BaseHubPage):
     def _sync_skin_selection(self, skin_id: str):
         for key, card in self._skin_cards.items():
             card.set_selected(key == skin_id)
+        if hasattr(self, "theme_section"):
+            self.theme_section.set_open(font_skins.is_nothing_skin(skin_id))
 
     def _sync_remember(self, enabled: bool):
         if self.sw_remember.isChecked() != enabled:
@@ -401,7 +471,9 @@ class WeatherPage(BaseHubPage):
     def showEvent(self, event):
         super().showEvent(event)
         self._sync_skin_selection(self.controller.active_skin_name)
+        self._sync_forecast_mode(animated=False)
         self._sync_units()
+        self._sync_model(animated=False)
         self._refresh_cities()
         self._sync_remember(bool(config_manager.get_weather("remember_position", False)))
 
@@ -415,6 +487,11 @@ class WeatherPage(BaseHubPage):
         for badge, key in self._help_badges:
             badge.set_text(t(key))
         self.scale_card.retranslate()
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.retranslate_ui()
+        self._forecast_group.button("daily").setText(t("weather_mode_daily"))
+        self._forecast_group.button("hourly").setText(t("weather_mode_hourly"))
+        self._model_group.button("auto").setText(t("weather_model_auto"))
         self.btn_add_auto.setText(t("weather_add_my_location"))
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.lbl_empty.setText(t("weather_cities_empty"))
@@ -430,7 +507,7 @@ class WeatherPage(BaseHubPage):
             card.set_theme(theme)
         self.city_list.set_theme(theme)
         self.lbl_count.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px; font-weight: 600;")
-        for w in (self.scale_card, self._unit_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
+        for w in (self.scale_card, self.theme_picker, self._forecast_group, self._unit_group, self._model_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)
 

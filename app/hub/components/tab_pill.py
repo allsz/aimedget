@@ -20,18 +20,19 @@ import time
 from PySide6.QtCore import QEvent, QObject, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QPushButton, QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.core import widget_animator
 from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.core.frame_clock import FrameTimer
 
 # Mais duras que as do exemplo original (620/40 e 170/19) para o app ficar ágil: ~180 ms para assentar num salto
 # de 200 px (e ~130 ms num salto curto), ainda com o esticar visível.
 LEAD = (3200.0, 98.0)    # ponta que vai na frente
 TRAIL = (1500.0, 62.0)   # ponta que fica para trás (é ela que dá o esticar)
 FADE = (900.0, 48.0)     # a pílula aparece/some quando não há seleção
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 
@@ -56,7 +57,7 @@ class Blend(QObject):
         self._spring = Spring(value, spring)
         self._on_change = on_change
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
 
@@ -108,7 +109,7 @@ class TabPill(QWidget):
         self._alpha = Spring(0.0, FADE)
         self._cross = (0.0, 0.0)         # posição e tamanho no eixo que não anima
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
         parent.installEventFilter(self)
@@ -307,22 +308,45 @@ class PillButton(QPushButton):
 class ChipGroup(QWidget):
     """Fileira de chips com a pílula deslizando entre eles. `chips`: [(chave, texto)]; `on_click(chave)`."""
 
-    def __init__(self, chips, on_click, theme: HubTheme = THEME_LIGHT, selected=None, parent=None):
+    def __init__(self, chips, on_click, theme: HubTheme = THEME_LIGHT, selected=None, parent=None,
+                 segmented: bool = False):
         super().__init__(parent)
         self._theme = theme
+        self._segmented = bool(segmented)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-        self._pill = TabPill(self, vertical=False, color=theme.text, radius=6.0, outline=theme.line)
+        if self._segmented:
+            layout.setContentsMargins(3, 3, 3, 3)
+            layout.setSpacing(2)
+            self.setFixedHeight(36)
+            self._pill = TabPill(self, vertical=False, color=theme.text, radius=7.0, outline=None)
+        else:
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+            self._pill = TabPill(self, vertical=False, color=theme.text, radius=6.0, outline=theme.line)
         self._buttons: dict = {}
         for key, text in chips:
             btn = PillButton(text, lambda: self._pill, theme, self)
+            if self._segmented:
+                btn.setStyleSheet("QPushButton { background: transparent; border: 0; padding: 0px 8px; }")
+                font = QFont(btn.font())
+                font.setPixelSize(12)
+                btn.setFont(font)
+                btn.setFixedHeight(30)
             btn.clicked.connect(lambda checked=False, k=key: on_click(k))
-            layout.addWidget(btn)
+            layout.addWidget(btn, stretch=1 if self._segmented else 0)
             self._buttons[key] = btn
             self._pill.track(key, btn)
         self._pill.select(selected, animated=False)
         self._mark(selected)
+
+    def paintEvent(self, event):
+        if self._segmented:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QColor(self._theme.bg))
+            painter.setPen(QColor(self._theme.line))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10.0, 10.0)
+        super().paintEvent(event)
 
     @property
     def buttons(self) -> dict:
@@ -348,6 +372,8 @@ class ChipGroup(QWidget):
 
     def set_theme(self, theme: HubTheme):
         self._theme = theme
-        self._pill.set_colors(theme.text, theme.line)
+        self._pill.set_colors(theme.text, None if self._segmented else theme.line)
         for btn in self._buttons.values():
             btn.set_theme(theme)
+        if self._segmented:
+            self.update()

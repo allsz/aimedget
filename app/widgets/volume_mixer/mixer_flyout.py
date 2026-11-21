@@ -21,10 +21,13 @@ from app.core.theme_art import (
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_theme
 from app.widgets.volume_mixer.theme_shape import (
-    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, hairline, paint_digits, paint_plates, pop_amount, tilt_transform,
+    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, digits_overhang, hairline, paint_digits, paint_plates, pop_amount,
+    tilt_transform,
 )
+from app.core.theme_crossfade import theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
+from app.core.frame_clock import FrameTimer
 
 
 class VolumeMixerFlyout(QWidget):
@@ -157,7 +160,7 @@ class VolumeMixerFlyout(QWidget):
 
         # Timer de renderização sincronizado com o Refresh Rate (Hz) do monitor via PreciseTimer
         self._last_tick_time = time.perf_counter()
-        self._anim_timer = QTimer(self)
+        self._anim_timer = FrameTimer(self)
         self._anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._sync_refresh_rate_interval()
         self._anim_timer.timeout.connect(self._on_tick)
@@ -459,6 +462,13 @@ class VolumeMixerFlyout(QWidget):
         """Propaga o tema ao cabeçalho e a todas as linhas. Não faz nada se o tema não mudou."""
         if theme is self.theme:
             return
+        if self.isVisible():   # já na tela (ex.: escolhendo temas em sequência): troca com a transição comum
+            with theme_crossfade(self):
+                self._apply_theme_now(theme)
+        else:
+            self._apply_theme_now(theme)
+
+    def _apply_theme_now(self, theme: MixerTheme):
         self.theme = theme
         self.master_slider.apply_colors(
             theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive
@@ -468,6 +478,7 @@ class VolumeMixerFlyout(QWidget):
         for row in self._rows:
             row.apply_theme(theme)
         self._master_drawer.apply_theme(theme)
+        self._master_drawer.lead = digits_overhang(theme.digits, self.HEADER_H)   # gaveta abaixo do número em imagem
         self._update_margins()
         # A janela SEMPRE acompanha as margens (mesmo com o flyout na tela, ex.: trocar de tema no Hub): o card
         # fica no mesmo ponto da tela por construção, então não há salto; sem isso o card sairia cortado.

@@ -8,16 +8,24 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLay
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
+from app.core.preview_card import PreviewCard
+from app.hub.components.collapsible_section import skin_and_theme_block
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
+from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
 from app.hub.components.scale_card import ScaleCard
+from app.hub.components.theme_gallery import ThemeGalleryCard
 from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.services.fps_service import fps_capability_status, perf_log_users_group_name, request_fps_permission
+from app.widgets.performance import init_performance_skin_specs
+from app.widgets.performance.card_state import SKIN_NOTHING_DOT
+from app.widgets.performance.theme import loader as perf_theme_loader
+from app.widgets.performance.theme_specs import make_theme_spec as make_perf_theme_spec
 
 
 class PerformancePage(BaseHubPage):
@@ -29,6 +37,7 @@ class PerformancePage(BaseHubPage):
         self._subs: list[QLabel] = []
         self._fps_perm_requested = False
         self._build_ui()
+        self.bridge.performance_skin_changed.connect(self._sync_skin_selection)
 
     def _card(self, vertical: bool = False):
         card = QFrame()
@@ -46,7 +55,8 @@ class PerformancePage(BaseHubPage):
         sub = QLabel(sub_txt)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        sub.setVisible(bool(sub_txt))
+        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            sub.hide()
         box.addWidget(title)
         box.addWidget(sub)
         self._texts += [(title, title_key), (sub, sub_key)]
@@ -92,7 +102,44 @@ class PerformancePage(BaseHubPage):
         row.addWidget(self.pos_picker)
         self.content_layout.addWidget(card)
 
-        # 2. Tamanho (Automático + controle em %; os presets do menu do cartão continuam valendo)
+        # 2. Estilo (skins do cartão de desempenho)
+        card, col = self._card(vertical=True)
+        col.setContentsMargins(22, 20, 22, 22)
+        col.addLayout(self._info("perf_style_title", "perf_style_sub", 14.5))
+        col.addSpacing(18)
+        self._skin_grid = ResponsiveCardGrid(min_card_width=150, spacing=16, parent=card)
+        self._skin_cards: dict[str, PreviewCard] = {}
+        for spec in init_performance_skin_specs():
+            pc = PreviewCard(
+                spec=spec,
+                theme=self._theme,
+                is_selected=(spec.id == self.controller.active_skin_name),
+                parent=self._skin_grid,
+            )
+            pc.clicked.connect(self.bridge.set_performance_skin)
+            self._skin_cards[spec.id] = pc
+            self._skin_grid.add_card(pc)
+        col.addWidget(self._skin_grid)
+        self.theme_picker = ThemeGalleryCard(
+            perf_theme_loader,
+            "performance",
+            make_perf_theme_spec,
+            self.bridge.apply_performance_theme,
+            self._theme,
+            appliers=self.bridge.theme_appliers(),
+            parent=self,
+            subtitle_key="theme_picker_sub_performance",
+            default_title_key="theme_default_timer",
+        )
+        skin_block, self.theme_section = skin_and_theme_block(
+            card,
+            self.theme_picker,
+            self.content_layout.spacing(),
+            self.controller.active_skin_name == SKIN_NOTHING_DOT,
+        )
+        self.content_layout.addWidget(skin_block)
+
+        # 2b. Tamanho (depois de escolher a skin)
         self.scale_card = ScaleCard("weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self)
         self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
         self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
@@ -255,8 +302,15 @@ class PerformancePage(BaseHubPage):
         self.controller.skin.raise_()
         self.controller.skin.activateWindow()
 
+    def _sync_skin_selection(self, skin_id: str):
+        for key, card in getattr(self, "_skin_cards", {}).items():
+            card.set_selected(key == skin_id)
+        if hasattr(self, "theme_section"):
+            self.theme_section.set_open(skin_id == SKIN_NOTHING_DOT)
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._sync_skin_selection(self.controller.active_skin_name)
         self._sync_size()
         self._sync_desktop(self.controller.skin.is_desktop_mode())
         self._sync_remember(bool(config_manager.get_performance("remember_position", False)))
@@ -270,7 +324,14 @@ class PerformancePage(BaseHubPage):
             label.setText(txt)
             if label in self._subs:
                 label.setVisible(bool(txt))
+        if hasattr(self, "_skin_cards") and "fluent" in self._skin_cards:
+            card = self._skin_cards["fluent"]
+            card._spec.title = t("perf_skin_label")
+            card._invalidate_cache()
+            card.update()
         self.scale_card.retranslate()
+        if hasattr(self, "theme_picker"):
+            self.theme_picker.retranslate_ui()
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.btn_grant_fps.setText(t("perf_fps_grant_btn"))
         self.fps_help.set_text(t("perf_fps_help"))
@@ -281,6 +342,8 @@ class PerformancePage(BaseHubPage):
         for sub in self._subs:
             px = "12px" if sub is self.lbl_fps_status else "12.5px"
             sub.setStyleSheet(f"color: {theme.mute}; font-size: {px};")
-        for w in (self.scale_card, self.pos_picker, self.hk_picker, self.fps_help, self.sw_fps, self.sw_remember, self.sw_desktop, self.sw_startup):
+        for card in getattr(self, "_skin_cards", {}).values():
+            card.set_theme(theme)
+        for w in (self.scale_card, self.theme_picker, self.pos_picker, self.hk_picker, self.fps_help, self.sw_fps, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)

@@ -42,6 +42,19 @@ FAIL_NO_LOCATION = "no_location"
 MAX_CITIES = 5
 AUTO = "auto"   # entrada da lista "Minha localização"
 
+# Modelos de previsão disponíveis na Open-Meteo (padrão "auto" = best_match da API)
+FORECAST_MODEL_AUTO = "auto"
+FORECAST_MODELS: dict[str, Optional[str]] = {
+    "auto": None,
+    "icon": "icon_seamless",
+    "ecmwf": "ecmwf_ifs025",
+    "gfs": "gfs_seamless",
+}
+
+
+def normalize_forecast_model(model: object) -> str:
+    return model if isinstance(model, str) and model in FORECAST_MODELS else FORECAST_MODEL_AUTO
+
 
 # --- Modelo ---
 
@@ -70,6 +83,14 @@ class DayForecast:
 
 
 @dataclass
+class HourForecast:
+    time: str          # ISO (aaaa-mm-ddTHH:MM) no fuso do local
+    code: int          # WMO
+    temp: float
+    is_day: bool = True
+
+
+@dataclass
 class WeatherReport:
     place: str
     current_temp: float
@@ -77,6 +98,8 @@ class WeatherReport:
     is_day: bool
     days: list = field(default_factory=list)   # list[DayForecast]
     fetched_at: float = 0.0
+    hours: list = field(default_factory=list)  # list[HourForecast]
+    current_time: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -88,8 +111,16 @@ class WeatherReport:
                                 float(x["t_mean"])) for x in d["days"]]
             if not days:
                 return None
+            hours = []
+            for x in d.get("hours") or []:
+                try:
+                    hours.append(HourForecast(
+                        str(x["time"]), int(x["code"]), float(x["temp"]), bool(x.get("is_day", True)),
+                    ))
+                except (KeyError, TypeError, ValueError):
+                    continue
             return cls(str(d["place"]), float(d["current_temp"]), int(d["current_code"]), bool(d["is_day"]),
-                       days, float(d.get("fetched_at", 0.0)))
+                       days, float(d.get("fetched_at", 0.0)), hours, str(d.get("current_time", "")))
         except (KeyError, TypeError, ValueError):
             return None
 
@@ -100,32 +131,132 @@ def to_unit(celsius: float, unit: str) -> int:
     return int(round(value))
 
 
+# --- Condição do dia a partir das horas (pura) ---
+
+# O `weather_code` DIÁRIO da Open-Meteo é a pior hora do dia: uma só hora de trovoada (mesmo às 23 h) marca o dia
+# inteiro como tempestade. Para o ícone da aba usamos o tempo que domina as horas do dia.
+DAY_HOURS = range(7, 19)       # 7 h às 18 h, no fuso do local (a resposta vem com timezone=auto)
+STORM_MIN_HOURS = 2            # trovoada aparece se cobre pelo menos 2 horas do dia
+WET_MIN_HOURS = 3              # chuva/neve/garoa aparecem se cobrem pelo menos 3 das 12 horas do dia
+FOG_MIN_HOURS = 4
+
+
+def _is_storm(c: int) -> bool:
+    return c >= 95
+
+
+def _is_snow(c: int) -> bool:
+    return 71 <= c <= 77 or c in (85, 86)
+
+
+def _is_wet(c: int) -> bool:
+    return 51 <= c <= 67 or 80 <= c <= 82
+
+
+def _most_common(codes: list) -> int:
+    """O código mais frequente; no empate, o mais "forte" (maior código WMO dentro do grupo)."""
+    counts = {}
+    for c in codes:
+        counts[c] = counts.get(c, 0) + 1
+    return max(counts, key=lambda c: (counts[c], c))
+
+
+def representative_code(hours: list, fallback: int) -> int:
+    """
+    Código WMO que representa o dia, a partir de (hora, código) das 24 horas dele. Ordem de prioridade: trovoada,
+    neve, chuva/garoa (o tipo mais frequente entre essas horas), neblina e, por fim, o céu (limpo a nublado) que mais
+    aparece. Sem horas suficientes, fica o código diário da API.
+    """
+    day = [c for h, c in hours if h in DAY_HOURS]
+    if len(day) < len(DAY_HOURS) // 2:
+        return fallback
+    storm = [c for c in day if _is_storm(c)]
+    if len(storm) >= STORM_MIN_HOURS:
+        return _most_common(storm)
+    snow = [c for c in day if _is_snow(c)]
+    if len(snow) >= WET_MIN_HOURS:
+        return _most_common(snow)
+    wet = [c for c in day if _is_wet(c) or _is_storm(c)]
+    if len(wet) >= WET_MIN_HOURS:
+        return _most_common([c for c in wet if _is_wet(c)] or wet)
+    fog = [c for c in day if c in (45, 48)]
+    if len(fog) >= FOG_MIN_HOURS:
+        return _most_common(fog)
+    sky = [c for c in day if c <= 3]
+    return _most_common(sky) if sky else fallback
+
+
+def _hours_by_date(hourly) -> dict:
+    """aaaa-mm-dd -> [(hora, código)] a partir do bloco `hourly` da resposta (vazio se não veio)."""
+    out = {}
+    if not isinstance(hourly, dict):
+        return out
+    for stamp, code in zip(hourly.get("time") or [], hourly.get("weather_code") or []):
+        if code is None or not isinstance(stamp, str) or len(stamp) < 13:
+            continue
+        try:
+            out.setdefault(stamp[:10], []).append((int(stamp[11:13]), int(code)))
+        except ValueError:
+            continue
+    return out
+
+
+def _parse_hourly_slots(hourly) -> list:
+    """Extrai list[HourForecast] do bloco `hourly` quando temperatura e código estão presentes."""
+    if not isinstance(hourly, dict):
+        return []
+    times = hourly.get("time") or []
+    codes = hourly.get("weather_code") or []
+    temps = hourly.get("temperature_2m") or []
+    is_days = hourly.get("is_day") or []
+    if not temps:
+        return []
+    out = []
+    for i, (stamp, code, temp) in enumerate(zip(times, codes, temps)):
+        if code is None or temp is None or not isinstance(stamp, str) or len(stamp) < 16:
+            continue
+        day_flag = bool(is_days[i]) if i < len(is_days) and is_days[i] is not None else (6 <= int(stamp[11:13]) < 19)
+        try:
+            out.append(HourForecast(stamp[:16], int(code), float(temp), day_flag))
+        except ValueError:
+            continue
+    return out
+
+
 # --- URLs e leitura das respostas (puras, testadas sem rede) ---
 
-def forecast_url(lat: float, lon: float) -> str:
-    query = urllib.parse.urlencode({
+def forecast_url(lat: float, lon: float, model: str = FORECAST_MODEL_AUTO) -> str:
+    params = {
         "latitude": f"{lat:.4f}",
         "longitude": f"{lon:.4f}",
         "current": "temperature_2m,weather_code,is_day",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+        "hourly": "weather_code,temperature_2m,is_day",
         "timezone": "auto",
         "forecast_days": FORECAST_DAYS,
-    })
-    return f"{FORECAST_URL}?{query}"
+    }
+    api_model = FORECAST_MODELS[normalize_forecast_model(model)]
+    if api_model:
+        params["models"] = api_model
+    return f"{FORECAST_URL}?{urllib.parse.urlencode(params)}"
 
 
-def forecast_url_multi(places: list) -> str:
+def forecast_url_multi(places: list, model: str = FORECAST_MODEL_AUTO) -> str:
     """Uma requisição para várias cidades: a Open-Meteo aceita latitudes e longitudes separadas por vírgula e
     devolve uma lista de previsões, cada uma no fuso da sua cidade (conferido na API em 2026-11)."""
-    query = urllib.parse.urlencode({
+    params = {
         "latitude": ",".join(f"{pl.lat:.4f}" for pl in places),
         "longitude": ",".join(f"{pl.lon:.4f}" for pl in places),
         "current": "temperature_2m,weather_code,is_day",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+        "hourly": "weather_code,temperature_2m,is_day",
         "timezone": "auto",
         "forecast_days": FORECAST_DAYS,
-    })
-    return f"{FORECAST_URL}?{query}"
+    }
+    api_model = FORECAST_MODELS[normalize_forecast_model(model)]
+    if api_model:
+        params["models"] = api_model
+    return f"{FORECAST_URL}?{urllib.parse.urlencode(params)}"
 
 
 def parse_forecast_multi(data, names: list, now: float) -> list:
@@ -164,12 +295,14 @@ def parse_forecast(data: dict, place_name: str, now: float) -> WeatherReport:
     current = data["current"]
     daily = data["daily"]
     means = daily.get("temperature_2m_mean") or []
+    hours = _hours_by_date(data.get("hourly"))
     days = []
     for i, date in enumerate(daily["time"][:FORECAST_DAYS]):
         t_max = float(daily["temperature_2m_max"][i])
         t_min = float(daily["temperature_2m_min"][i])
         mean = means[i] if i < len(means) and means[i] is not None else (t_max + t_min) / 2.0
-        days.append(DayForecast(str(date), int(daily["weather_code"][i]), t_max, t_min, float(mean)))
+        code = representative_code(hours.get(str(date), []), int(daily["weather_code"][i]))
+        days.append(DayForecast(str(date), code, t_max, t_min, float(mean)))
     if not days:
         raise ValueError("previsão sem dias")
     return WeatherReport(
@@ -179,6 +312,8 @@ def parse_forecast(data: dict, place_name: str, now: float) -> WeatherReport:
         is_day=bool(current.get("is_day", 1)),
         days=days,
         fetched_at=now,
+        hours=_parse_hourly_slots(data.get("hourly")),
+        current_time=str(current.get("time", "")),
     )
 
 
@@ -372,6 +507,16 @@ class WeatherService(QObject):
     def is_busy(self) -> bool:
         return self._busy
 
+    def forecast_model(self) -> str:
+        return normalize_forecast_model(config_manager.get_weather("forecast_model", FORECAST_MODEL_AUTO))
+
+    def set_forecast_model(self, model: str) -> None:
+        normalized = normalize_forecast_model(model)
+        if normalized == self.forecast_model():
+            return
+        config_manager.set_weather("forecast_model", normalized)
+        self.refresh(force=True)
+
     # --- Consulta (uma requisição para todas as cidades) ---
 
     def refresh(self, force: bool = False):
@@ -391,6 +536,8 @@ class WeatherService(QObject):
         need_ip = any(c.get("kind") == AUTO for c in cities) and (
             auto is None or not (0 <= time.time() - auto_at < AUTO_PLACE_TTL_S))
 
+        model = self.forecast_model()
+
         def work():
             new_auto = None
             if need_ip:
@@ -409,7 +556,7 @@ class WeatherService(QObject):
             if not targets:   # só o automático, e o IP não respondeu: quase sempre sem rede
                 return ("fail", FAIL_OFFLINE, new_auto)
             try:
-                data = _http_get_json(forecast_url_multi([pl for _k, pl in targets]))
+                data = _http_get_json(forecast_url_multi([pl for _k, pl in targets], model=model))
                 reports = parse_forecast_multi(data, [pl.name for _k, pl in targets], time.time())
             except Exception as e:
                 logger.info("Previsão indisponível: %s", e)

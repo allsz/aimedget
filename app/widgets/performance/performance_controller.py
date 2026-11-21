@@ -22,11 +22,13 @@ from app.ui_components.floating_card import (
     place_card_default,
     restore_card_position,
 )
+from app.widgets.performance.card_state import PERFORMANCE_SKINS, SKIN_FLUENT
 from app.widgets.performance.performance_card import PerformanceCard
 
 
 class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
+    skin_changed = Signal(str)
     scale_changed = Signal(float)
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
@@ -47,11 +49,16 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
         fps_on = bool(config_manager.get_performance("fps_enabled", False))
         self.fps_service.set_enabled(fps_on)
 
+        saved_skin = str(config_manager.get_performance("skin", SKIN_FLUENT) or SKIN_FLUENT)
+        self.active_skin_name = saved_skin if saved_skin in PERFORMANCE_SKINS else SKIN_FLUENT
+
         self.skin = PerformanceCard(
             scale=float(config_manager.get_performance("scale", 1.0) or 1.0),
             desktop_mode=bool(config_manager.get_performance("desktop_mode", False)),
             selected_metric=str(config_manager.get_performance("selected_metric", "cpu") or "cpu"),
             fps_enabled=fps_on,
+            metric_order=config_manager.get_performance("metric_order", None),
+            skin_id=self.active_skin_name,
         )
         self.skin.scale_auto = bool(config_manager.get_performance("scale_auto", False))
         if self.skin.scale_auto:
@@ -61,6 +68,8 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.close_requested.connect(self.on_skin_closed)
         self.skin.scale_changed.connect(self.set_scale)
         self.skin.metric_selected.connect(self.select_metric)
+        self.skin.metric_order_changed.connect(self.set_metric_order)
+        self.skin.skin_switch_requested.connect(self.set_skin)
 
         i18n.language_changed.connect(lambda _lang: self.skin.update())
 
@@ -73,7 +82,9 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.update()
 
     def _on_fps_reading(self, reading: FpsReading):
-        self.skin.state.push_fps(reading)
+        self.skin.state.animated = animations_enabled()
+        self.skin.state.push_fps(reading, now=self.skin.now())
+        self.skin.kick()
         self.skin.update()
 
     # --- Ações ---
@@ -84,6 +95,21 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
             config_manager.set_performance("selected_metric", metric)
             self.skin.kick()
             self.metric_changed.emit(metric)
+
+    def set_metric_order(self, order: list[str]):
+        normalized = list(self.skin.state.set_metric_order(order))
+        config_manager.set_performance("metric_order", normalized)
+        self.skin.update()
+
+    def set_skin(self, skin_id: str, save: bool = True):
+        sid = skin_id if skin_id in PERFORMANCE_SKINS else SKIN_FLUENT
+        if sid != self.active_skin_name:
+            self.skin.begin_skin_crossfade()
+        self.active_skin_name = sid
+        self.skin.set_skin(sid)
+        if save:
+            config_manager.set_performance("skin", sid)
+        self.skin_changed.emit(sid)
 
     def set_scale(self, scale: float | None):
         """Tamanho do cartão (menu, Hub ou arraste do canto), com movimento; None = automático (segue a tela)."""

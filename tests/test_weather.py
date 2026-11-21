@@ -96,6 +96,61 @@ class TestConditions(unittest.TestCase):
         self.assertLess(heavy.rain_ms, light.rain_ms)
 
 
+def _hours(date: str, codes: list) -> dict:
+    """Bloco `hourly` de um dia: 24 códigos, da 0 h às 23 h."""
+    return {"time": [f"{date}T{h:02d}:00" for h in range(24)], "weather_code": codes}
+
+
+# Gurupi, 20/11/2026 (Open-Meteo): o código diário veio 95 (tempestade) por UMA hora de trovoada às 23 h; o dia foi
+# nublado com garoa.
+GURUPI_TODAY = [3, 3, 3, 2, 2, 3, 3, 3, 51, 51, 3, 55, 51, 3, 0, 1, 3, 3, 3, 3, 51, 51, 3, 95]
+
+
+class TestDayCondition(unittest.TestCase):
+    def _code(self, codes, fallback=95):
+        return ws.representative_code([(h, c) for h, c in enumerate(codes)], fallback)
+
+    def test_one_late_storm_hour_does_not_make_the_whole_day_a_storm(self):
+        self.assertEqual(self._code(GURUPI_TODAY), 51)              # garoa, não tempestade
+
+    def test_storm_shows_when_it_covers_two_daytime_hours(self):
+        codes = [3] * 24
+        codes[13] = codes[14] = 95
+        self.assertEqual(self._code(codes), 95)
+        codes[14] = 3
+        self.assertEqual(self._code(codes, fallback=95), 3)         # uma hora só: o dia é nublado
+
+    def test_rain_needs_three_daytime_hours_and_keeps_its_intensity(self):
+        codes = [1] * 24
+        for h in (9, 10):
+            codes[h] = 63
+        self.assertEqual(self._code(codes), 1)                      # 2 horas de chuva: o céu manda
+        codes[11] = 63
+        self.assertEqual(self._code(codes), 63)
+        codes[22] = codes[23] = 65                                  # chuva forte de noite não conta
+        self.assertEqual(self._code(codes), 63)
+
+    def test_snow_fog_and_sky(self):
+        self.assertEqual(self._code([73] * 24), 73)
+        self.assertEqual(self._code([45] * 12 + [0] * 12), 45)
+        self.assertEqual(self._code([0] * 7 + [2] * 3 + [0] * 14), 0)     # 9 horas limpas x 3 parciais: limpo
+        self.assertEqual(self._code([0] * 7 + [2] * 6 + [0] * 11), 2)     # 6 x 6: o empate fica com o mais nublado
+
+    def test_missing_hours_fall_back_to_the_daily_code(self):
+        self.assertEqual(ws.representative_code([], 61), 61)
+        self.assertEqual(ws.representative_code([(20, 0), (21, 0)], 61), 61)
+
+    def test_parse_uses_the_hours_when_they_come(self):
+        data = json.loads(json.dumps(FORECAST))
+        data["daily"]["weather_code"][0] = 95
+        data["hourly"] = _hours("2026-11-16", GURUPI_TODAY)
+        report = ws.parse_forecast(data, "Gurupi", 1.0)
+        self.assertEqual(report.days[0].code, 51)
+        self.assertEqual(report.days[1].code, 3)                    # sem horas desse dia: o código diário
+        self.assertIn("hourly=weather_code", ws.forecast_url(-11.7, -49.0))
+        self.assertIn("hourly=weather_code", ws.forecast_url_multi([ws.Place("A", 1.0, 2.0)]))
+
+
 class TestParsing(unittest.TestCase):
     def test_parse_forecast(self):
         report = ws.parse_forecast(FORECAST, "Lisboa", 100.0)
@@ -364,6 +419,25 @@ class TestServiceAndController(unittest.TestCase):
         reports = got[0]
         self.assertEqual(sorted(r.place for r in reports.values()), ["Lisboa", "Porto"])
         self.assertEqual(len(svc.cached_reports()), 2)
+
+    def test_forecast_model_defaults_to_auto_and_updates_url(self):
+        self.assertNotIn("models=", ws.forecast_url(-22.95, -46.54, "auto"))
+        self.assertIn("models=icon_seamless", ws.forecast_url(-22.95, -46.54, "icon"))
+        self.assertIn("models=ecmwf_ifs025", ws.forecast_url(-22.95, -46.54, "ecmwf"))
+        self.assertIn("models=gfs_seamless", ws.forecast_url(-22.95, -46.54, "gfs"))
+
+        urls = []
+        ws._http_get_json = lambda url: (urls.append(url), FORECAST)[1]
+        self._set_cities(ws.Place("Bragança Paulista", -22.95, -46.54))
+        svc = ws.WeatherService()
+        self.assertEqual(svc.forecast_model(), "auto")
+
+        got = []
+        svc.reports_ready.connect(got.append)
+        svc.set_forecast_model("icon")
+        self.assertEqual(svc.forecast_model(), "icon")
+        self.assertTrue(_wait_for(lambda: got))
+        self.assertTrue(urls and "models=icon_seamless" in urls[-1])
         self.assertFalse(svc.is_stale())
 
     def test_city_list_rules(self):
@@ -446,7 +520,7 @@ class TestServiceAndController(unittest.TestCase):
         ctrl.set_units("f")
         self.assertEqual(st.days[4].hi, 36)
         report = next(iter(reports.values()))
-        self.assertEqual(build_days(report, "c")[1].temp, 19)       # amanhã: temperatura média do dia
+        self.assertEqual(build_days(report, "c")[1].temp, 21)       # amanhã: a máxima do dia (não a média)
         ctrl.select_day(2)
         self.assertEqual(st.selected, 2)
         ctrl.skin.close()

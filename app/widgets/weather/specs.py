@@ -18,13 +18,24 @@ from app.widgets.weather.sky_painter import CARD_H, CARD_W
 PREVIEW_NOW = 3.2   # instante fixo da miniatura (a deriva e as gotas param num ponto bonito)
 
 
-def mock_state(font_family: str = "") -> CardState:
-    short = [t(f"weather_wd_short_{i}") for i in range(7)]
-    full = [t(f"weather_wd_{i}") for i in range(7)]
-    sample = ((cond.SUNNY, 24, 26, 17), (cond.CLOUDY, 19, 21, 14), (cond.LIGHT_RAIN, 16, 18, 12),
-              (cond.THUNDERSTORM, 15, 17, 11), (cond.SUNNY, 22, 25, 15))
-    days = [DayView(short[i], full[i], c, tp, hi, lo) for i, (c, tp, hi, lo) in enumerate(sample)]
-    state = CardState(font_family=font_family, animated=False)
+def mock_state(font_family: str = "", skin_id: str = font_skins.DEFAULT_SKIN) -> CardState:
+    if skin_id == font_skins.MIDNIGHT_SKIN:
+        now_lbl = t("weather_now")
+        sample = (
+            (now_lbl, now_lbl, cond.SUNNY, 26, 28, 18),
+            ("16h", "16:00", cond.SUNNY, 28, 28, 18),
+            ("19h", "19:00", cond.CLOUDY, 22, 28, 18),
+            ("22h", "22:00", cond.CLEAR_NIGHT, 19, 28, 18),
+            ("01h", "01:00", cond.CLEAR_NIGHT, 18, 28, 18),
+        )
+        days = [DayView(sh, fl, c, tp, hi, lo) for sh, fl, c, tp, hi, lo in sample]
+    else:
+        short = [t(f"weather_wd_short_{i}") for i in range(7)]
+        full = [t(f"weather_wd_{i}") for i in range(7)]
+        sample = ((cond.SUNNY, 24, 26, 17), (cond.CLOUDY, 19, 21, 14), (cond.LIGHT_RAIN, 16, 18, 12),
+                  (cond.THUNDERSTORM, 15, 17, 11), (cond.SUNNY, 22, 25, 15))
+        days = [DayView(short[i], full[i], c, tp, hi, lo) for i, (c, tp, hi, lo) in enumerate(sample)]
+    state = CardState(font_family=font_family, skin_id=skin_id, animated=False)
     names = {key: t(f"weather_cond_{key}") for key in cond.ALL_CONDITIONS}
     state.set_days("San Francisco", days, names, PAST, animate=False)
     return state
@@ -62,6 +73,7 @@ def init_weather_skin_specs() -> list:
     specs = []
     for skin in skins:
         family = skin.family
+        sid = skin.id
         specs.append(SkinSpec(
             id=skin.id,
             widget_id="weather",
@@ -69,7 +81,7 @@ def init_weather_skin_specs() -> list:
             subtitle="",
             natural_size=QSizeF(CARD_W, CARD_H),
             paint=paint_weather,
-            mock_state=lambda f=family: mock_state(f),
+            mock_state=lambda f=family, s=sid: mock_state(f, s),
         ))
     if len(skins) == 1:
         from app.widgets.timer.skins.specs import paint_tba_timer

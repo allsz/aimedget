@@ -14,6 +14,11 @@ Como funciona
 - O grupo é guardado na configuração pelas CHAVES dos widgets ("music", "timer", "weather", "performance"), não
   pelas janelas: trocar a skin da música não desfaz a pilha, e ao reabrir o app (ou quando um widget reaparece) ele
   volta para o lugar dele na pilha.
+- Esconder um membro (atalho, menu, Hub, ou a música sumindo sozinha) o deixa AUSENTE: continua no grupo, mas sem
+  ocupar espaço, e os outros fecham as fileiras (mola CLOSE_SPRING). Ao voltar, o lugar dele reabre no mesmo ponto e
+  ele surge quando o espaço já abriu. O lado do grupo mais perto da borda da tela fica parado; numa grade, a fileira
+  que encolheu segue o alinhamento gravado (centralizada = os dois lados se encontram no meio). O Win+D (que esconde
+  o grupo todo) e o fechar do app não contam. Protótipo e valores: `mockups/anchor-close-ranks.html`.
 - `animations_enabled()` falso: o ímã encaixa na hora, a rede aparece/some sem transição e não há onda.
 
 Ganchos nas janelas (uma linha cada): `drag_to` no lugar do `move` do arraste, `drag_end` ao soltar, `register` ao
@@ -31,21 +36,22 @@ import shiboken6
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.core import anchor_geometry as geo
 from app.core.anchor_geometry import CELL, REACH, Rect, clamp, dist_to_rect, dist_to_seg, smooth
 from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.widget_animator import animations_enabled
+from app.core.frame_clock import FrameTimer
 
-KNOWN_KEYS = ("music", "timer", "weather", "performance")
+KNOWN_KEYS = ("music", "timer", "weather", "performance", "storage", "battery")
 NET_STYLES = ("dots", "lines", "both")
 BOOM_STYLES = ("ring", "sweep")
 DEFAULT_NET_STYLE = "dots"
 DEFAULT_BOOM = "ring"
 
-FRAME_MS = 16
+
 BOOM_DUR = 1.5 / geo.WAVE_SPEED   # s
 GLOW_PERIOD = 2.8                 # s: um pulso lento do brilho da borda enquanto o widget está ancorado
 GLOW_RATE = 7.0                   # 1/s: o brilho acende/apaga suavemente (sem piscar)
@@ -56,6 +62,22 @@ GAIN_RATE = 12.0                  # 1/s: rede acendendo/apagando
 FOCUS_RATE = 14.0                 # 1/s: a parte acesa seguindo a borda
 ARRANGE_SPRING = (420.0, 34.0)    # SLIDE: os widgets alinhados deslizam até o lugar (massa 1, 4 subpassos)
 ARRANGE_SUBSTEPS = 4
+CLOSE_SPRING = (280.0, 34.0)      # fechar/reabrir as fileiras: sem passar do ponto (com 280/22 os vizinhos batiam no
+                                  # que ficou parado; ver mockups/anchor-close-ranks.html)
+
+
+def _time_to_reach(spring: tuple, fraction: float = 0.9, dt: float = 1.0 / 240.0) -> float:
+    """Quanto a mola leva (s) para percorrer `fraction` do caminho: o widget que volta surge só então."""
+    k, c = spring
+    x, v, t = 1.0, 0.0, 0.0
+    while x > 1.0 - fraction and t < 2.0:
+        v += (-k * x - c * v) * dt
+        x += v * dt
+        t += dt
+    return t
+
+
+REOPEN_DELAY_MS = int(round(_time_to_reach(CLOSE_SPRING) * 1000))   # abre o espaço (~90%), depois surge
 NET_MARGIN = max(CELL * 4, round(REACH * 0.75 / CELL) * CELL)   # até onde a rede de aproximação vai da borda
 
 
@@ -213,7 +235,9 @@ class AnchorManager(QObject):
         self._layer_sync = False
         self._overlay = None
         self._arrange: Optional[dict] = None   # alinhamento em curso: {group, root, ref, save, st: {key: [x, y, vx, vy]}}
-        self._clock = QTimer(self)
+        self._absent: set = set()              # escondidos pelo usuário: no grupo, mas sem ocupar espaço
+        self._slide: Optional[dict] = None     # fileiras fechando/reabrindo: {group, st: {key: [x, y, vx, vy]}, goal}
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._tick)
@@ -291,15 +315,187 @@ class AnchorManager(QObject):
         key = getattr(w, "ANCHOR_KEY", None)
         if key not in KNOWN_KEYS or not w.isWindow() or w.testAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen):
             return
+        first = key not in self._windows
+        returning = key in self._absent
+        self._absent.discard(key)
         self._windows[key] = w
         r = card_rect(w)
         self._sizes[key] = (r.w, r.h)
         g = self.group_of(key)
         if len(g.keys()) > 1 and not (self._drag and key in self._drag.start):
-            root = next((k for k in g.keys() if k != key and self.window(k) is not None
-                         and self.window(k).isVisible()), None)
-            if root is not None:
-                self._reflow(g, root)
+            others = [k for k in g.keys() if k != key and self._present(k) and self._visible(k)]
+            if not others:
+                return
+            if returning or first:
+                # Volta (ou chega depois): o lugar dele reabre com o lado da borda parado. Com os outros ainda
+                # surgindo (abertura do app) a troca é na hora; com eles parados na tela, os vizinhos deslizam.
+                calm = not any(self._appearing(self.window(k)) for k in others)
+                self._place(g, entering=key, animate=calm and animations_enabled())
+            else:
+                self._reflow(g, others[0])
+
+    def member_leaving(self, w):
+        """
+        O widget começou a sumir por pedido (atalho, menu, Hub, música sem nada tocando): fica ausente e os outros
+        fecham as fileiras. O Win+D (o grupo todo some junto) e o fechar do app não contam.
+        """
+        from PySide6.QtCore import QCoreApplication
+
+        key = self._key(w)
+        if key is None or QCoreApplication.closingDown():
+            return
+        suspended = getattr(w, "is_suspended_by_show_desktop", None)
+        if suspended is not None and suspended():
+            return
+        if key in self._absent:
+            return
+        g = self.group_of(key)
+        if len(g.keys()) < 2:
+            self._absent.add(key)
+            return
+        before = self._visible_box(g)          # contorno com ele ainda: a borda dele é a que fica parada
+        self._absent.add(key)
+        if self._drag is not None and self._drag.group is g:
+            return                             # no meio de um arraste o grupo vai com o mouse; ele já não conta
+        self._place(g, entering=None, animate=animations_enabled(), before=before)
+
+    # --- Presença (ausentes não ocupam espaço) ---
+
+    def _present(self, k: str) -> bool:
+        return k in self._windows and k not in self._absent
+
+    def _absent_in(self, g: Group) -> set:
+        """Membros sem lugar no contorno agora: escondidos pelo usuário ou que ainda não apareceram nesta sessão."""
+        return {k for k in g.keys() if not self._present(k)}
+
+    @staticmethod
+    def _appearing(w) -> bool:
+        animator = getattr(w, "animator", None) if w is not None else None
+        return bool(animator is not None and animator.is_animating() and not animator.is_hiding())
+
+    def _sizes_of(self, g: Group) -> Optional[Dict[str, tuple]]:
+        sizes = {}
+        for k in g.keys():
+            w = self.window(k)
+            if w is not None and self._present(k):
+                r = card_rect(w)
+                sizes[k] = self._sizes[k] = (r.w, r.h)
+            elif k in self._sizes:
+                sizes[k] = self._sizes[k]
+            elif not self._present(k):
+                sizes[k] = (0.0, 0.0)          # ausente que nunca apareceu: não ocupa espaço mesmo
+            else:
+                return None
+        return sizes
+
+    def _visible_box(self, g: Group, skip: Optional[str] = None) -> Optional[Rect]:
+        rs = [card_rect(self.window(k)) for k in g.keys()
+              if k != skip and self._present(k) and self._visible(k)]
+        return geo.union(rs) if rs else None
+
+    @staticmethod
+    def _work_area(box: Rect) -> Optional[Rect]:
+        from PySide6.QtCore import QPoint as _QPoint
+        from PySide6.QtGui import QGuiApplication
+
+        screen = QGuiApplication.screenAt(_QPoint(int((box.l + box.r) / 2), int((box.t + box.b) / 2)))
+        screen = screen or QGuiApplication.primaryScreen()
+        if screen is None:
+            return None
+        a = screen.availableGeometry()
+        return Rect.of(a.x(), a.y(), a.width(), a.height())
+
+    def _place(self, g: Group, entering: Optional[str], animate: bool, before: Optional[Rect] = None):
+        """
+        Refaz o grupo com os ausentes sem espaço. O contorno de antes (`before`, ou o dos visíveis agora) define o
+        lado que fica parado: o mais perto da borda da tela, em cada eixo. Se o grupo crescer para fora da área útil
+        da tela, ele todo volta para dentro no mesmo movimento. `entering` (quem está voltando) vai direto para o lugar
+        dele e surge quando o espaço já abriu; os outros deslizam com CLOSE_SPRING (ou na hora, sem animações).
+        """
+        sizes = self._sizes_of(g)
+        if sizes is None:
+            return
+        old = before or self._visible_box(g, skip=entering)
+        rel, box = geo.layout_relative(g.tree, sizes, self._absent_in(g))
+        if old is None or box is None:
+            return
+        area = self._work_area(old)
+        if area is not None:
+            keep_right = (area.r - old.r) < (old.l - area.l)
+            keep_bottom = (area.b - old.b) < (old.t - area.t)
+        else:
+            keep_right = keep_bottom = False
+        dx = (old.r - box.r) if keep_right else (old.l - box.l)
+        dy = (old.b - box.b) if keep_bottom else (old.t - box.t)
+        if area is not None:   # cresceu para fora da tela: volta inteiro para dentro
+            nb = box.moved(dx, dy)
+            dx += max(0.0, area.l - nb.l) - max(0.0, nb.r - area.r) if nb.w <= area.w else area.l - nb.l
+            dy += max(0.0, area.t - nb.t) - max(0.0, nb.b - area.b) if nb.h <= area.h else area.t - nb.t
+        goal = {k: (x + dx, y + dy) for k, (x, y) in rel.items() if self._present(k) and self.window(k) is not None}
+        if entering is not None and entering in goal:
+            w = self.window(entering)
+            move_cards([(w, *goal.pop(entering))])
+            if animate:
+                animator = getattr(w, "animator", None)
+                if animator is not None and hasattr(animator, "delay_appear"):
+                    animator.delay_appear(REOPEN_DELAY_MS)   # abre o espaço, depois surge
+        if not animate:
+            self._finish_slide()
+            move_cards([(self.window(k), x, y) for k, (x, y) in goal.items()])
+            for k in goal:
+                _persist(self.window(k))
+            return
+        sl = self._slide if self._slide is not None and self._slide["group"] is g else None
+        if self._slide is not None and sl is None:
+            self._finish_slide()
+        st = sl["st"] if sl else {}
+        for k in goal:
+            if k not in st:
+                r = card_rect(self.window(k))
+                st[k] = [r.l, r.t, 0.0, 0.0]
+        for k in list(st):
+            if k not in goal:
+                del st[k]
+        self._slide = {"group": g, "st": st, "goal": goal}
+        self._wake()
+
+    def _step_slide(self, dt: float) -> bool:
+        """Um quadro das fileiras fechando/reabrindo. True enquanto há movimento."""
+        sl = self._slide
+        kk, cc = CLOSE_SPRING
+        sub = dt / ARRANGE_SUBSTEPS
+        moves, settled = [], True
+        for k, s in sl["st"].items():
+            w = self.window(k)
+            if w is None or k not in sl["goal"]:
+                continue
+            gx, gy = sl["goal"][k]
+            for _ in range(ARRANGE_SUBSTEPS):
+                s[2] += (-kk * (s[0] - gx) - cc * s[2]) * sub
+                s[3] += (-kk * (s[1] - gy) - cc * s[3]) * sub
+                s[0] += s[2] * sub
+                s[1] += s[3] * sub
+            if abs(s[0] - gx) < 0.5 and abs(s[1] - gy) < 0.5 and abs(s[2]) < 8.0 and abs(s[3]) < 8.0:
+                s[0], s[1], s[2], s[3] = gx, gy, 0.0, 0.0
+            else:
+                settled = False
+            moves.append((w, s[0], s[1]))
+        move_cards(moves)
+        if settled:
+            self._finish_slide()
+            return False
+        return True
+
+    def _finish_slide(self):
+        """Leva o fechar/reabrir em curso ao fim na hora (arraste, alinhamento): tudo no lugar e lembrado."""
+        sl, self._slide = self._slide, None
+        if sl is None:
+            return
+        move_cards([(w, x, y) for k, (x, y) in sl["goal"].items() if (w := self.window(k)) is not None])
+        for k in sl["goal"]:
+            w = self.window(k)
+            if w is not None:
+                _persist(w)
 
     def member_resized(self, w):
         """A escala de um membro mudou: o grupo se refaz em volta dele (ele fica parado, os outros acompanham)."""
@@ -311,45 +507,58 @@ class AnchorManager(QObject):
         g = self.group_of(key)
         if self._arranging(g):
             return          # o alinhamento em curso refaz o grupo a cada quadro com os tamanhos novos
+        if self._slide is not None and self._slide["group"] is g:
+            self._finish_slide()
         if len(g.keys()) > 1 and not (self._drag and self._drag.group is g):
             self._reflow(g, key)
 
     def _rects_of(self, g: Group) -> Optional[Dict[str, Rect]]:
-        """Retângulos de todos os membros: os que têm janela pela tela, os ausentes pela árvore e o último tamanho."""
+        """Retângulos de todos os membros como estão NA TELA: os presentes pela janela, os ausentes como um ponto (sem
+        tamanho) no lugar em que vão reaparecer, então o contorno do grupo é só o que se vê."""
         rects, root = {}, None
         for k in g.keys():
             w = self.window(k)
-            if w is not None:
+            if w is not None and self._present(k):
                 rects[k] = card_rect(w)
                 root = root or k
         if root is None:
             return None
         missing = [k for k in g.keys() if k not in rects]
         if missing:
-            sizes = {k: ((rects[k].w, rects[k].h) if k in rects else self._sizes.get(k)) for k in g.keys()}
-            if any(v is None for v in sizes.values()):
+            sizes = self._sizes_of(g)
+            if sizes is None:
                 return None
-            pos = geo.layout(g.tree, sizes, root, (rects[root].l, rects[root].t))
+            pos = geo.layout(g.tree, sizes, root, (rects[root].l, rects[root].t), self._absent_in(g))
             for k in missing:
-                rects[k] = Rect.of(pos[k][0], pos[k][1], *sizes[k])
+                rects[k] = Rect.of(pos[k][0], pos[k][1], 0.0, 0.0)
         return rects
 
-    def _reflow(self, g: Group, root: str):
+    def _virtual_rects(self, g: Group) -> Optional[Dict[str, Rect]]:
+        """Todos com o tamanho cheio, como se ninguém estivesse ausente: para reler relações (tirar um membro) sem
+        estragar o lugar guardado de quem está escondido."""
         sizes = {}
         for k in g.keys():
             w = self.window(k)
-            if w is not None:
+            if w is not None and self._present(k):
                 r = card_rect(w)
-                sizes[k] = self._sizes[k] = (r.w, r.h)
+                sizes[k] = (r.w, r.h)
             elif k in self._sizes:
                 sizes[k] = self._sizes[k]
             else:
-                return
+                return None
+        root = g.keys()[0]
+        pos = geo.layout(g.tree, sizes, root, (0.0, 0.0))
+        return {k: Rect.of(pos[k][0], pos[k][1], *sizes[k]) for k in g.keys()}
+
+    def _reflow(self, g: Group, root: str):
+        sizes = self._sizes_of(g)
+        if sizes is None or self.window(root) is None:
+            return
         rr = card_rect(self.window(root))
         moves = []
-        for k, (x, y) in geo.layout(g.tree, sizes, root, (rr.l, rr.t)).items():
+        for k, (x, y) in geo.layout(g.tree, sizes, root, (rr.l, rr.t), self._absent_in(g)).items():
             w = self.window(k)
-            if k != root and w is not None:
+            if k != root and w is not None and self._present(k):
                 cur = card_rect(w)
                 if abs(cur.l - x) > 0.5 or abs(cur.t - y) > 0.5:
                     moves.append((w, x, y))
@@ -389,6 +598,10 @@ class AnchorManager(QObject):
         if target_w is None and target_h is None:
             return
         animate = animate and animations_enabled() and w.isVisible()
+        if hasattr(w, "match_card_size"):
+            # Cartão de tamanho livre (Bateria): muda só a largura OU a altura, sem escala
+            w.match_card_size(target_w, target_h, animate=animate)
+            return
         if hasattr(w, "set_square_side") and hasattr(w, "MIN_WIDTH") and hasattr(w, "MAX_WIDTH"):
             target = target_w if target_w is not None else target_h
             side = max(int(w.MIN_WIDTH), min(int(w.MAX_WIDTH), int(round(target))))
@@ -463,7 +676,7 @@ class AnchorManager(QObject):
         """
         g = self.group_of(ref_key)
         if len(g.keys()) > 1:
-            keys = [k for k in g.keys() if self._visible(k)]
+            keys = [k for k in g.keys() if self._visible(k) or not self._present(k)]
         else:
             near = self.nearest_key(ref_key)
             keys = [ref_key] + ([k for k in self.group_of(near).keys() if self._visible(k)] if near else [])
@@ -495,6 +708,7 @@ class AnchorManager(QObject):
             return
 
         self._finish_arrange()      # um alinhamento anterior ainda deslizando termina no lugar dele
+        self._finish_slide()
         ref_rect = card_rect(ref_widget)
         animate = save and animations_enabled() and ref_widget.isVisible()
 
@@ -511,13 +725,13 @@ class AnchorManager(QObject):
             old = self._groups.get(k)
             if old is not None and old is not new_group and len(old.keys()) > 1:
                 if any(m not in key_set for m in old.keys()):
-                    rects = self._rects_of(old)
+                    rects = self._virtual_rects(old)
                     rem = geo.prune(old.tree, k, rects) if rects is not None else None
                     if rem is not None:
                         old.tree = rem
             self._groups[k] = new_group
             w = self.window(k)
-            if w is not None:
+            if w is not None and self._present(k):
                 r = card_rect(w)
                 self._sizes[k] = (r.w, r.h)
         self._unify_layer(new_group, ref_widget)
@@ -528,14 +742,14 @@ class AnchorManager(QObject):
             st = {}
             for k in keys:
                 w = self.window(k)
-                if w is not None and k != ref_key:
+                if w is not None and k != ref_key and self._present(k):
                     r = card_rect(w)
                     st[k] = [r.l, r.t, 0.0, 0.0]
             self._arrange = {"group": new_group, "root": ref_key, "ref": ref_widget, "save": save, "st": st}
         if match_size:
             for k in keys[1:]:
                 w = self.window(k)
-                if w is None:
+                if w is None or not self._present(k):
                     continue
                 if axis == "y":
                     self.match_widget_size(w, target_w=ref_rect.w, animate=animate)
@@ -572,19 +786,12 @@ class AnchorManager(QObject):
         if rw is None or not rw.isVisible() or any(self._groups.get(k) is not g for k in a["st"]):
             self._finish_arrange()
             return False
-        sizes = {}
-        for k in g.keys():
-            w = self.window(k)
-            if w is not None:
-                r = card_rect(w)
-                sizes[k] = self._sizes[k] = (r.w, r.h)
-            elif k in self._sizes:
-                sizes[k] = self._sizes[k]
-            else:
-                self._finish_arrange()
-                return False
+        sizes = self._sizes_of(g)
+        if sizes is None:
+            self._finish_arrange()
+            return False
         rr = card_rect(rw)
-        goal = geo.layout(g.tree, sizes, root, (rr.l, rr.t))
+        goal = geo.layout(g.tree, sizes, root, (rr.l, rr.t), self._absent_in(g))
         kk, cc = ARRANGE_SPRING
         sub = dt / ARRANGE_SUBSTEPS
         moves, settled = [], True
@@ -651,7 +858,8 @@ class AnchorManager(QObject):
         g = self.group_of(key)
         if len(g.keys()) < 2:
             return
-        rects = self._rects_of(g)
+        self._finish_slide()
+        rects = self._virtual_rects(g) if self._absent_in(g) else self._rects_of(g)
         if rects is None:
             return
         rest = geo.prune(g.tree, key, rects)
@@ -691,15 +899,37 @@ class AnchorManager(QObject):
 
     def _begin(self, key: str) -> _Drag:
         self._finish_arrange()      # pegar um widget no meio do deslize do alinhamento: ele assenta e o arraste segue
+        self._finish_slide()
         g = self.group_of(key)
         start = {}
         for k in g.keys():
             w = self.window(k)
-            if w is not None:
+            if w is not None and self._present(k):
                 r = card_rect(w)
                 start[k] = (r.l, r.t)
         self._drag = _Drag(key=key, group=g, start=start)
         return self._drag
+
+    @staticmethod
+    def _group_gap(g: Group) -> Optional[float]:
+        """Folga atual (px) de um grupo já formado, ou None se for um widget solto."""
+        if isinstance(g.tree, geo.Join):
+            return float(g.tree.gap)
+        return None
+
+    @classmethod
+    def _inherited_gap(cls, dg: Group, og: Group) -> float:
+        """Folga herdada ao encaixar `dg` em `og`: prevalece a do grupo alvo `og` (como a camada)."""
+        g_gap = cls._group_gap(og)
+        if g_gap is not None:
+            return g_gap
+        d_gap = cls._group_gap(dg)
+        if d_gap is not None:
+            return d_gap
+        prefs = config_manager.get_anchor("align_prefs", None)
+        if isinstance(prefs, dict) and isinstance(prefs.get("gap"), (int, float)):
+            return float(prefs["gap"])
+        return float(geo.GAP)
 
     def _evaluate(self):
         d = self._drag
@@ -727,7 +957,7 @@ class AnchorManager(QObject):
             if not trs:
                 continue
             T = geo.union(trs)
-            c = geo.candidate(D, T)
+            c = geo.candidate(D, T, gap=self._inherited_gap(dg, g))
             if c.b <= 0.0 and not c.lock:
                 continue
             if g.anchored:
@@ -781,13 +1011,31 @@ class AnchorManager(QObject):
             rects.update(gr)
         U = geo.union(rects[k] for k in owner.keys())
         first, second = (dg, og) if c.d_first else (og, dg)
-        ng = Group(geo.join_from_rects(first.tree, second.tree, c.ax, rects))
+        inherited_gap = self._inherited_gap(dg, og)
+        joined_tree = geo.join_from_rects(first.tree, second.tree, c.ax, rects)
+
+        def _apply_gap(node: geo.Tree) -> None:
+            if isinstance(node, geo.Join):
+                node.gap = inherited_gap
+                _apply_gap(node.A)
+                _apply_gap(node.B)
+
+        _apply_gap(joined_tree)
+        ng = Group(joined_tree)
         # A âncora cumpriu o papel: o grupo novo nasce sem âncora e o brilho que estava aceso apaga suavemente
         # (começa de onde estava; sem isso ele ficava parado na tela depois da junção).
         ng.glow = max(dg.glow, og.glow)
         for k in ng.keys():
             self._groups[k] = ng
         dg.gain = og.gain = 0.0
+        # Garante a folga herdada exata nas posições da tela (inclusive sub-junções do grupo arrastado)
+        sizes = self._sizes_of(ng)
+        if sizes is None:
+            return
+        anchor_k = next((k for k in og.keys() if self._present(k)), next(iter(og.keys())))
+        placed = geo.layout(ng.tree, sizes, anchor_k, (rects[anchor_k].l, rects[anchor_k].t), self._absent_in(ng))
+        move_cards([(w, placed[k][0], placed[k][1]) for k in ng.keys()
+                    if (w := self.window(k)) is not None and self._present(k)])
         pinned = self._adopt_layer(dg, og, ng)
         self._save()
         if animations_enabled() and c.origin is not None:
@@ -897,6 +1145,8 @@ class AnchorManager(QObject):
                 changed = True
             moving = d.cur != d.target
         if self._arrange is not None and self._step_arrange(dt if anim else 1.0):
+            moving = True
+        if self._slide is not None and self._step_slide(dt if anim else 1.0):
             moving = True
         for g in self.groups():
             target = clamp(g.prox["b"], 0.0, 1.0) ** 0.75 if g.prox else 0.0

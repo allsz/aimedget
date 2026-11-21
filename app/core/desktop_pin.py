@@ -32,6 +32,7 @@ from app.core import desktop_layer
 from app.core.desktop_pin_guard import DesktopPinGuard
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
+from app.core.frame_clock import FrameTimer
 
 WAVE_DUR = 0.750          # os mesmos do FloatingCard (floating_card.py)
 WAVE_SWITCH_AT = 0.5
@@ -87,7 +88,7 @@ class DesktopPinMixin:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
         self._pin_guard = DesktopPinGuard(self)
         self._pin_wave = _PinWaveLayer(self)
-        self._pin_clock = QTimer(self)
+        self._pin_clock = FrameTimer(self)
         self._pin_clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._pin_clock.timeout.connect(self._step_pin_wave)
 

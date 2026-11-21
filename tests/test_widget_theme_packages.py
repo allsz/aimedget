@@ -71,7 +71,7 @@ class _Isolated(unittest.TestCase):
 
 class ValidationTests(_Isolated):
     def test_new_containers_are_known(self):
-        self.assertEqual(CONTAINERS, ("keylock", "mixer", "music", "timer"))
+        self.assertEqual(CONTAINERS, ("keylock", "mixer", "music", "timer", "weather", "performance"))
 
     def test_music_and_timer_folders_validate_with_the_widget_code(self):
         music = validate_theme_folder(self.folder("m", data=MUSIC), "music")
@@ -265,7 +265,8 @@ class LiveApplyTests(_Isolated):
     def test_appliers_cover_every_destination(self):
         from app.hub.service_bridge import HubServiceBridge
         fake = SimpleNamespace(trigger_test_keylock=mock.Mock(), trigger_test_volume=mock.Mock(),
-                               apply_music_theme=mock.Mock(), apply_timer_theme=mock.Mock())
+                               apply_music_theme=mock.Mock(), apply_timer_theme=mock.Mock(),
+                               apply_weather_theme=mock.Mock(), apply_performance_theme=mock.Mock())
         self.assertEqual(set(HubServiceBridge.theme_appliers(fake)), set(CONTAINERS))
 
 

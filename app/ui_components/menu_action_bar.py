@@ -32,8 +32,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.core import widget_animator
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 from app.hub.theme import HubTheme, THEME_DARK
+from app.core.frame_clock import FrameTimer
 
 
 class _Spring:
@@ -66,7 +67,7 @@ BAR_SHRINK = (900.0, 52.0)
 DOT_FADE = (1600.0, 72.0)
 COLOR_BLEND = (1100.0, 54.0)
 
-FRAME_MS = 16
+
 SUBSTEPS = 4
 SPIN_DURATION_S = 0.44
 
@@ -244,6 +245,19 @@ def draw_menu_icon(painter: QPainter, name: str, rect: QRectF, color: QColor) ->
         chk.lineTo(18.8, 7.2)
         painter.drawPath(chk)
 
+    elif name == "reorder":
+        # 6 pontos de arraste à esquerda + 3 barras arredondadas à direita (Reordenar)
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        for gx in (5.6, 8.8):
+            for gy in (6.8, 12.0, 17.2):
+                painter.drawEllipse(QPointF(gx, gy), 1.15, 1.15)
+        painter.restore()
+        painter.drawLine(QPointF(12.2, 6.8), QPointF(19.2, 6.8))
+        painter.drawLine(QPointF(12.2, 12.0), QPointF(19.2, 12.0))
+        painter.drawLine(QPointF(12.2, 17.2), QPointF(19.2, 17.2))
+
     painter.restore()
 
 
@@ -268,7 +282,7 @@ class FluentRailButton(QAbstractButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setFixedHeight(36)
-        self.setMinimumWidth(40)
+        self.setMinimumWidth(36)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         init_on = 1.0 if (item.toggle and item.checked) else 0.0
@@ -280,13 +294,13 @@ class FluentRailButton(QAbstractButton):
         self._spin_angle: float = 0.0
         self._last = 0.0
 
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(refresh_interval_ms(self))
         self._timer.timeout.connect(self._tick)
 
     def sizeHint(self) -> QSize:
-        return QSize(44, 36)
+        return QSize(36, 36)
 
     def set_theme(self, theme: HubTheme) -> None:
         self._theme = theme
@@ -396,7 +410,7 @@ class FluentRailButton(QAbstractButton):
         # Ícone centralizado (levemente elevado 1px para acomodar a barrinha embaixo com equilíbrio)
         cx = self.width() / 2.0
         cy = self.height() / 2.0 - 0.5
-        icon_size = 16.0
+        icon_size = 19.0
         icon_rect = QRectF(cx - icon_size / 2.0, cy - icon_size / 2.0, icon_size, icon_size)
 
         p.save()
@@ -445,7 +459,7 @@ class _RailHoverPill(QWidget):
         self._alpha = _Spring(0.0, FADE)
         self._y = (2.0, 32.0)
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.setInterval(refresh_interval_ms(self))
         self._timer.timeout.connect(self._tick)

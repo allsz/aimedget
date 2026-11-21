@@ -15,13 +15,14 @@ import time
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 
 from app.hub.components import tab_pill
 from app.hub.components.city_list import Spring
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.core.frame_clock import FrameTimer
 
-FRAME_MS = 16
+
 SUBSTEPS = 4
 
 
@@ -53,7 +54,7 @@ class PositionPicker(QWidget):
         self._edges = {"l": Spring(r.left(), tab_pill.TRAIL), "r": Spring(r.right(), tab_pill.TRAIL),
                        "t": Spring(r.top(), tab_pill.TRAIL), "b": Spring(r.bottom(), tab_pill.TRAIL)}
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
         self._timer.timeout.connect(self._tick)
 

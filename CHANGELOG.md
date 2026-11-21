@@ -4,7 +4,7 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [1.1.0] - 2026-11-20
 
 ### Adicionado
 - **Widget de Clima** (Win+Alt+W): previsão de 5 dias clicáveis com céu animado para 10 condições (ensolarado,
@@ -21,6 +21,31 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
   mostram a posição; o dia escolhido é mantido. No Hub, a lista de cidades se reordena arrastando. Uma única
   consulta atualiza todas as cidades. Remover uma cidade vira um check na cor de destaque antes de ela subir e
   sumir; uma cidade nova entra abrindo espaço e subindo de um desfoque.
+
+- Novos widgets de **Desempenho**, **Armazenamento** e **Bateria**, com skin Nothing Dot e temas; **ancoragem** entre
+  widgets (rede de proximidade, ímã e alinhador) e **Fixar na área de trabalho** em todos os widgets.
+
+### Alterado
+- Esconder um widget de um grupo ancorado (atalho, menu, Hub) fecha o espaço: os outros deslizam para junto e,
+  quando ele volta, o lugar reabre igual. O lado do grupo junto à borda da tela fica parado.
+- Trocar de tema agora tem a mesma transição curta e discreta em todo o app (a do Clima): música, timer, mixer e o
+  claro/escuro do Hub dissolvem em vez de mudar no corte.
+
+### Corrigido
+- Ao abrir o app, dezenas de janelas pequenas piscavam na tela antes do Hub aparecer.
+- Desligar o mixer de volume agora devolve as teclas de volume ao Windows (o painel nativo volta a aparecer).
+- Escolher a posição de um widget ancorado no Hub agora o tira do grupo: arrastá-lo depois não leva mais os
+  outros junto.
+- Mixer de volume com tema de número em imagem: a gaveta de dispositivos abre abaixo do número, sem cobri-lo.
+- Cor de destaque: o anel do círculo de tema não ganha mais só um arco novo antes do resto; ele muda inteiro, na onda.
+- O brilho do modo ancorado podia ficar levemente aceso depois de desancorar.
+- Filtrar a Visão geral não solta mais os cartões como janelas por um instante.
+
+### Desempenho
+- Um relógio de quadros único move todas as animações (de ~600 para ~120 despertares por segundo com 5 widgets
+  animando); as skins de música seguem a taxa do monitor e só redesenham quando a barra ou o tempo mudam.
+- A página Música abre sem travar na primeira visita (108 ms para 27 ms).
+- Com o indicador de Lock Keys desligado, o app deixa de consultar o teclado 40 vezes por segundo.
 
 ## [1.0.5] - 2026-11-15
 

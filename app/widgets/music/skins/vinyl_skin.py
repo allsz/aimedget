@@ -15,6 +15,7 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.tactile_button import draw_tactile_physical_button
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
@@ -105,7 +106,7 @@ class VinylMusicSkin(BaseMusicSkin):
 
         # Loop de física a ~60 FPS
         self.last_tick = time.perf_counter()
-        self.timer = QTimer(self)
+        self.timer = FrameTimer(self)
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._on_physics_tick)  # iniciado/pausado pela base (show/hide)
 

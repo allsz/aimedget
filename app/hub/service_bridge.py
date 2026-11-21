@@ -7,8 +7,10 @@ from typing import Optional
 from PySide6.QtCore import QObject, QRect, Signal
 from PySide6.QtWidgets import QApplication
 
+from app.core.anchor_manager import anchor_manager
 from app.core.config_manager import config_manager
 from app.core.osd_anchor import link_flyouts
+from app.core.theme_crossfade import theme_crossfade
 from app.services.audio_endpoint_service import AudioEndpointService
 from app.services.audio_mixer_service import AudioMixerService
 from app.services.hotkey_service import get_hotkey_service
@@ -20,6 +22,8 @@ from app.widgets.music.volume_osd import MusicVolumeOSD
 from app.widgets.timer.timer_controller import TimerWidgetController
 from app.widgets.volume_mixer.mixer_flyout import VolumeMixerFlyout
 from app.widgets.performance.performance_controller import PerformanceWidgetController
+from app.widgets.storage.storage_controller import StorageWidgetController
+from app.widgets.battery.battery_controller import BatteryWidgetController
 from app.widgets.weather.weather_controller import WeatherWidgetController
 
 
@@ -40,7 +44,9 @@ class HubServiceBridge(QObject):
     active_skins_changed = Signal(list)  # list of active skin ids
     timer_skin_changed = Signal(str)  # skin_name
     weather_skin_changed = Signal(str)  # id da skin (fonte)
+    performance_skin_changed = Signal(str)
     manage_weather_cities_requested = Signal()
+    manage_storage_folders_requested = Signal()
     osd_anchor_changed = Signal(str, str)  # (flyout 'keylock'/'mixer', âncora)
 
     def __init__(self, parent=None):
@@ -118,6 +124,16 @@ class HubServiceBridge(QObject):
         # 5b. Módulo de Desempenho (sampler Win32 só roda com o cartão na tela)
         self.performance_controller = PerformanceWidgetController()
         self.performance_controller.status_changed.connect(self._on_performance_status_changed)
+        self.performance_controller.skin_changed.connect(self.performance_skin_changed.emit)
+
+        # 5c. Módulo de Armazenamento (varredura em background só roda com o cartão na tela)
+        self.storage_controller = StorageWidgetController()
+        self.storage_controller.status_changed.connect(self._on_storage_status_changed)
+        self.storage_controller.manage_folders_requested.connect(self.manage_storage_folders_requested.emit)
+
+        # 5d. Módulo de Baterias (leitura dos periféricos só roda com o cartão na tela)
+        self.battery_controller = BatteryWidgetController()
+        self.battery_controller.status_changed.connect(self._on_battery_status_changed)
 
         # 6. Serviço Global de Atalhos (Hotkeys)
         self.hotkey_service = get_hotkey_service()
@@ -131,6 +147,8 @@ class HubServiceBridge(QObject):
             "timer": config_manager.is_timer_show_on_startup(),
             "weather": bool(config_manager.get_weather("show_on_startup", False)),
             "performance": bool(config_manager.get_performance("show_on_startup", False)),
+            "storage": bool(config_manager.get_storage("show_on_startup", False)),
+            "battery": bool(config_manager.get_battery("show_on_startup", False)),
         }
 
     def start_all(self):
@@ -150,6 +168,12 @@ class HubServiceBridge(QObject):
         if config_manager.get_performance("show_on_startup", False):
             self.performance_controller.start()
 
+        if config_manager.get_storage("show_on_startup", False):
+            self.storage_controller.start()
+
+        if config_manager.get_battery("show_on_startup", False):
+            self.battery_controller.start()
+
     # --- Atalhos Globais e Ações de Toggle ---
 
     def _init_hotkeys(self):
@@ -168,6 +192,14 @@ class HubServiceBridge(QObject):
         # Performance Widget (padrão Win+Alt+P)
         perf_hk = config_manager.get_performance("hotkey", "Win+Alt+P")
         self.hotkey_service.register("performance_toggle", perf_hk, self.toggle_performance_widget)
+
+        # Storage Widget (padrão Win+Alt+S)
+        storage_hk = config_manager.get_storage("hotkey", "Win+Alt+S")
+        self.hotkey_service.register("storage_toggle", storage_hk, self.toggle_storage_widget)
+
+        # Battery Widget (padrão Win+Alt+B)
+        battery_hk = config_manager.get_battery("hotkey", "Win+Alt+B")
+        self.hotkey_service.register("battery_toggle", battery_hk, self.toggle_battery_widget)
 
         # Volume Mixer (padrão Win+Alt+V)
         vol_hk = config_manager.get_volume_hotkey("Win+Alt+V")
@@ -218,6 +250,24 @@ class HubServiceBridge(QObject):
             self.performance_controller.skin.raise_()
             self.performance_controller.skin.activateWindow()
 
+    def toggle_storage_widget(self):
+        """Alterna a visibilidade do Storage Widget."""
+        if self.storage_controller.is_shown():
+            self.set_storage_enabled(False)
+        else:
+            self.set_storage_enabled(True)
+            self.storage_controller.skin.raise_()
+            self.storage_controller.skin.activateWindow()
+
+    def toggle_battery_widget(self):
+        """Alterna a visibilidade do Battery Widget."""
+        if self.battery_controller.is_shown():
+            self.set_battery_enabled(False)
+        else:
+            self.set_battery_enabled(True)
+            self.battery_controller.skin.raise_()
+            self.battery_controller.skin.activateWindow()
+
     def toggle_volume_mixer(self):
         """Alterna a visibilidade do Volume Mixer."""
         if self.volume_flyout.isVisible():
@@ -240,6 +290,14 @@ class HubServiceBridge(QObject):
     def update_performance_hotkey(self, hotkey: str):
         config_manager.set_performance("hotkey", hotkey)
         self.hotkey_service.register("performance_toggle", hotkey, self.toggle_performance_widget)
+
+    def set_storage_hotkey(self, hotkey: str):
+        config_manager.set_storage("hotkey", hotkey)
+        self.hotkey_service.register("storage_toggle", hotkey, self.toggle_storage_widget)
+
+    def set_battery_hotkey(self, hotkey: str):
+        config_manager.set_battery("hotkey", hotkey)
+        self.hotkey_service.register("battery_toggle", hotkey, self.toggle_battery_widget)
 
     def update_volume_hotkey(self, hotkey: str):
         config_manager.set_volume_hotkey(hotkey)
@@ -322,16 +380,49 @@ class HubServiceBridge(QObject):
         if stack_theme.loader.active_id() != DEFAULT_ID and self.music_controller.active_skin_name != stacked:
             if stacked not in config_manager.get_active_widget_skins():
                 self.set_music_skin_active(stacked, True)
-            self.set_music_skin(stacked)   # a skin nova já nasce com o tema escolhido
+            self.set_music_skin(stacked)   # a skin nova já nasce com o tema escolhido (e entra com a própria troca)
+            swapped = True
+        else:
+            swapped = False
         skin = self.music_controller.skin
         if skin is not None and hasattr(skin, "reload_skin_theme"):
-            skin.reload_skin_theme()
+            if swapped:
+                skin.reload_skin_theme()   # skin nova: já entra com a troca própria, um 2º fade por cima seria feio
+            else:
+                with theme_crossfade(skin):   # a mesma transição do Clima, em todo tema
+                    skin.reload_skin_theme()
 
     def apply_timer_theme(self):
         """Aplica o tema do Timer escolhido no Hub ao widget vivo."""
         skin = self.timer_controller.skin
         if skin is not None and hasattr(skin, "reload_skin_theme"):
-            skin.reload_skin_theme()
+            with theme_crossfade(skin):
+                skin.reload_skin_theme()
+
+    def apply_weather_theme(self):
+        """Aplica o tema da skin Nothing Dot do Clima ao widget vivo (e ativa a skin se necessário)."""
+        from app.core.theme_loader import DEFAULT_ID
+        from app.widgets.weather import font_skins, theme as weather_theme
+
+        if weather_theme.loader.active_id() != DEFAULT_ID and not font_skins.is_nothing_skin(
+            self.weather_controller.active_skin_name
+        ):
+            self.set_weather_skin(font_skins.NOTHING_DOT_SKIN)
+        else:
+            self.weather_controller.skin.begin_skin_crossfade()
+            self.weather_controller.skin.update()
+
+    def apply_performance_theme(self):
+        """Aplica o tema da skin Nothing Dot do Desempenho ao widget vivo (e ativa a skin se necessário)."""
+        from app.core.theme_loader import DEFAULT_ID
+        from app.widgets.performance import theme as perf_theme
+        from app.widgets.performance.card_state import SKIN_NOTHING_DOT
+
+        if perf_theme.loader.active_id() != DEFAULT_ID and self.performance_controller.active_skin_name != SKIN_NOTHING_DOT:
+            self.set_performance_skin(SKIN_NOTHING_DOT)
+        else:
+            self.performance_controller.skin.begin_skin_crossfade()
+            self.performance_controller.skin.update()
 
     def theme_appliers(self) -> dict:
         """O que fazer em cada destino depois de escolher/importar um tema: flyouts aparecem para teste,
@@ -341,6 +432,8 @@ class HubServiceBridge(QObject):
             "mixer": self.trigger_test_volume,
             "music": self.apply_music_theme,
             "timer": self.apply_timer_theme,
+            "weather": self.apply_weather_theme,
+            "performance": self.apply_performance_theme,
         }
 
     def set_music_skin_active(self, skin_name: str, active: bool) -> bool:
@@ -377,6 +470,7 @@ class HubServiceBridge(QObject):
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
         self.music_controller.settle()
+        self._leave_anchor_group(self.music_controller.skin)
         self.music_controller.skin.glide_card_to(x, y)   # na tela, o cartão desliza até o lugar escolhido
         config_manager.set_music_position_remembered(True, x, y)
 
@@ -402,6 +496,10 @@ class HubServiceBridge(QObject):
                 self.keylock_service.keylock_changed.disconnect(self._on_keylock_changed)
         except Exception:
             pass
+        if enabled:
+            self.keylock_service.start()
+        else:
+            self.keylock_service.stop()
         self.status_changed.emit("keys_osd", enabled)
 
     def _on_keylock_changed(self, key_name: str, is_on: bool):
@@ -427,6 +525,8 @@ class HubServiceBridge(QObject):
                 self.audio_service.osd_requested.disconnect(self.volume_flyout.show_osd)
         except Exception:
             pass
+        # Desligado: não engole mais as teclas de volume, então o OSD nativo do Windows volta a aparecer
+        self.audio_service.set_intercept_volume_keys(enabled)
         self.status_changed.emit("vol_mixer", enabled)
 
     def is_volume_mixer_enabled(self) -> bool:
@@ -472,6 +572,7 @@ class HubServiceBridge(QObject):
         margin = 24
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
+        self._leave_anchor_group(self.timer_controller.skin)
         self.timer_controller.skin.glide_square_to(x, y)   # na tela, o quadrado desliza até o lugar escolhido
         config_manager.set_timer_position_remembered(True, x, y)
 
@@ -505,6 +606,7 @@ class HubServiceBridge(QObject):
         w, h = self.weather_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.weather_controller.settle()
+        self._leave_anchor_group(self.weather_controller.skin)
         self.weather_controller.skin.glide_card_to(x, y)
         config_manager.set_weather("remember_position", True)
         config_manager.set_weather("position", [x, y])
@@ -521,6 +623,9 @@ class HubServiceBridge(QObject):
             self.performance_controller.hide()
         self.status_changed.emit("performance", enabled)
 
+    def set_performance_skin(self, skin_id: str):
+        self.performance_controller.set_skin(skin_id)
+
     def is_performance_enabled(self) -> bool:
         return self._states.get("performance", False)
 
@@ -536,15 +641,88 @@ class HubServiceBridge(QObject):
         w, h = self.performance_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.performance_controller.settle()
+        self._leave_anchor_group(self.performance_controller.skin)
         self.performance_controller.skin.glide_card_to(x, y)
         config_manager.set_performance("remember_position", True)
         config_manager.set_performance("position", [x, y])
         self.performance_controller.remember_position_changed.emit(True)
 
+    # --- Controles do Storage Widget ---
+
+    def set_storage_enabled(self, enabled: bool):
+        self._states["storage"] = enabled
+        config_manager.set_storage("enabled", enabled)
+        if enabled:
+            self.storage_controller.show()
+        else:
+            self.storage_controller.hide()
+        self.status_changed.emit("storage", enabled)
+
+    def is_storage_enabled(self) -> bool:
+        return self._states.get("storage", False)
+
+    def _on_storage_status_changed(self, is_active: bool):
+        self._states["storage"] = is_active
+        self.status_changed.emit("storage", is_active)
+
+    def move_storage_to_screen_position(self, pos_key: str):
+        """Posiciona o cartão de armazenamento num dos quadrantes da tela."""
+        app = QApplication.instance()
+        if not app or not app.primaryScreen():
+            return
+        w, h = self.storage_controller.skin.card_size()
+        x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
+        self.storage_controller.settle()
+        self._leave_anchor_group(self.storage_controller.skin)
+        self.storage_controller.skin.glide_card_to(x, y)
+        config_manager.set_storage("remember_position", True)
+        config_manager.set_storage("position", [x, y])
+        self.storage_controller.remember_position_changed.emit(True)
+
+    # --- Controles do Battery Widget ---
+
+    def set_battery_enabled(self, enabled: bool):
+        self._states["battery"] = enabled
+        config_manager.set_battery("enabled", enabled)
+        if enabled:
+            self.battery_controller.show()
+        else:
+            self.battery_controller.hide()
+        self.status_changed.emit("battery", enabled)
+
+    def is_battery_enabled(self) -> bool:
+        return self._states.get("battery", False)
+
+    def _on_battery_status_changed(self, is_active: bool):
+        self._states["battery"] = is_active
+        self.status_changed.emit("battery", is_active)
+
+    def move_battery_to_screen_position(self, pos_key: str):
+        """Posiciona o cartão de baterias num dos quadrantes da tela."""
+        app = QApplication.instance()
+        if not app or not app.primaryScreen():
+            return
+        w, h = self.battery_controller.skin.card_size()
+        x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
+        self.battery_controller.settle()
+        self._leave_anchor_group(self.battery_controller.skin)
+        self.battery_controller.skin.glide_card_to(x, y)
+        config_manager.set_battery("remember_position", True)
+        config_manager.set_battery("position", [x, y])
+        self.battery_controller.remember_position_changed.emit(True)
+
     def on_theme_changed(self, theme=None):
         """Notifica os widgets sobre alterações de tema global."""
         if hasattr(self, "timer_controller") and self.timer_controller:
             self.timer_controller.update_theme(theme)
+        if hasattr(self, "storage_controller") and self.storage_controller:
+            from app.widgets.storage.storage_card import invalidate_card_theme as invalidate_storage_theme
+            invalidate_storage_theme()
+            self.storage_controller.skin.update()
+        if hasattr(self, "battery_controller") and self.battery_controller:
+            from app.widgets.battery.battery_card import invalidate_card_theme
+            invalidate_card_theme()
+            self.battery_controller.skin.update()
 
     def cleanup_all(self):
         """Desinstala hooks e encerra recursos em background de forma segura."""
@@ -552,6 +730,10 @@ class HubServiceBridge(QObject):
             self.hotkey_service.cleanup()
         if hasattr(self, "performance_controller") and self.performance_controller:
             self.performance_controller.stop()
+        if hasattr(self, "storage_controller") and self.storage_controller:
+            self.storage_controller.stop()
+        if hasattr(self, "battery_controller") and self.battery_controller:
+            self.battery_controller.stop()
         worker = getattr(getattr(self, "music_controller", None), "media_worker", None)
         if worker is not None:
             try:
@@ -560,6 +742,16 @@ class HubServiceBridge(QObject):
                 pass
 
     # --- Helper de Posicionamento Geométrico ---
+
+    @staticmethod
+    def _leave_anchor_group(skin):
+        """
+        Escolher um quadrante no Hub dá ao widget um lugar próprio: ele sai do grupo de ancoragem (os outros ficam
+        juntos, onde estão). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
+        """
+        mgr = anchor_manager()
+        if mgr.is_grouped(skin):
+            mgr.detach(skin)
 
     def _calc_coords(self, screen_geo: QRect, w: int, h: int, pos_key: str, margin: int) -> tuple[int, int]:
         sx = screen_geo.x()

@@ -1,7 +1,7 @@
 from PySide6.QtCore import QObject, QRect, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 from app.core.config_manager import config_manager
-from app.core.widget_animator import AnimatedVisibilityMixin
+from app.core.widget_animator import AnimatedVisibilityMixin, swap_skin_windows
 from app.services.media_worker import WindowsMediaWorker
 from app.widgets.music.auto_open_guard import AutoOpenDismissal
 from app.widgets.music.skins.vinyl_skin import VinylMusicSkin
@@ -83,38 +83,37 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
         skin_cls = self.AVAILABLE_SKINS.get(skin_name, FullCoverSkin)
         self.active_skin_name = skin_name
         config_manager.set_active_skin(skin_name)
+        old_skin = self.skin
         old_pos = None
         was_visible = False
         last_state = None
 
-        if self.skin is not None:
-            old_pos = self.skin.card_origin()   # posição do CARTÃO: a skin nova pode ter margem diferente
+        if old_skin is not None:
+            old_pos = old_skin.card_origin()   # posição do CARTÃO: a skin nova pode ter margem diferente
             was_visible = self._is_shown()
             last_state = (
-                self.skin.title_text,
-                self.skin.artist_text,
-                self.skin.is_playing,
-                self.skin.current_time,
-                self.skin.duration,
-                self.skin._last_thumb_bytes,
-                self.skin.provider,
+                old_skin.title_text,
+                old_skin.artist_text,
+                old_skin.is_playing,
+                old_skin.current_time,
+                old_skin.duration,
+                old_skin._last_thumb_bytes,
+                old_skin.provider,
             )
             try:
-                self.media_worker.media_updated.disconnect(self.skin.on_media_updated)
-                self.skin.command_requested.disconnect(self.media_worker.send_command)
-                self.skin.skin_switch_requested.disconnect(self.set_skin)
-                self.skin.manage_skins_requested.disconnect(self.manage_skins_requested.emit)
-                self.skin.close_requested.disconnect(self._on_skin_close_requested)
-                self.skin.volume_wheel_requested.disconnect(self.volume_wheel_requested.emit)
+                self.media_worker.media_updated.disconnect(old_skin.on_media_updated)
+                old_skin.command_requested.disconnect(self.media_worker.send_command)
+                old_skin.skin_switch_requested.disconnect(self.set_skin)
+                old_skin.manage_skins_requested.disconnect(self.manage_skins_requested.emit)
+                old_skin.close_requested.disconnect(self._on_skin_close_requested)
+                old_skin.volume_wheel_requested.disconnect(self.volume_wheel_requested.emit)
                 repeat_signal = getattr(self.media_worker, "repeat_state_changed", None)
                 if repeat_signal is not None:
-                    repeat_signal.disconnect(self.skin.on_repeat_state)
-                self.skin.scale_changed.disconnect(self._on_skin_scale_changed)
-                self.skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
+                    repeat_signal.disconnect(old_skin.on_repeat_state)
+                old_skin.scale_changed.disconnect(self._on_skin_scale_changed)
+                old_skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
             except Exception:
                 pass
-            self.skin.close()
-            self.skin.deleteLater()
 
         self.skin = skin_cls()
         self.media_worker.media_updated.connect(self.skin.on_media_updated)
@@ -140,8 +139,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
         else:
             self.restore_or_center_position()
 
-        if was_visible:
-            self.skin.show()
+        swap_skin_windows(old_skin, self.skin, was_visible)
 
         self.skin_changed.emit(skin_name)
 

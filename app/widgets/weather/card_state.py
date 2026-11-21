@@ -173,6 +173,7 @@ class CardState:
     message: Optional[str] = None             # chave de i18n quando não há dados
     message_detail: str = ""                  # texto já traduzido para a linha de baixo (ex.: "Escolha no Hub")
     font_family: str = ""                     # vazio = fonte do app (Inter)
+    skin_id: str = "glass"                    # "glass" | "nothing_dot" | "font:<name>"
     animated: bool = True                     # False = efeitos do Windows desligados: tudo estático
 
     sky: Swap = field(default_factory=lambda: Swap(cond.SUNNY))

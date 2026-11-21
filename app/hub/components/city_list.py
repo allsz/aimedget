@@ -20,20 +20,21 @@ Com os efeitos de animação do Windows desligados, tudo acontece na hora.
 import math
 import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame, QGraphicsBlurEffect, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 from app.core.i18n import t
-from app.core.refresh_rate import refresh_interval_ms
+from app.core.refresh_rate import FRAME_MS, refresh_interval_ms
 from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme
 from app.widgets.weather.motion import cubic_bezier
+from app.core.frame_clock import FrameTimer
 
 ROW_GAP = 6                  # espaço entre linhas (fica DENTRO da linha, para fechar junto com ela ao sair)
-FRAME_MS = 16
+
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 # Molas (rigidez, amortecimento) do botão de referência ("hold button")
@@ -101,15 +102,15 @@ def _mix(a: QColor, b: QColor, f: float) -> QColor:
                   round(a.blue() + (b.blue() - a.blue()) * f), round(a.alpha() + (b.alpha() - a.alpha()) * f))
 
 
-class _RemoveButton(QPushButton):
+class RemoveButton(QPushButton):
     """O ✕, desenhado à mão: amassa, vira um círculo na cor de destaque e desenha um check."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, theme: HubTheme | None = None):
         super().__init__(parent)
         self.setFixedSize(int(BTN_W), int(BTN_H))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.theme: HubTheme | None = None
+        self.theme: HubTheme | None = theme
         self.w, self.h, self.r, self.scale = BTN_W, BTN_H, BTN_R, 1.0
         self.color_f = 0.0      # 0 = cinza do chip, 1 = cor de destaque
         self.glyph_f = 1.0      # opacidade do ✕
@@ -117,6 +118,10 @@ class _RemoveButton(QPushButton):
         self.check_f = 0.0      # quanto do check já foi desenhado
         self._hover = False
         self._keyboard_focus = False
+
+    def set_theme(self, theme: HubTheme):
+        self.theme = theme
+        self.update()
 
     def focusInEvent(self, event):
         self._keyboard_focus = event.reason() in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason,
@@ -246,7 +251,7 @@ class _CityRow(QWidget):
         text.addWidget(self.lbl_detail)
         layout.addLayout(text, stretch=1)
 
-        self.btn_remove = _RemoveButton(self.card)
+        self.btn_remove = RemoveButton(self.card)
         self.btn_remove.setToolTip(t("weather_city_remove"))
         self.btn_remove.setAccessibleName(t("weather_city_remove"))
         self.btn_remove.clicked.connect(lambda: owner._on_remove_clicked(self))
@@ -609,7 +614,7 @@ class CityList(QWidget):
         self._reorder: _Reorder | None = None
         self._last_change = None       # última entrada/saída iniciada (os vizinhos acompanham o progresso dela)
         self._populated = False
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
         self._clock.timeout.connect(self._on_frame)
@@ -752,6 +757,19 @@ class CityList(QWidget):
         self._layout.activate()
         self.updateGeometry()
         self.frame.emit()
+        self._flush_parent_layouts()
+
+    def _flush_parent_layouts(self):
+        """
+        Faz o cartão, a página e a rolagem recalcularem NESTE quadro. `updateGeometry` só posta um pedido de layout: o
+        Qt desenha a janela antes de atendê-lo, então a linha já estava no lugar novo e o cartão (e tudo abaixo dele)
+        ainda na altura velha por um quadro: o tremor ao adicionar/remover. Atendendo os pedidos de baixo para cima,
+        o contêiner e o conteúdo andam juntos.
+        """
+        w = self.parentWidget()
+        while w is not None and not w.isWindow():
+            QCoreApplication.sendPostedEvents(w, QEvent.Type.LayoutRequest)
+            w = w.parentWidget()
 
     # --- Arrastar ---
 

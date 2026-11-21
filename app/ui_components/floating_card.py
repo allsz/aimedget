@@ -27,6 +27,8 @@ from app.core.screen_metrics import get_screen_scale_ratio
 from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
 from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
+from app.core.frame_clock import FrameTimer
+from app.core.theme_crossfade import DURATION_MS as THEME_FADE_MS, SHRINK as THEME_FADE_SHRINK, ease_out_cubic
 
 CARD_W = 300.0
 CARD_H = 262.0
@@ -196,6 +198,9 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._wave_target: Optional[bool] = None
         self._settle_from = 1.0 if self._desktop_mode else 0.0
         self._settle_t0 = -1e9
+        self._skin_swap_prev: Optional[QPixmap] = None
+        self._skin_swap_t0: float = -1e9
+        self._skin_swap_dur: float = 0.160
         self._drag_offset: Optional[QPoint] = None
         self._dragged = False
         self._resize_start: Optional[tuple] = None
@@ -208,7 +213,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._pin_guard = DesktopPinGuard(self)
         self._sd_suspended = False
         self._sd_subscribed = False
-        self._clock = QTimer(self)
+        self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.timeout.connect(self._on_frame)
 
@@ -306,8 +311,40 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         now = self.now()
         return self._busy(now) or self._card_needs_frames(now)
 
+    def begin_skin_crossfade(self, duration_ms: int = THEME_FADE_MS):
+        """Captura a aparência atual do cartão para fazer crossfade suave ao trocar de skin ou tema."""
+        if not self.isVisible() or not animations_enabled():
+            self._skin_swap_prev = None
+            return
+        rect = self.card_rect()
+        dpr = max(1.0, self.devicePixelRatioF())
+        pm = QPixmap(max(1, int(round(rect.width() * dpr))), max(1, int(round(rect.height() * dpr))))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        self.paint_card_content(p, QRectF(0.0, 0.0, rect.width(), rect.height()), self.now())
+        p.end()
+        self._skin_swap_prev = pm
+        self._skin_swap_t0 = self.now()
+        self._skin_swap_dur = max(0.04, duration_ms / 1000.0)
+        self.kick()
+
+    def _skin_swap_progress(self, now: float) -> Optional[float]:
+        if self._skin_swap_prev is None:
+            return None
+        p = (now - self._skin_swap_t0) / self._skin_swap_dur
+        if p >= 1.0:
+            self._skin_swap_prev = None
+            return None
+        return max(0.0, min(1.0, p))
+
     def _busy(self, now: float) -> bool:
-        return self._wave_t0 is not None or now < self._settle_t0 + SETTLE_DUR or self._card_is_busy(now)
+        return (
+            self._wave_t0 is not None
+            or now < self._settle_t0 + SETTLE_DUR
+            or self._skin_swap_progress(now) is not None
+            or self._card_is_busy(now)
+        )
 
     def _set_frame_interval(self):
         busy = self._busy(self.now())
@@ -517,7 +554,31 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             p.drawPixmap(0, 0, self._shadow_pixmap(True))
         p.setOpacity(1.0)
         rect = self.card_rect()
-        self.paint_card_content(p, rect, now)
+        swap_p = self._skin_swap_progress(now)
+        if swap_p is not None and self._skin_swap_prev is not None:
+            e = ease_out_cubic(swap_p)   # a mesma curva e duração de toda troca de tema (app/core/theme_crossfade.py)
+            cx, cy = rect.center().x(), rect.center().y()
+            # Skin antiga saindo com fade e leve redução
+            p.save()
+            p.setOpacity(1.0 - e)
+            s_out = 1.0 - THEME_FADE_SHRINK * e
+            p.translate(cx, cy)
+            p.scale(s_out, s_out)
+            p.translate(-cx, -cy)
+            p.drawPixmap(rect.topLeft(), self._skin_swap_prev)
+            p.restore()
+            # Skin nova entrando com fade e leve expansão
+            p.save()
+            p.setOpacity(e)
+            s_in = (1.0 - THEME_FADE_SHRINK) + THEME_FADE_SHRINK * e
+            p.translate(cx, cy)
+            p.scale(s_in, s_in)
+            p.translate(-cx, -cy)
+            self.paint_card_content(p, rect, now)
+            p.restore()
+            p.setOpacity(1.0)
+        else:
+            self.paint_card_content(p, rect, now)
         wave = self.wave_progress(now)
         if wave is not None:
             paint_dot_wave(
@@ -553,6 +614,9 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         return not self._grip_blocked(card_pos)
 
     def _on_card_press(self, card_pos: QPointF) -> bool:
+        return False
+
+    def _on_card_move(self, card_pos: QPointF) -> bool:
         return False
 
     def _on_card_hover(self, card_pos: QPointF, grip: bool) -> bool:
@@ -593,6 +657,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             self._dragged = True
             return
         card_pos = self._to_card(event.position())
+        if event.buttons() & Qt.MouseButton.LeftButton and self._on_card_move(card_pos):
+            return
         grip = self._on_grip(card_pos)
         pointer = self._on_card_hover(card_pos, grip)
         if grip != self._grip_hovered:

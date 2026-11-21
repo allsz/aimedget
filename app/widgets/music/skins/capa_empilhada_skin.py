@@ -29,6 +29,7 @@ from app.services.media_worker import fetch_stack_extras
 from app.widgets.music.skins.base_skin import BaseMusicSkin
 from app.widgets.music.skins.stack_palette import PastelStackTheme, get_default_pastel_theme
 from app.widgets.music.skins import stack_theme
+from app.core.frame_clock import FrameTimer
 
 # Proporção fiel à referência capaEmpilhada.png (615 x 301 -> razão ~2.042:1)
 # Canvas 2x Ultra-HD: 980 x 480
@@ -290,7 +291,7 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
         # Loop a ~60 FPS
         self.last_tick = time.perf_counter()
-        self.timer = QTimer(self)
+        self.timer = FrameTimer(self)
         self.timer.setInterval(16)
         self.timer.timeout.connect(self._on_tick)  # iniciado/pausado pela base (show/hide)
 
@@ -778,23 +779,8 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         if dur > 0 or track_changed:
             self.duration = dur
 
-        can_sync_pos = (
-            not self.is_dragging_bar
-            and self.pressed_btn != "bar"
-            and (now - self._last_seek_sent > 1.5)
-        )
-        if can_sync_pos and (dur > 0 or track_changed):
-            if track_changed:
-                self.current_time = min(self.duration, max(0.0, pos))
-                changed = True
-            else:
-                drift = pos - self.current_time
-                if abs(drift) > 1.5:
-                    self.current_time = min(self.duration, max(0.0, pos))
-                    changed = True
-                elif abs(drift) > 0.15:
-                    self.current_time = min(self.duration, max(0.0, self.current_time + drift * 0.35))
-                    changed = True
+        if self._sync_playback_position(pos, dur, track_changed, now):
+            changed = True
 
         if changed:
             self.update()
@@ -852,7 +838,8 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         if self.is_playing and not self.is_dragging_bar:
             if self.duration > 0:
                 self.current_time = min(self.duration, self.current_time + dt)
-            needs_update = True
+            if self._playhead_moved():   # só quando a barra/o tempo exibido mudam (não 60x/s inteiro)
+                needs_update = True
 
         if needs_update:
             self.update()

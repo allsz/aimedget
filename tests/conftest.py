@@ -41,3 +41,13 @@ if _config_manager is not None:
     _anchor_store: dict = {}
     _config_manager.get_anchor = lambda key, default=None: _anchor_store.get(key, default)
     _config_manager.set_anchor = lambda key, value: _anchor_store.__setitem__(key, value)
+
+# O Battery Widget nunca lê periféricos reais nos testes (HID/XInput da máquina): a leitura devolve lista vazia, e
+# os testes que precisam de dispositivos montam a lista à mão.
+try:
+    from app.services.battery import service as _battery_service
+except ModuleNotFoundError:
+    _battery_service = None
+
+if _battery_service is not None:
+    _battery_service.read_all_sources = lambda: []

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
-from app.core.widget_animator import AnimatedVisibilityMixin
+from app.core.widget_animator import AnimatedVisibilityMixin, swap_skin_windows
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
@@ -30,6 +30,8 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
     desktop_mode_changed = Signal(bool)      # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
+    remember_position_changed = Signal(bool)
+    smart_hover_changed = Signal(bool)
 
     @staticmethod
     def available_skins() -> dict[str, Type[BaseTimerSkin]]:
@@ -78,27 +80,28 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.active_skin_name = skin_name
         config_manager.set_timer_active_skin(skin_name)
 
+        old_skin = self.skin
         old_pos = None
         was_visible = False
         saved_size = config_manager.get_timer_saved_size()
 
-        if self.skin is not None:
-            old_pos = self.skin.square_origin()   # o quadrado não muda de lugar ao trocar de skin ou de tema
+        if old_skin is not None:
+            old_pos = old_skin.square_origin()   # o quadrado não muda de lugar ao trocar de skin ou de tema
             was_visible = self._is_shown()   # saindo (fade-out em curso) conta como escondido
-            self.skin.animator.settle()
+            old_skin.animator.settle()
             try:
-                self.skin.play_pause_clicked.disconnect(self.toggle_play_pause)
-                self.skin.reset_clicked.disconnect(self.reset)
-                self.skin.duration_changed.disconnect(self.set_duration)
-                self.skin.alarm_time_changed.disconnect(self.set_alarm_time)
-                self.skin.mode_changed.disconnect(self.set_mode)
-                self.skin.close_requested.disconnect(self.on_skin_closed)
-                self.skin.skin_switch_requested.disconnect(self.set_skin)
-                self.skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
+                old_skin.play_pause_clicked.disconnect(self.toggle_play_pause)
+                old_skin.reset_clicked.disconnect(self.reset)
+                old_skin.duration_changed.disconnect(self.set_duration)
+                old_skin.alarm_time_changed.disconnect(self.set_alarm_time)
+                old_skin.mode_changed.disconnect(self.set_mode)
+                old_skin.close_requested.disconnect(self.on_skin_closed)
+                old_skin.skin_switch_requested.disconnect(self.set_skin)
+                old_skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
+                old_skin.remember_position_changed.disconnect(self.remember_position_changed.emit)
+                old_skin.smart_hover_changed.disconnect(self.smart_hover_changed.emit)
             except Exception:
                 pass
-            self.skin.close()
-            self.skin.deleteLater()
 
         self.skin = skin_cls(width=saved_size[0], height=saved_size[1])
         self.skin.play_pause_clicked.connect(self.toggle_play_pause)
@@ -109,6 +112,8 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.close_requested.connect(self.on_skin_closed)
         self.skin.skin_switch_requested.connect(self.set_skin)
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
+        self.skin.remember_position_changed.connect(self.remember_position_changed.emit)
+        self.skin.smart_hover_changed.connect(self.smart_hover_changed.emit)
 
         self._sync_skin()
 
@@ -119,8 +124,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         else:
             self.restore_or_place_at_top()
 
-        if was_visible:
-            self.skin.show()
+        swap_skin_windows(old_skin, self.skin, was_visible)
 
         self.skin_changed.emit(skin_name)
 

@@ -48,7 +48,8 @@ class CollapsibleSection(QWidget):
         self._anim.valueChanged.connect(self._on_progress)
         self._anim.finished.connect(self._on_finished)
         self._apply_height()
-        self.setVisible(opened)
+        if not opened:   # sem pai ainda: setVisible(True) abriria uma janela solta
+            self.hide()
 
     # --- Estado ---
 

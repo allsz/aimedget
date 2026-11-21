@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QWidget
 
 from app.core.refresh_rate import refresh_interval_ms
+from app.core.frame_clock import FrameTimer
 
 SCALE_SPRING = (320.0, 30.0)
 SUBSTEPS = 4
@@ -27,7 +28,7 @@ class ScaleAnimator(QObject):
         self._tol = tolerance
         self._x = self._v = self._target = 0.0
         self._last = 0.0
-        self._timer = QTimer(self)
+        self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._on_frame)
 

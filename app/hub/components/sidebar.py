@@ -80,6 +80,8 @@ class HubSidebar(QWidget):
         ("timer", "sidebar_timer"),
         ("weather", "sidebar_weather"),
         ("performance", "sidebar_performance"),
+        ("storage", "sidebar_storage"),
+        ("battery", "sidebar_battery"),
         ("gen", "sidebar_general"),
     ]
 

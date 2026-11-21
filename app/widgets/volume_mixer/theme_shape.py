@@ -312,6 +312,14 @@ def pop_amount(elapsed: float) -> float:
     return k * k
 
 
+def digits_overhang(d: Digits | None, header_h: float, margin: float = 6.0) -> float:
+    """Quanto (px) o número em imagem desce abaixo do cabeçalho de `header_h` (0 sem `digits` ou se cabe). Serve para
+    a gaveta de dispositivos abrir abaixo dele em vez de cobri-lo. `margin` cobre a inclinação de cada algarismo."""
+    if d is None:
+        return 0.0
+    return max(0.0, NUMBER_CY + d.y + d.height / 2.0 + margin - header_h)
+
+
 def paint_digits(p: QPainter, card: QRectF, d: Digits, value: int, muted: bool, pop: float = 0.0) -> None:
     """Desenha `value` alinhado à direita no lugar do número do cabeçalho. `pop` (0..1) é o pulo da troca."""
     text = str(max(0, min(100, int(value))))

@@ -9,12 +9,15 @@ from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
 from app.core.desktop_pin import DesktopPinMixin
 from app.core.scale_animator import ScaleAnimator
 from app.core.position_glide import glide_widget_to
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.i18n import t
 from app.services.repeat_modes import next_repeat_mode
 from app.core.colorimetry import (
     ThemePalette,
     get_default_palette,
     extract_palette_from_image,
+    lerp_palette,
+    palettes_are_close,
 )
 from app.ui_components.fluent_menu import FluentMusicMenu
 from app.ui_components.menu_action_bar import ActionBarItem
@@ -55,6 +58,68 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     MIN_SAFE_SCALE: float = 0.35  # ~70% do baseline 0.50 (tamanho seguro e legível)
     MAX_SAFE_SCALE: float = 0.80  # ~160% do baseline 0.50 (proporção segura sem estourar limites)
     CARD_RADIUS: float = 44.0
+    # Resolução da barra de progresso: mais fina que a barra em qualquer escala (movimento subpixel continua suave),
+    # mas tocando só se redesenha quando a barra ou o tempo exibido muda, não 60x/s.
+    PLAYHEAD_STEPS: int = 2000
+
+    def _sync_playback_position(self, pos: float, dur: float, track_changed: bool, now: float) -> bool:
+        """
+        Acerta o tempo exibido com o que o player informou: salto na faixa nova ou em desvio grande, correção suave
+        em desvio pequeno. Parado enquanto o usuário arrasta a barra ou logo após um seek enviado. True se mudou.
+        """
+        can_sync = (
+            not self.is_dragging_bar
+            and self.pressed_btn != "bar"
+            and (now - self._last_seek_sent > 1.5)
+        )
+        if not (can_sync and (dur > 0 or track_changed)):
+            return False
+        if track_changed:
+            self.current_time = min(self.duration, max(0.0, pos))
+            return True
+        drift = pos - self.current_time
+        if abs(drift) > 1.5:
+            self.current_time = min(self.duration, max(0.0, pos))
+            return True
+        if abs(drift) > 0.15:
+            self.current_time = min(self.duration, max(0.0, self.current_time + drift * 0.35))
+            return True
+        return False
+
+    def _on_tick(self):
+        """Quadro das skins de capa (Capa Completa, Ecos): cores, onda do app e avanço da barra. Skins com mais
+        movimento (Capa Empilhada) sobrescrevem; o vinil tem a própria física."""
+        now = time.perf_counter()
+        dt = min(0.05, now - self.last_tick)
+        self.last_tick = now
+        needs_update = False
+
+        if not palettes_are_close(self.current_palette, self.target_palette):
+            self.current_palette = lerp_palette(self.current_palette, self.target_palette, min(1.0, dt * 4.5))
+            needs_update = True
+
+        self.soundwave.update(dt, self.is_playing)
+        if self.provider == "generic" and self.is_playing:
+            needs_update = True
+
+        if self.is_playing and not self.is_dragging_bar:
+            if self.duration > 0:
+                self.current_time = min(self.duration, self.current_time + dt)
+            if self._playhead_moved():   # só quando a barra/o tempo exibido mudam (não 60x/s inteiro)
+                needs_update = True
+
+        if needs_update:
+            self.update()
+
+    def _playhead_moved(self) -> bool:
+        """True se o segundo exibido ou a posição da barra mudou desde o último quadro pedido por ela."""
+        dur = float(getattr(self, "duration", 0.0) or 0.0)
+        cur = float(getattr(self, "current_time", 0.0) or 0.0)
+        key = (int(cur), int(cur / dur * self.PLAYHEAD_STEPS) if dur > 0 else 0)
+        if key == getattr(self, "_playhead_key", None):
+            return False
+        self._playhead_key = key
+        return True
 
     def __init__(self, base_width: int, base_height: int, scale: float | None = None):
         super().__init__()
@@ -549,6 +614,7 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         if timer is not None and not timer.isActive():
             if hasattr(self, "last_tick"):
                 self.last_tick = time.perf_counter()  # evita um dt grande no primeiro frame
+            timer.setInterval(refresh_interval_ms(self))   # na taxa do monitor onde o widget está (não 16 ms fixos)
             timer.start()
         super().showEvent(event)
         self._desktop_pin_shown()          # camada: logo acima do desktop (fixado) ou sempre no topo

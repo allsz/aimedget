@@ -231,12 +231,35 @@ def join_from_rects(first: Tree, second: Tree, ax: str, rects: Dict[str, Rect], 
     return Join(first, second, ax, ai, ss - fs, gap)
 
 
-def _layout(tree: Tree, sizes: Dict[str, Tuple[float, float]]):
+def _layout(tree: Tree, sizes: Dict[str, Tuple[float, float]], absent: frozenset = frozenset()):
+    """
+    Posições relativas e contorno de `tree`. Membros em `absent` (ocultos pelo usuário) não ocupam espaço: o lado que
+    ficou vazio some da junção (sem folga dobrada) e o contorno visível encolhe, então o resto fecha as fileiras. A
+    relação gravada (eixo, alinhamento, folga) não muda: quando o membro volta, o lugar dele reabre igual.
+    Contorno None = subárvore inteira ausente. Membro ausente fica num ponto da borda do vizinho (onde vai reaparecer).
+    """
     if isinstance(tree, str):
+        if tree in absent:
+            return {tree: (0.0, 0.0)}, None
         w, h = sizes[tree]
         return {tree: (0.0, 0.0)}, Rect(0.0, 0.0, w, h)
-    pa, a = _layout(tree.A, sizes)
-    pb, b = _layout(tree.B, sizes)
+    pa, a = _layout(tree.A, sizes, absent)
+    pb, b = _layout(tree.B, sizes, absent)
+    if a is None and b is None:
+        out = dict(pa)
+        out.update(pb)
+        return out, None
+    if b is None:   # o lado B sumiu: A fica como está; os de B esperam na borda de A que dá para eles
+        px, py = (a.r, a.t) if tree.ax == "x" else (a.l, a.b)
+        out = dict(pa)
+        for k, (x, y) in pb.items():
+            out[k] = (x + px, y + py)
+        return out, a
+    if a is None:   # o lado A sumiu: B fica como está; os de A esperam na borda de B que dá para eles
+        out = dict(pb)
+        for k, (x, y) in pa.items():
+            out[k] = (x + b.l, y + b.t)
+        return out, b
     if tree.ax == "x":
         sx = a.r + tree.gap - b.l
         sy = (a.t - b.t if tree.ai == 0 else a.b - b.b if tree.ai == 1
@@ -251,12 +274,18 @@ def _layout(tree: Tree, sizes: Dict[str, Tuple[float, float]]):
     return out, union([a, b.moved(sx, sy)])
 
 
-def layout(tree: Tree, sizes: Dict[str, Tuple[float, float]], root: str, root_pos: Tuple[float, float]):
+def layout(tree: Tree, sizes: Dict[str, Tuple[float, float]], root: str, root_pos: Tuple[float, float],
+           absent: Iterable[str] = ()):
     """Posições (canto superior esquerdo de cada cartão) do grupo inteiro, com `root` parado em `root_pos`."""
-    rel, _bounds = _layout(tree, sizes)
+    rel, _bounds = _layout(tree, sizes, frozenset(absent))
     rx, ry = rel[root]
     dx, dy = root_pos[0] - rx, root_pos[1] - ry
     return {k: (x + dx, y + dy) for k, (x, y) in rel.items()}
+
+
+def layout_relative(tree: Tree, sizes: Dict[str, Tuple[float, float]], absent: Iterable[str] = ()):
+    """Posições relativas e o contorno visível (None se todos ausentes), para quem decide onde o grupo fica."""
+    return _layout(tree, sizes, frozenset(absent))
 
 
 def prune(tree: Tree, key: str, rects: Dict[str, Rect]) -> Optional[Tree]:
