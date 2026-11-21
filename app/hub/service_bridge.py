@@ -7,6 +7,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QRect, Signal
 from PySide6.QtWidgets import QApplication
 
+from app.core.anchor_manager import anchor_manager
 from app.core.config_manager import config_manager
 from app.core.osd_anchor import link_flyouts
 from app.services.audio_endpoint_service import AudioEndpointService
@@ -460,6 +461,7 @@ class HubServiceBridge(QObject):
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
         self.music_controller.settle()
+        self._leave_anchor_group(self.music_controller.skin)
         self.music_controller.skin.glide_card_to(x, y)   # na tela, o cartão desliza até o lugar escolhido
         config_manager.set_music_position_remembered(True, x, y)
 
@@ -561,6 +563,7 @@ class HubServiceBridge(QObject):
         margin = 24
 
         x, y = self._calc_coords(screen_geo, w, h, pos_key, margin)
+        self._leave_anchor_group(self.timer_controller.skin)
         self.timer_controller.skin.glide_square_to(x, y)   # na tela, o quadrado desliza até o lugar escolhido
         config_manager.set_timer_position_remembered(True, x, y)
 
@@ -594,6 +597,7 @@ class HubServiceBridge(QObject):
         w, h = self.weather_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.weather_controller.settle()
+        self._leave_anchor_group(self.weather_controller.skin)
         self.weather_controller.skin.glide_card_to(x, y)
         config_manager.set_weather("remember_position", True)
         config_manager.set_weather("position", [x, y])
@@ -628,6 +632,7 @@ class HubServiceBridge(QObject):
         w, h = self.performance_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.performance_controller.settle()
+        self._leave_anchor_group(self.performance_controller.skin)
         self.performance_controller.skin.glide_card_to(x, y)
         config_manager.set_performance("remember_position", True)
         config_manager.set_performance("position", [x, y])
@@ -659,6 +664,7 @@ class HubServiceBridge(QObject):
         w, h = self.storage_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.storage_controller.settle()
+        self._leave_anchor_group(self.storage_controller.skin)
         self.storage_controller.skin.glide_card_to(x, y)
         config_manager.set_storage("remember_position", True)
         config_manager.set_storage("position", [x, y])
@@ -690,6 +696,7 @@ class HubServiceBridge(QObject):
         w, h = self.battery_controller.skin.card_size()
         x, y = self._calc_coords(app.primaryScreen().availableGeometry(), w, h, pos_key, 24)
         self.battery_controller.settle()
+        self._leave_anchor_group(self.battery_controller.skin)
         self.battery_controller.skin.glide_card_to(x, y)
         config_manager.set_battery("remember_position", True)
         config_manager.set_battery("position", [x, y])
@@ -726,6 +733,16 @@ class HubServiceBridge(QObject):
                 pass
 
     # --- Helper de Posicionamento Geométrico ---
+
+    @staticmethod
+    def _leave_anchor_group(skin):
+        """
+        Escolher um quadrante no Hub dá ao widget um lugar próprio: ele sai do grupo de ancoragem (os outros ficam
+        juntos, onde estão). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
+        """
+        mgr = anchor_manager()
+        if mgr.is_grouped(skin):
+            mgr.detach(skin)
 
     def _calc_coords(self, screen_geo: QRect, w: int, h: int, pos_key: str, margin: int) -> tuple[int, int]:
         sx = screen_geo.x()

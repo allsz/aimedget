@@ -611,3 +611,51 @@ def test_group_with_a_member_that_cannot_pin_stays_on_top(env):
     env.mgr.align_widgets(a, axis="y", align=0)
     QTest.qWait(900)
     assert not a.is_desktop_mode()            # uma camada só: o grupo inteiro fica por cima
+
+
+def test_picking_a_quadrant_in_the_hub_takes_the_widget_out_of_its_group(env, monkeypatch):
+    """Bateria ancorada a Clima+Desempenho, posição escolhida no Hub: ela vai sozinha e SAI do grupo. Arrastá-la
+    depois não leva os outros; os outros continuam juntos, onde estavam."""
+    from types import SimpleNamespace
+    from unittest import mock
+    from app.hub.service_bridge import HubServiceBridge
+
+    a = env.make("weather", 200, 200)
+    b = env.make("performance", 700, 260)
+    c = env.make("battery", 1200, 300)
+    env.mgr.set_anchored(b, True)
+    _join_right(env, a, b)
+    env.mgr.set_anchored(c, True)
+    _join_right(env, b, c)
+    assert env.mgr.group_of("battery") is env.mgr.group_of("weather")
+    keep_a, keep_b = _rect(a), _rect(b)
+
+    monkeypatch.setattr(config_manager, "set_battery", lambda *a, **k: None)
+    fake = SimpleNamespace(
+        battery_controller=SimpleNamespace(skin=c, settle=lambda: None,
+                                           remember_position_changed=mock.Mock()),
+        _calc_coords=lambda *a: (60, 700),
+        _leave_anchor_group=HubServiceBridge._leave_anchor_group,
+    )
+    HubServiceBridge.move_battery_to_screen_position(fake, "bl")
+    QTest.qWait(700)                                             # o deslize até o quadrante termina
+
+    assert not env.mgr.is_grouped(c)
+    assert env.mgr.is_grouped(a) and env.mgr.group_of("weather") is env.mgr.group_of("performance")
+    assert _rect(a) == keep_a and _rect(b) == keep_b             # os que ficaram não se mexeram
+    assert _rect(c).l == pytest.approx(60, abs=2) and _rect(c).t == pytest.approx(700, abs=2)
+
+    _drag(env.mgr, c, 40, -30)                                   # arrastar a bateria: só ela anda
+    env.mgr.drag_end(c)
+    assert _rect(a) == keep_a and _rect(b) == keep_b
+    _drag(env.mgr, a, 25, 15)                                    # e o par continua um grupo
+    env.mgr.drag_end(a)
+    assert _rect(b).l - keep_b.l == pytest.approx(25, abs=1)
+    assert ["battery" not in str(g) for g in env.store["groups"]] == [True] * len(env.store["groups"])
+
+
+def test_picking_a_quadrant_for_a_widget_that_is_not_grouped_is_harmless(env):
+    from app.hub.service_bridge import HubServiceBridge
+    a = env.make("weather", 200, 200)
+    HubServiceBridge._leave_anchor_group(a)
+    assert not env.mgr.is_grouped(a)
