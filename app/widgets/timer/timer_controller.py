@@ -27,6 +27,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     MODES = ("timer", "stopwatch", "alarm")
 
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
     desktop_mode_changed = Signal(bool)      # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
@@ -96,6 +97,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
                 old_skin.alarm_time_changed.disconnect(self.set_alarm_time)
                 old_skin.mode_changed.disconnect(self.set_mode)
                 old_skin.close_requested.disconnect(self.on_skin_closed)
+                old_skin.configure_requested.disconnect(self.configure_requested.emit)
                 old_skin.skin_switch_requested.disconnect(self.set_skin)
                 old_skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
                 old_skin.remember_position_changed.disconnect(self.remember_position_changed.emit)
@@ -110,6 +112,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.alarm_time_changed.connect(self.set_alarm_time)
         self.skin.mode_changed.connect(self.set_mode)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.skin_switch_requested.connect(self.set_skin)
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
         self.skin.remember_position_changed.connect(self.remember_position_changed.emit)

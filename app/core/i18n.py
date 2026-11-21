@@ -69,6 +69,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "skin_stacked_sub": "Envelopes 3D e pastel",
         "menu_skins": "Skins",
         "menu_manage_skins": "Gerenciar skins no Hub...",
+        "menu_configure_widget": "Configurar",
         "menu_close_widget": "Fechar widget",
         "anchor_menu_anchor": "Ancorar",
         "anchor_menu_detach": "Soltar do grupo",
@@ -493,7 +494,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "storage_always_expanded_title": "Sempre expandido",
         "storage_always_expanded_sub": "Mantém todas as pastas visíveis sem recolher ao clicar fora.",
         "storage_refresh_now": "Atualizar agora",
-        "storage_manage_folders": "Gerenciar pastas...",
     },
     "en": {
         # Sidebar
@@ -555,6 +555,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "music_skin_toggle_tooltip": "Enable in quick switch menu",
         "menu_skins": "Skins",
         "menu_manage_skins": "Manage skins in Hub...",
+        "menu_configure_widget": "Configure",
         "menu_close_widget": "Close widget",
         "anchor_menu_anchor": "Anchor",
         "anchor_menu_detach": "Detach from group",
@@ -977,7 +978,6 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "storage_always_expanded_title": "Always expanded",
         "storage_always_expanded_sub": "Keeps the full folder list open instead of collapsing on outside click.",
         "storage_refresh_now": "Refresh now",
-        "storage_manage_folders": "Manage folders...",
     },
 }
 

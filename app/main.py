@@ -62,6 +62,7 @@ def main():
     hub_window = AimedgetHubWindow()
     bridge.manage_music_skins_requested.connect(hub_window.show_music_skins)
     bridge.manage_weather_cities_requested.connect(hub_window.show_weather_cities)
+    bridge.configure_widget_requested.connect(hub_window.show_widget_page)
 
     instance.show_requested.connect(hub_window.show_and_activate)
     if not start_minimized:

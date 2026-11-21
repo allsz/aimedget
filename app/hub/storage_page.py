@@ -240,9 +240,6 @@ class StoragePage(BaseHubPage):
         self.controller.skin.raise_()
         self.controller.skin.activateWindow()
 
-    def focus_folders(self):
-        self.scroll.ensureWidgetVisible(self.folders_card)
-
     # --- Sincronização ---
 
     def _sync_size(self):

@@ -164,6 +164,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     """Base de janela flutuante sem moldura com sombra, escala, arraste e fixação no desktop."""
 
     close_requested = Signal()
+    configure_requested = Signal()   # "Configurar" no menu: abre o Hub na página do widget
     scale_changed = Signal(float)   # pedido de um tamanho novo (menu, roda, soltar a alça): quem decide é o controlador
     scale_applied = Signal(float)   # o tamanho de fato aplicado, a cada quadro (o Hub acompanha a animação)
     desktop_mode_changed = Signal(bool)

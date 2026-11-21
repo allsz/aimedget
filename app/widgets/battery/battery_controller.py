@@ -37,6 +37,7 @@ def _saved_size() -> tuple[float, float]:
 
 class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
     options_changed = Signal(object)          # Options
@@ -56,6 +57,7 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.option_requested.connect(self._on_option_requested)
         self.skin.size_committed.connect(self._on_size_committed)
         self.skin.refresh_requested.connect(self.service.refresh)

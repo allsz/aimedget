@@ -105,6 +105,7 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     alarm_time_changed = Signal(int)   # horário do modo Alarme (segundos desde a meia-noite)
     mode_changed = Signal(str)
     close_requested = Signal()
+    configure_requested = Signal()
     skin_switch_requested = Signal(str)
     desktop_mode_changed = Signal(bool)   # "Fixar na área de trabalho" no menu (o controller aplica e grava)
     remember_position_changed = Signal(bool)
@@ -410,6 +411,9 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         menu.addSeparator()
 
         # Fechar Widget
+        act_configure = QAction(t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

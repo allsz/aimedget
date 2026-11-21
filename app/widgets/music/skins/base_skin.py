@@ -37,6 +37,7 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     skin_switch_requested = Signal(str)
     manage_skins_requested = Signal()
     close_requested = Signal()   # "Fechar widget" no menu de contexto
+    configure_requested = Signal()   # "Configurar": abre o Hub na página do Music
     volume_wheel_requested = Signal(float)  # entalhes da roda (+ = sobe, fracionário em touchpads)
     desktop_mode_changed = Signal(bool)     # "Fixar na área de trabalho" no menu (o controller aplica e grava)
 
@@ -328,6 +329,19 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
             p.setPen(pen)
             p.drawLine(QPointF(9.5, 9.5), QPointF(22.5, 22.5))
             p.drawLine(QPointF(22.5, 9.5), QPointF(9.5, 22.5))
+        elif kind == "configure":
+            # Engrenagem: aro com 6 dentes curtos e furo central, no mesmo traço dos demais
+            import math
+            pen = QPen(c, 2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QPointF(16, 16), 6.5, 6.5)
+            p.drawEllipse(QPointF(16, 16), 2.4, 2.4)
+            for k in range(6):
+                a = math.radians(k * 60)
+                p.drawLine(QPointF(16 + 6.5 * math.cos(a), 16 + 6.5 * math.sin(a)),
+                           QPointF(16 + 9.5 * math.cos(a), 16 + 9.5 * math.sin(a)))
 
         p.end()
         return QIcon(pm)
@@ -771,6 +785,9 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
 
         # Fechar o widget (como no Timer): última opção, separada das preferências
         menu.addSeparator()
+        act_configure = QAction(self._build_minimal_skin_icon("configure", is_dark), t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(self._build_minimal_skin_icon("close", is_dark), t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

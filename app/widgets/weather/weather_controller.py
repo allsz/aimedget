@@ -131,6 +131,7 @@ def placeholder_hours() -> list:
 
 class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     skin_changed = Signal(str)
     scale_changed = Signal(float)
     desktop_mode_changed = Signal(bool)
@@ -156,6 +157,7 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.refresh_requested.connect(lambda: self.service.refresh(force=True))
         self.skin.units_changed.connect(self.set_units)
         self.skin.scale_changed.connect(self.set_scale)

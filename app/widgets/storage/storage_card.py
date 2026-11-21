@@ -56,7 +56,6 @@ class StorageCard(FloatingCard):
     ANCHOR_KEY = "storage"
 
     refresh_requested = Signal()
-    manage_folders_requested = Signal()
     always_expanded_changed = Signal(bool)
 
     def __init__(
@@ -312,10 +311,6 @@ class StorageCard(FloatingCard):
         act_always.triggered.connect(lambda _c=False: self.always_expanded_changed.emit(not self.state.always_expanded))
         menu.addAction(act_always)
 
-        act_folders = QAction(t("storage_manage_folders"), self)
-        act_folders.triggered.connect(self.manage_folders_requested.emit)
-        menu.addAction(act_folders)
-
         size_menu = FluentMusicMenu(t("weather_menu_size"), menu, theme=theme)
         act_auto = QAction(t("music_scale_auto"), self)
         size_menu.set_trailing_check(act_auto, self.scale_auto)
@@ -330,6 +325,9 @@ class StorageCard(FloatingCard):
         menu.addMenu(size_menu)
 
         menu.addSeparator()
+        act_configure = QAction(t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

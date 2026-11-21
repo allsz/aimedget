@@ -245,6 +245,9 @@ class WeatherCard(FloatingCard):
             menu.addMenu(preview_menu)
 
         menu.addSeparator()
+        act_configure = QAction(t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)
