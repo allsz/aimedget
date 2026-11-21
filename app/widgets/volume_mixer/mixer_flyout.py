@@ -21,7 +21,8 @@ from app.core.theme_art import (
 from app.ui_components.fluent_slider import FluentSlider
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme, load_user_theme
 from app.widgets.volume_mixer.theme_shape import (
-    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, hairline, paint_digits, paint_plates, pop_amount, tilt_transform,
+    DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, digits_overhang, hairline, paint_digits, paint_plates, pop_amount,
+    tilt_transform,
 )
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
@@ -469,6 +470,7 @@ class VolumeMixerFlyout(QWidget):
         for row in self._rows:
             row.apply_theme(theme)
         self._master_drawer.apply_theme(theme)
+        self._master_drawer.lead = digits_overhang(theme.digits, self.HEADER_H)   # gaveta abaixo do número em imagem
         self._update_margins()
         # A janela SEMPRE acompanha as margens (mesmo com o flyout na tela, ex.: trocar de tema no Hub): o card
         # fica no mesmo ponto da tela por construção, então não há salto; sem isso o card sairia cortado.

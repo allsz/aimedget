@@ -19,7 +19,7 @@ from app.core.theme_art import collect_issues, overflow_margins
 from app.core.typography import init_app_font
 from app.widgets.volume_mixer.mixer_flyout import VolumeMixerFlyout
 from app.widgets.volume_mixer.theme import DEFAULT_THEME, theme_from_dict
-from app.widgets.volume_mixer.theme_shape import POP_DURATION_S, art_overflow, pop_amount, tilt_transform
+from app.widgets.volume_mixer.theme_shape import POP_DURATION_S, art_overflow, digits_overhang, pop_amount, tilt_transform
 from app.ui_components.fluent_slider import FluentSlider
 
 _app = QApplication.instance() or QApplication([])
@@ -157,6 +157,42 @@ class FlyoutTests(unittest.TestCase):
         f._apply_theme(_parse(data, folder)[0])
         self.addCleanup(f.deleteLater)
         return f
+
+    def test_device_drawer_opens_below_digits_that_hang_off_the_header(self):
+        """Número em imagem que desce do cabeçalho (ex.: Persona): a gaveta de dispositivos abre abaixo dele, sem
+        cobrir o número, e o espaço extra cresce junto com a gaveta (nada pula)."""
+        plain = VolumeMixerFlyout()
+        self.addCleanup(plain.deleteLater)
+        self.assertEqual(plain._master_drawer.lead, 0.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            _digit_sheet(tmp)
+            f = self._flyout({"digits": {"image": "digitos.png", "height": 42, "x": 43, "y": 16}}, tmp)
+        d = f._master_drawer
+        self.assertAlmostEqual(d.lead, digits_overhang(f.theme.digits, f.HEADER_H))
+        self.assertGreater(d.lead, 10.0)
+        # recolhida: nada muda
+        self.assertEqual(d.extra_height(), 0.0)
+        self.assertEqual(d.y_top_for(100.0), plain._master_drawer.y_top_for(100.0))
+        # aberta: o topo desce `lead` e a gaveta ocupa `lead` a mais; no meio da animação, proporcional
+        d.is_routing_open = True
+        d._expand_t, d._current_drawer_h = 1.0, 100.0
+        base = plain._master_drawer
+        base._expand_t, base._current_drawer_h = 1.0, 100.0
+        self.assertAlmostEqual(d.extra_height() - base.extra_height(), d.lead)
+        self.assertAlmostEqual(d.y_top_for(100.0) - base.y_top_for(100.0), d.lead)
+        d._expand_t, base._expand_t = 0.5, 0.5
+        self.assertAlmostEqual(d.extra_height() - base.extra_height(), d.lead * 0.5)
+        self.assertAlmostEqual(d.y_top_for(100.0) - base.y_top_for(100.0), d.lead * 0.5)
+        # trocar para um tema sem número em imagem tira o espaço
+        f._apply_theme(DEFAULT_THEME)
+        self.assertEqual(d.lead, 0.0)
+
+    def test_digits_overhang_is_zero_without_digits_or_when_they_fit(self):
+        self.assertEqual(digits_overhang(None, 48.5), 0.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            _digit_sheet(tmp)
+            small = _parse({"digits": {"image": "digitos.png", "height": 20, "x": 0, "y": 0}}, tmp)[0].digits
+        self.assertEqual(digits_overhang(small, 48.5), 0.0)
 
     def test_window_grows_to_fit_plates_and_tilt(self):
         plain = VolumeMixerFlyout()
