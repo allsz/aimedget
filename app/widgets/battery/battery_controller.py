@@ -10,12 +10,13 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Signal
 
 from app.core.config_manager import config_manager
 from app.core.i18n import i18n
 from app.core.widget_animator import AnimatedVisibilityMixin
 from app.services.battery.service import BatteryService
+from app.services.battery.system_events import SystemEventFilter
 from app.ui_components.floating_card import SCREEN_MARGIN, is_rect_on_screen, place_card_default, restore_card_position
 from app.widgets.battery import layout as lay
 from app.widgets.battery.battery_card import BatteryCard
@@ -58,6 +59,9 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.option_requested.connect(self._on_option_requested)
         self.skin.size_committed.connect(self._on_size_committed)
         self.skin.refresh_requested.connect(self.service.refresh)
+        # Dispositivo ligado/desligado ou PC acordou: lê na hora (com rajada), sem esperar o intervalo
+        self._sys_filter = SystemEventFilter(self.service.notify_change)
+        self._sys_filter_installed = False
         i18n.language_changed.connect(lambda _lang: self.skin.update())
 
     # --- Dados ---
@@ -149,9 +153,21 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
             self.skin.set_devices(self.service.last_devices)
         self._animate_show()
         self.service.start()
+        self._install_sys_filter(True)
         self.status_changed.emit(True)
 
+    def _install_sys_filter(self, on: bool):
+        app = QCoreApplication.instance()
+        if app is None or on == self._sys_filter_installed:
+            return
+        if on:
+            app.installNativeEventFilter(self._sys_filter)
+        else:
+            app.removeNativeEventFilter(self._sys_filter)
+        self._sys_filter_installed = on
+
     def hide(self):
+        self._install_sys_filter(False)
         self.service.stop()
         self.skin.forget_show_desktop()
         self._animate_hide()
@@ -162,4 +178,5 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
         config_manager.set_battery("enabled", False)
 
     def stop(self):
+        self._install_sys_filter(False)
         self.service.stop()

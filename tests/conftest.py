@@ -50,4 +50,6 @@ except ModuleNotFoundError:
     _battery_service = None
 
 if _battery_service is not None:
+    # A função real fica guardada para os testes que a exercitam com as fontes simuladas
+    _battery_service.real_read_all_sources = _battery_service.read_all_sources
     _battery_service.read_all_sources = lambda: []

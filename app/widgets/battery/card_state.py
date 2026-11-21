@@ -25,6 +25,7 @@ SIZE_SPRING = (320.0, 30.0)
 FADE_SPRING = (380.0, 30.0)
 FILL_SPRING = (200.0, 26.0)
 FACE_SPRING = (520.0, 30.0)
+CHARGE_SPRING = (280.0, 34.0)   # CLOSE (amortecimento crítico): a bolinha entra/sai sem passar do ponto, discreta
 RISE = 12.0                 # o anel novo sobe estes px enquanto aparece
 
 FACE_HOVER = "hover"        # ícone; passar o mouse no cartão mostra a porcentagem
@@ -107,9 +108,14 @@ class Cell:
     scale: Spring
     fill: Spring
     leaving: bool = False
+    charge: Optional[Spring] = None     # 0..1: bolinha de carregando (cresce/aparece e abre espaço; o nome desliza)
+
+    def __post_init__(self):
+        if self.charge is None:
+            self.charge = Spring(1.0 if self.device.charging else 0.0, CHARGE_SPRING, tol=0.004)
 
     def springs(self):
-        return (self.x, self.y, self.alpha, self.scale, self.fill)
+        return (self.x, self.y, self.alpha, self.scale, self.fill, self.charge)
 
 
 @dataclass
@@ -181,6 +187,9 @@ class BatteryState:
                 cell.device = dev
                 changed = True
             cell.fill.t = float(dev.percent) if dev.percent is not None else 0.0
+            cell.charge.t = 1.0 if dev.charging else 0.0
+            if not self.animated:
+                cell.charge.snap()
         if new_ids != self.order:
             changed = True
         self.order = new_ids
@@ -244,7 +253,7 @@ class BatteryState:
                 if dev_id in entering and not instant:
                     cell.y.x = y + RISE
             if instant:
-                for s in (cell.alpha, cell.scale, cell.fill):
+                for s in (cell.alpha, cell.scale, cell.fill, cell.charge):
                     s.snap()
 
     # --- Relógio ---
