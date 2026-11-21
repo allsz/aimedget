@@ -17,7 +17,17 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from app.services.battery import gaming_input, hid_win, logitech, sony, switch_pro, system_events, vxe, xinput
+from app.services.battery import (
+    bluetooth,
+    gaming_input,
+    hid_win,
+    logitech,
+    sony,
+    switch_pro,
+    system_events,
+    vxe,
+    xinput,
+)
 from app.services.battery.models import BatteryDevice, sort_devices
 
 log = logging.getLogger(__name__)
@@ -32,7 +42,8 @@ BURST_DELAYS_S = (0.3, 1.0, 3.0, 6.0)
 # (uma chamada barata) e, se ele mexeu em algo, lemos na hora, no máximo a cada ACTIVITY_GAP_S. Quem sumiu há mais
 # de MISSING_TTL_S deixa de ser procurado.
 # Fontes que mandam dados sem parar (controles): sumir de uma leitura = desligado/desconectado, sem carência.
-STREAMING_SOURCES = frozenset({"xinput", "sony", "switch", "gaming"})
+# O Bluetooth genérico entra aqui também: o "conectado" do Windows é confiável, então sumir é ter desconectado.
+STREAMING_SOURCES = frozenset({"xinput", "sony", "switch", "gaming", bluetooth.SOURCE})
 CONFIRM_DELAY_S = 0.5     # controle faltou uma vez: lê de novo em seguida para confirmar
 ACTIVITY_CHECK_S = 1.0
 ACTIVITY_GAP_S = 5.0
@@ -43,6 +54,25 @@ MICROSOFT_VID = 0x045E
 
 # Fonte -> fabricante dos controles que ela já entrega (a leitura do Windows pula esses, para não duplicar)
 CLAIM_VENDOR = {"xinput": MICROSOFT_VID, "sony": sony.SONY_VID, "switch": switch_pro.NINTENDO_VID}
+
+
+# Fabricante -> fontes com leitor próprio para ele (o Bluetooth genérico pula esses dispositivos se a fonte entregou
+# algo; se ela não entregou nada, o número do Windows serve de reserva)
+DEDICATED_SOURCES = {
+    sony.SONY_VID: {"sony"},
+    switch_pro.NINTENDO_VID: {"switch"},
+    logitech.LOGI_VID: {"logitech"},
+    vxe.VXE_VID: {"vxe"},
+    MICROSOFT_VID: {"xinput", "gaming"},
+}
+
+
+def bluetooth_skip(hids: list, devices: list[BatteryDevice]) -> set[str]:
+    """Endereços Bluetooth que um leitor próprio já cobre: interface HID por Bluetooth de um fabricante cuja fonte
+    entregou algum dispositivo nesta leitura."""
+    sources = {d.source for d in devices}
+    return {addr for addr, vid in bluetooth.hid_addresses(hids).items()
+            if DEDICATED_SOURCES.get(vid, set()) & sources}
 
 
 def claimed_by_vendor(devices: list[BatteryDevice]) -> dict[int, int]:
@@ -76,8 +106,8 @@ def _timed(name: str, fn: Callable[[], list], times: dict) -> list:
 
 
 def read_all_sources() -> list[BatteryDevice]:
-    """Fontes em paralelo (a leitura leva o tempo da mais lenta, não a soma). A leitura do Windows vem depois, porque
-    pula os controles que as outras já entregaram."""
+    """Fontes em paralelo (a leitura leva o tempo da mais lenta, não a soma). As leituras do Windows (controles e
+    Bluetooth genérico) vêm depois, porque pulam o que as outras já entregaram."""
     t0 = time.monotonic()
     times: dict[str, float] = {}
     pool = _executor()
@@ -92,6 +122,8 @@ def read_all_sources() -> list[BatteryDevice]:
         devices += job.result()
     claimed = claimed_by_vendor(devices)
     devices += _timed("gaming", lambda: gaming_input.read_devices(hids, claimed), times)
+    skip = bluetooth_skip(hids, devices)
+    devices += _timed("bluetooth", lambda: bluetooth.read_devices(skip), times)
     log.debug("battery: read %.2fs (%s)", time.monotonic() - t0,
               ", ".join(f"{k} {v:.2f}" for k, v in sorted(times.items())))
     return devices

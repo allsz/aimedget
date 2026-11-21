@@ -271,11 +271,13 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.logitech, "read_devices", slow("logitech")), \
                 mock.patch.object(svc.vxe, "read_devices", slow("vxe")), \
                 mock.patch.object(svc.gaming_input, "read_devices", gaming), \
+                mock.patch.object(svc.bluetooth, "read_devices", lambda skip: [dev("bluetooth")]), \
                 mock.patch.object(svc, "claimed_by_vendor", lambda devs: {"n": len(devs)}):
             t0 = time.monotonic()
             out = REAL_READ()
             elapsed = time.monotonic() - t0
-        self.assertEqual([d.id for d in out], ["xinput", "sony", "switch", "logitech", "vxe", "gaming"])
+        self.assertEqual([d.id for d in out],
+                         ["xinput", "sony", "switch", "logitech", "vxe", "gaming", "bluetooth"])
         self.assertLess(elapsed, 0.6)           # em série seriam 1.0 s
         self.assertEqual(seen_claimed, {"n": 5})   # a leitura do Windows vê tudo das outras
 
@@ -289,6 +291,7 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.logitech, "read_devices", lambda h: []), \
                 mock.patch.object(svc.vxe, "read_devices", lambda h: []), \
                 mock.patch.object(svc.gaming_input, "read_devices", lambda h, c: []), \
+                mock.patch.object(svc.bluetooth, "read_devices", boom), \
                 self.assertLogs("app.services.battery.service", "ERROR"):
             out = REAL_READ()
         self.assertEqual([d.id for d in out], ["sony"])

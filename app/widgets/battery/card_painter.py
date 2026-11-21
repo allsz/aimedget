@@ -66,8 +66,11 @@ _ICON_PATHS = {
     KIND_MOUSE: '<rect x="4.5" y="1.5" width="7" height="13" rx="3.5"/><path d="M8 4.5v2.5"/>',
     KIND_KEYBOARD: '<rect x="1.5" y="3.5" width="13" height="9" rx="2"/>'
                    '<path d="M4.5 7h1M7.5 7h1M10.5 7h1M5 10h6"/>',
-    KIND_CONTROLLER: '<path d="M4.5 4.5h7a3.5 3.5 0 0 1 3.4 4.3l-.6 2.4a1.8 1.8 0 0 1-3 .8L9.6 10.5H6.4L4.7 12a1.8 '
-                     '1.8 0 0 1-3-.8l-.6-2.4a3.5 3.5 0 0 1 3.4-4.3Z"/><path d="M5 6.8v2M4 7.8h2"/>',
+    # Só o contorno, no desenho do DualSense: ombros largos e retos em cima, empunhaduras que descem e abrem, vão no
+    # meio embaixo. Sem botões por dentro: a 14 px eles viram borrão.
+    KIND_CONTROLLER: '<path d="M5.2 3.6h5.6c1.5 0 2.5.9 3.1 2.4l.9 4.8c.3 1.5-.4 2.7-1.7 2.7-1 0-1.6-.6-2.1-1.6'
+                     '-.5-1-1.2-1.4-2.2-1.4H6.2c-1 0-1.7.4-2.2 1.4-.5 1-1.1 1.6-2.1 1.6-1.3 0-2-1.2-1.7-2.7L1.1 6'
+                     'c.6-1.5 1.6-2.4 3.1-2.4Z"/>',
     KIND_HEADSET: '<path d="M2.5 10V8a5.5 5.5 0 0 1 11 0v2"/><rect x="2" y="9.5" width="3" height="4.5" rx="1.2"/>'
                   '<rect x="11" y="9.5" width="3" height="4.5" rx="1.2"/>',
     KIND_PHONE: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.8"/><path d="M7 12.5h2"/>',
@@ -215,7 +218,7 @@ def _paint_cell(p: QPainter, pal: Palette, state: BatteryState, cell, d: float, 
         px = d * (0.24 * (1.0 - both) + 0.20 * both)
         f = _font(px, QFont.Weight.Medium, tabular=True)
         fm = QFontMetricsF(f)
-        text = (f"~{int(round(dev.percent))}%" if dev.approximate else f"{int(round(dev.percent))}%") if known else "–"
+        text = f"{int(round(dev.percent))}%" if known else "–"    # sem "~": não cabe no anel
         k = 0.9 + 0.1 * pct_a
         p.save()
         p.setOpacity(alpha * pct_a)
