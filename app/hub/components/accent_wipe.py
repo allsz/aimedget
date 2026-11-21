@@ -9,8 +9,10 @@ O QSS não anima cor, e reaplicar o estilo do Hub inteiro leva ~70 ms (impossív
    tem uma faixa suave (FEATHER) para não ficar serrilhada.
 
 `exclude` são retângulos (no sistema da camada) que NUNCA são cobertos pela foto, como o próprio seletor de cor e o
-campo hex: eles têm de responder na hora ao clique/arrasto. Sem "Efeitos de animação" do Windows, quem chama
-aplica a cor direto e nem usa esta camada.
+campo hex: eles têm de responder na hora ao clique/arrasto. `carve` são retângulos que ficam FORA dessa exceção
+(mesmo dentro da margem de um `exclude`): o que eles contêm é pintado pela onda por inteiro, nunca meio ao vivo e
+meio na foto (um anel de cor cortado pela margem do seletor mostraria só um arco novo e o resto velho até a onda
+chegar). Sem "Efeitos de animação" do Windows, quem chama aplica a cor direto e nem usa esta camada.
 """
 
 from PySide6.QtCore import QEasingCurve, QEvent, QRect, QRectF, Qt, QVariantAnimation
@@ -43,7 +45,7 @@ class AccentWipe(QWidget):
     def is_running(self) -> bool:
         return self._snapshot is not None
 
-    def start(self, snapshot: QPixmap, exclude: list[QRect] | None = None):
+    def start(self, snapshot: QPixmap, exclude: list[QRect] | None = None, carve: list[QRect] | None = None):
         parent = self.parentWidget()
         self._anim.stop()
         self.setGeometry(parent.rect())
@@ -51,6 +53,8 @@ class AccentWipe(QWidget):
         self._exclude = QRegion()
         for rect in exclude or []:
             self._exclude = self._exclude.united(QRegion(rect))
+        for rect in carve or []:
+            self._exclude = self._exclude.subtracted(QRegion(rect))
         self._progress = 0.0
         self.raise_()
         self.show()

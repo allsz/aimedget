@@ -485,16 +485,25 @@ class AimedgetHubWindow(QMainWindow):
                 rects.append(QRect(w.mapTo(self.shell, QPoint(0, 0)), w.size()).adjusted(-6, -6, 6, 6))
         return rects
 
+    def _wipe_carved_rects(self) -> list[QRect]:
+        """Os círculos de tema (claro/escuro/preto/sistema) ficam acima do seletor, e a margem do seletor invade o
+        pé deles: sem isto só o arco de baixo do anel mudava de cor na hora e o resto esperava a onda."""
+        group = getattr(self.page_gen, "_theme_group", None)
+        if group is None or not group.isVisible():
+            return []
+        return [QRect(group.mapTo(self.shell, QPoint(0, 0)), group.size())]
+
     def _apply_accent_theme(self, resolved: HubTheme, animate: bool):
         """Aplica a cor nova. Animado: foto da janela antiga, troca por baixo e a cor nova é "pintada" da esquerda
         para a direita por cima (a troca em si, ~70 ms, fica escondida atrás da foto)."""
         if animate:
             snapshot = self.shell.grab()
             excluded = self._wipe_excluded_rects()
+            carved = self._wipe_carved_rects()
         self._apply_theme(resolved)
         get_service_bridge().on_theme_changed(resolved)
         if animate:
-            self._accent_wipe.start(snapshot, excluded)
+            self._accent_wipe.start(snapshot, excluded, carved)
 
     def _flush_accent(self, refresh_icons: bool = False):
         self._icons_pending = self._icons_pending or refresh_icons
