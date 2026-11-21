@@ -125,5 +125,37 @@ class SkinCoverOfPreviousTrackTests(unittest.TestCase):
                 self.assertIsNotNone(s.album_pixmap)
 
 
+class StackedSameAlbumCoverTests(unittest.TestCase):
+    """
+    Swipe para outra faixa do MESMO álbum: a capa chega com bytes idênticos aos da anterior. Ela não pode ser
+    confundida com a "capa velha" que o navegador repete (o vinil ficava ~1-2 s na frente antes de revelar).
+    """
+
+    def setUp(self):
+        self.addCleanup(setattr, mw, "_CONFIRMED_COVER", ("", b""))
+        self.s = CapaEmpilhadaSkin(scale=0.5)
+        self.cover = _png("brown")
+        self.s.on_media_updated("Undrunk", "Chris Brown", True, 10.0, 200.0, self.cover)
+        # Usuário acabou de deslizar a capa para a próxima faixa
+        import time
+        self.s._awaiting_swipe_track_change = True
+        self.s._last_user_swipe_time = time.perf_counter()
+
+    def test_confirmed_same_album_cover_is_accepted_at_once(self):
+        mw.confirm_cover("Residuals|Chris Brown", self.cover)
+        self.s.on_media_updated("Residuals", "Chris Brown", True, 0.0, 0.0, self.cover)
+        self.assertTrue(self.s._cover_updated_for_current_track)
+
+    def test_unconfirmed_repeat_of_previous_cover_is_still_ignored(self):
+        # Navegador repetindo a capa anterior, sem confirmação do worker: segue ignorada
+        self.s.on_media_updated("Residuals", "Chris Brown", True, 0.0, 0.0, self.cover)
+        self.assertFalse(self.s._cover_updated_for_current_track)
+
+    def test_confirmation_for_other_track_does_not_count(self):
+        mw.confirm_cover("Undrunk|Chris Brown", self.cover)
+        self.s.on_media_updated("Residuals", "Chris Brown", True, 0.0, 0.0, self.cover)
+        self.assertFalse(self.s._cover_updated_for_current_track)
+
+
 if __name__ == "__main__":
     unittest.main()

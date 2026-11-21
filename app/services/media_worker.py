@@ -145,6 +145,146 @@ def _save_cover_to_disk(track_key: str, data: bytes):
         pass
 
 
+# ── Capas por álbum ──────────────────────────────────────────────────────────────────────────────────────────────
+# As faixas de um mesmo álbum dividem a capa: a imagem fica guardada UMA vez, sob a chave do álbum, e cada faixa
+# (ou etiqueta de álbum do player) só guarda um apontamento para ela. Chaves de álbum, da mais certeira à menos:
+#   "deezer:<id>" / "itunes:<id>"  → identidade vinda da busca online
+#   "tag:<álbum>|<artista>"        → etiquetas que o próprio player informa (dá para consultar antes de ir à rede)
+_ALBUM_ART_CACHE: dict[str, bytes] = {}   # chave do álbum -> bytes da capa
+_ALBUM_LINKS: dict[str, str] = {}         # faixa ("título|artista") ou etiqueta -> chave do álbum
+
+_UNKNOWN_ARTISTS = ("", "artista desconhecido", "unknown artist", "youtube")
+
+
+def album_tag_key(album: str, album_artist: str, artist: str = "") -> str:
+    """Chave do álbum a partir das etiquetas do player; vazia quando não há álbum ou artista confiável."""
+    alb = " ".join((album or "").split()).lower()
+    who = " ".join((album_artist or artist or "").split()).lower()
+    if not alb or who in _UNKNOWN_ARTISTS:
+        return ""
+    return f"tag:{alb}|{who}"
+
+
+def _link_path(alias: str) -> str:
+    return os.path.join(_get_disk_cache_dir(), f"lnk_{_track_hash(alias)}.txt")
+
+
+def _album_path(album_key: str) -> str:
+    return os.path.join(_get_disk_cache_dir(), f"alb_{_track_hash(album_key)}.img")
+
+
+def _album_cover(album_key: str) -> bytes:
+    """Capa do álbum em memória ou disco (vazio se nunca foi guardada)."""
+    if not album_key:
+        return b""
+    data = _ALBUM_ART_CACHE.get(album_key)
+    if data:
+        return data
+    try:
+        path = _album_path(album_key)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                data = f.read()
+            if len(data) > 1024:
+                _ALBUM_ART_CACHE[album_key] = data
+                return data
+    except Exception:
+        pass
+    return b""
+
+
+def _album_for(alias: str) -> str:
+    """Chave do álbum para a qual uma faixa/etiqueta aponta (memória ou disco)."""
+    if not alias:
+        return ""
+    key = _ALBUM_LINKS.get(alias)
+    if key:
+        return key
+    try:
+        path = _link_path(alias)
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                key = f.read().strip()
+            if key:
+                _ALBUM_LINKS[alias] = key
+                return key
+    except Exception:
+        pass
+    return ""
+
+
+def _link(alias: str, album_key: str):
+    if not alias or not album_key or alias == album_key or _ALBUM_LINKS.get(alias) == album_key:
+        return
+    _ALBUM_LINKS[alias] = album_key
+    try:
+        with open(_link_path(alias), "w", encoding="utf-8") as f:
+            f.write(album_key)
+    except Exception:
+        pass
+
+
+def store_album_cover(album_key: str, data: bytes, aliases=()):
+    """Guarda a capa uma vez sob `album_key` e aponta cada alias (faixa, etiqueta) para ela."""
+    if not album_key or not data or len(data) <= 1024:
+        return
+    if _ALBUM_ART_CACHE.get(album_key) != data:
+        _ALBUM_ART_CACHE[album_key] = data
+        try:
+            with open(_album_path(album_key), "wb") as f:
+                f.write(data)
+        except Exception:
+            pass
+    for alias in aliases:
+        _link(alias, album_key)
+
+
+def cached_cover(track_key: str, tag_key: str = "") -> bytes:
+    """
+    Capa já conhecida para a faixa, sem rede: faixa em memória → álbum pelas etiquetas do player → álbum para o
+    qual a faixa aponta → capa antiga por faixa (cache de versões anteriores).
+    """
+    data = _HD_ART_CACHE.get(track_key)
+    if data:
+        return data
+    for alias in (tag_key, track_key):
+        album_key = alias if alias.startswith("tag:") and _album_cover(alias) else _album_for(alias)
+        data = _album_cover(album_key)
+        if data:
+            _HD_ART_CACHE[track_key] = data
+            if tag_key and alias != tag_key:
+                _link(tag_key, album_key)
+            return data
+    data = _load_cover_from_disk(track_key)
+    if data:
+        _HD_ART_CACHE[track_key] = data
+    return data
+
+
+# Capa que o worker já confirmou como sendo da faixa atual (cache, capa nativa travada ou busca online).
+# Duas faixas do mesmo álbum mandam bytes idênticos; sem isso a UI confunde a capa certa com a "capa velha" da
+# faixa anterior que o navegador às vezes repete logo após a troca.
+_CONFIRMED_COVER: tuple[str, bytes] = ("", b"")
+
+
+def confirm_cover(track_key: str, data: bytes):
+    global _CONFIRMED_COVER
+    if track_key and data:
+        _CONFIRMED_COVER = (track_key, data)
+
+
+def cover_confirmed_for(title: str, artist: str, data: bytes) -> bool:
+    """A capa `data` foi confirmada pelo worker para esta faixa (e não é sobra da anterior)?"""
+    key, confirmed = _CONFIRMED_COVER
+    return bool(data) and key == f"{title}|{artist}" and confirmed == data
+
+
+def _download(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=2.5) as resp:
+        data = resp.read()
+    return data if len(data) > 1024 else b""
+
+
 def _load_extras_from_disk(track_key: str) -> tuple[str, list[bytes]] | None:
     """Carrega metadados de álbum e capas secundárias da pilha diretamente do disco."""
     try:
@@ -251,19 +391,27 @@ def _clean_metadata_for_search(title: str, artist: str) -> tuple[str, str]:
     return clean_t, clean_a
 
 
-def fetch_online_album_art(title: str, artist: str) -> bytes:
+def _resolve_album(album_key: str, cover_url: str, track_key: str, tag_key: str) -> bytes:
+    """Capa do álbum achado na busca: reaproveita a já guardada (sem baixar) ou baixa uma vez e guarda."""
+    data = _album_cover(album_key)
+    if not data:
+        data = _download(cover_url)
+    if data:
+        store_album_cover(album_key, data, aliases=(track_key, tag_key))
+        _HD_ART_CACHE[track_key] = data
+    return data
+
+
+def fetch_online_album_art(title: str, artist: str, tag_key: str = "") -> bytes:
     """
     Busca automaticamente a capa oficial otimizada para o tamanho do widget (500x500 / 600x600)
-    via Deezer API (cover_big) e iTunes Search API (600x600bb), com cache persistente em disco.
+    via Deezer API (cover_big) e iTunes Search API (600x600bb). A capa é guardada por álbum: as outras faixas
+    do mesmo álbum só fazem a busca de texto e reaproveitam a imagem já baixada.
     """
     track_key = f"{title}|{artist}"
-    if track_key in _HD_ART_CACHE:
-        return _HD_ART_CACHE[track_key]
-
-    disk_data = _load_cover_from_disk(track_key)
-    if disk_data:
-        _HD_ART_CACHE[track_key] = disk_data
-        return disk_data
+    known = cached_cover(track_key, tag_key)
+    if known:
+        return known
 
     clean_title, clean_artist = _clean_metadata_for_search(title, artist)
     if not clean_title or clean_title.lower() in ("sem título", "nenhuma mídia ativa", "main theme"):
@@ -291,12 +439,11 @@ def fetch_online_album_art(title: str, artist: str) -> bytes:
                     or album_obj.get("cover_xl")
                 )
                 if cover_url:
-                    with urllib.request.urlopen(cover_url, timeout=2.5) as c_resp:
-                        img_bytes = c_resp.read()
-                        if len(img_bytes) > 1024:
-                            _HD_ART_CACHE[track_key] = img_bytes
-                            _save_cover_to_disk(track_key, img_bytes)
-                            return img_bytes
+                    # Sem id do álbum, a própria URL da capa identifica a imagem
+                    album_key = f"deezer:{album_obj.get('id') or cover_url}"
+                    img_bytes = _resolve_album(album_key, cover_url, track_key, tag_key)
+                    if img_bytes:
+                        return img_bytes
     except Exception:
         pass
 
@@ -307,15 +454,14 @@ def fetch_online_album_art(title: str, artist: str) -> bytes:
         with urllib.request.urlopen(req, timeout=2.5) as resp:
             data = json.loads(resp.read().decode())
             if data.get("resultCount", 0) > 0:
-                art_100 = data["results"][0].get("artworkUrl100", "")
+                first = data["results"][0]
+                art_100 = first.get("artworkUrl100", "")
                 if art_100:
                     cover_url = art_100.replace("100x100bb", "600x600bb")
-                    with urllib.request.urlopen(cover_url, timeout=2.5) as c_resp:
-                        img_bytes = c_resp.read()
-                        if len(img_bytes) > 1024:
-                            _HD_ART_CACHE[track_key] = img_bytes
-                            _save_cover_to_disk(track_key, img_bytes)
-                            return img_bytes
+                    album_key = f"itunes:{first.get('collectionId') or cover_url}"
+                    img_bytes = _resolve_album(album_key, cover_url, track_key, tag_key)
+                    if img_bytes:
+                        return img_bytes
     except Exception:
         pass
 
@@ -806,14 +952,14 @@ class WindowsMediaWorker(QObject):
             self._last_repeat_ui = ui_mode
             self.repeat_state_changed.emit(ui_mode)
 
-    def _trigger_hd_fetch_async(self, track_key: str, title: str, artist: str):
+    def _trigger_hd_fetch_async(self, track_key: str, title: str, artist: str, tag_key: str = ""):
         """Busca a capa oficial otimizada (500x500 / 600x600) em background e emite o sinal no instante em que chega."""
         if self._fetching_hd_for_key == track_key:
             return
         self._fetching_hd_for_key = track_key
 
         def _worker():
-            hd_bytes = fetch_online_album_art(title, artist)
+            hd_bytes = fetch_online_album_art(title, artist, tag_key)
             if not hd_bytes and " - " in title:
                 # Vídeo de terceiros: o "artista" é o canal e o título vem como "Obra - Faixa"; tenta pelas partes
                 left, _, right = title.partition(" - ")
@@ -823,6 +969,7 @@ class WindowsMediaWorker(QObject):
                 _HD_ART_CACHE[track_key] = hd_bytes
                 self._cached_thumb = hd_bytes
                 self._hd_cover_locked = True
+                confirm_cover(track_key, hd_bytes)
                 print(f"[MediaWorker] Capa otimizada aplicada para: '{title}' ({len(hd_bytes)} bytes)")
                 # Emite imediatamente para a UI atualizar sem esperar o próximo ciclo de loop
                 self.media_updated.emit(
@@ -955,6 +1102,9 @@ class WindowsMediaWorker(QObject):
 
                     now_mono = time.monotonic()
                     track_key = f"{title}|{artist}"
+                    tag_key = album_tag_key(
+                        getattr(props, "album_title", "") or "", getattr(props, "album_artist", "") or "", artist
+                    )
 
                     # 1. Mudança de faixa detectada na playlist
                     if track_key != self._last_track_key:
@@ -965,20 +1115,16 @@ class WindowsMediaWorker(QObject):
                         # O dado de posição que vinha antes da troca: se ele continuar chegando, é da faixa anterior
                         self._stale_tl_sig = self._last_tl_sig
 
-                        # 1a. Verifica cache em memória ou cache persistente em disco (0ms, zero piscadas!)
-                        if track_key in _HD_ART_CACHE:
-                            self._cached_thumb = _HD_ART_CACHE[track_key]
+                        # 1a. Capa já conhecida da faixa ou do álbum dela (memória/disco, 0ms, zero piscadas!)
+                        known = cached_cover(track_key, tag_key)
+                        if known:
+                            self._cached_thumb = known
                             self._hd_cover_locked = True
+                            confirm_cover(track_key, known)
                         else:
-                            disk_bytes = _load_cover_from_disk(track_key)
-                            if disk_bytes:
-                                _HD_ART_CACHE[track_key] = disk_bytes
-                                self._cached_thumb = disk_bytes
-                                self._hd_cover_locked = True
-                            else:
-                                # Retém suavemente a capa atual na tela até que a nova (GSMTC ou online) esteja pronta
-                                self._hd_cover_locked = False
-                                self._trigger_hd_fetch_async(track_key, title, artist)
+                            # Retém suavemente a capa atual na tela até que a nova (GSMTC ou online) esteja pronta
+                            self._hd_cover_locked = False
+                            self._trigger_hd_fetch_async(track_key, title, artist, tag_key)
 
                     # 2. Monitora o GSMTC para usar a capa nativa do player imediatamente se for quadrada/nítida
                     if not self._hd_cover_locked:
@@ -995,12 +1141,17 @@ class WindowsMediaWorker(QObject):
                                 # achar a oficial. Ícones pequenos e quadrados continuam valendo como capa provisória.
                                 self._cached_thumb = b"" if self._is_video_frame(raw_gsmtc) else raw_gsmtc
                                 if self._is_low_res_or_cropped(raw_gsmtc):
-                                    self._trigger_hd_fetch_async(track_key, title, artist)
+                                    self._trigger_hd_fetch_async(track_key, title, artist, tag_key)
                                 else:
                                     # Capa nativa já é quadrada e de boa resolução: trava e salva no cache para evitar 2ª atualização!
                                     self._hd_cover_locked = True
                                     _HD_ART_CACHE[track_key] = raw_gsmtc
-                                    _save_cover_to_disk(track_key, raw_gsmtc)
+                                    confirm_cover(track_key, raw_gsmtc)
+                                    if tag_key:
+                                        # Com álbum informado, guarda uma vez para todas as faixas dele
+                                        store_album_cover(tag_key, raw_gsmtc, aliases=(track_key,))
+                                    else:
+                                        _save_cover_to_disk(track_key, raw_gsmtc)
 
                     # Posição/duração ainda da faixa anterior (Firefox): segura em "desconhecida" até chegar a nova
                     tl_sig = timeline_signature(tl)
