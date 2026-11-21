@@ -31,11 +31,11 @@ Write-Host "Aimedget v$Version" -ForegroundColor Green
 # 2. Testes
 if (-not $SkipTests) {
     Step "Testes"
-    $env:QT_QPA_PLATFORM = "offscreen"
+    # Plataforma real do Windows (não "offscreen"): vários testes conferem estilo e ordem Z de janelas do Win32.
+    # test_pack_theme abre um diálogo nativo, então fica de fora (como no CLAUDE.md).
     $ErrorActionPreference = "Continue"
-    $output = python -m pytest tests -q -p no:cacheprovider 2>&1 | Out-String
+    $output = python -m pytest tests --ignore=tests/test_pack_theme.py -q -p no:cacheprovider 2>&1 | Out-String
     $ErrorActionPreference = "Stop"
-    Remove-Item Env:\QT_QPA_PLATFORM
     # O pytest às vezes encerra com código de erro DEPOIS de tudo passar (thread do WinRT viva no fechamento do
     # Python); por isso a decisão é pelo resumo, não pelo código de saída.
     $summary = ($output -split "`n" | Where-Object { $_ -match "\d+ passed" } | Select-Object -Last 1)
