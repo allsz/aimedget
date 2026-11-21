@@ -24,7 +24,7 @@ class BatteryDevice:
     percent: Optional[float]        # 0..100; None = o dispositivo está ligado mas não informou a carga
     charging: bool = False
     approximate: bool = False       # a fonte só dá faixas (XInput, níveis da Logitech)
-    source: str = ""                # "xinput", "sony", "logitech"
+    source: str = ""                # "xinput", "sony", "switch", "logitech", "vxe", "gaming"
 
     def sort_key(self) -> tuple:
         kind = KIND_ORDER.index(self.kind) if self.kind in KIND_ORDER else len(KIND_ORDER)

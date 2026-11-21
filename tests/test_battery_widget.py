@@ -6,9 +6,11 @@ import unittest
 
 from PySide6.QtWidgets import QApplication
 
-from app.services.battery import logitech, sony, xinput
+from unittest import mock
+
+from app.services.battery import gaming_input, hid_win, logitech, sony, switch_pro, vxe, xinput
 from app.services.battery.models import KIND_CONTROLLER, KIND_KEYBOARD, KIND_MOUSE, BatteryDevice
-from app.services.battery.service import DeviceTracker
+from app.services.battery.service import DeviceTracker, claimed_by_vendor
 from app.widgets.battery import layout as lay
 from app.widgets.battery.card_state import FACE_HOVER, FACE_ICON, BatteryState, Options
 
@@ -155,6 +157,348 @@ class ProtocolTests(unittest.TestCase):
         bt = bytearray(78)
         bt[0], bt[32] = 0x11, 0x14                   # no cabo, carregando
         self.assertEqual(sony.parse_ds4(bytes(bt), bluetooth=True), (45.0, True))
+
+    def test_switch_pro_levels_and_charging(self):
+        rep = bytearray(49)
+        rep[0] = 0x30
+        for status, expected in ((0x80, (90.0, False)), (0x60, (65.0, False)), (0x40, (40.0, False)),
+                                 (0x20, (15.0, False)), (0x00, (5.0, False)), (0x91, (90.0, True)),
+                                 (0x70, (65.0, True)), (0x61, (65.0, False))):   # 0x61: nibble baixo = conexão
+            rep[2] = status
+            self.assertEqual(switch_pro.parse_report(bytes(rep)), expected, hex(status))
+
+    def test_switch_pro_real_report_from_8bitdo_pro3(self):
+        """Relatório 0x30 capturado do 8BitDo Pro 3 em modo Switch por Bluetooth (byte 2 = 0x60: média)."""
+        real = bytes.fromhex("30be600000000080f997800bae00f9fece0f05001800")
+        self.assertEqual(switch_pro.parse_report(real), (65.0, False))
+
+    def test_switch_pro_ignores_reports_without_battery(self):
+        self.assertIsNone(switch_pro.parse_report(bytes([0x3F, 0x00, 0x60] + [0] * 9)))   # modo simples
+        self.assertIsNone(switch_pro.parse_report(bytes([0x30, 0x01])))                   # curto demais
+        self.assertIsNone(switch_pro.parse_report(b""))
+        self.assertIsNone(switch_pro.parse_report(bytes([0x30, 0x00, 0xA0])))             # nível inexistente
+
+    @staticmethod
+    def _switch_info(pid=0x2009, vid=0x057E, usage=0x05, serial="e417d8efad7a"):
+        return hid_win.HidInfo(path=f"\\\\?\\hid#{serial}", vid=vid, pid=pid, usage_page=0x01, usage=usage,
+                               input_len=362, output_len=49, feature_len=0, product="Wireless Gamepad",
+                               serial=serial)
+
+    def test_switch_pro_read_devices(self):
+        class FakeHandle:
+            reports = [bytes([0x3F, 0, 0x80]), bytes([0x30, 5, 0x91] + [0] * 46)]
+
+            def __init__(self, info):
+                self.queue = list(self.reports)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, timeout_ms):
+                return self.queue.pop(0) if self.queue else None
+
+        hids = [self._switch_info(),
+                self._switch_info(pid=0x0CE6, vid=0x054C, serial="sony"),         # outro fabricante: ignorado
+                self._switch_info(usage=0x06, serial="teclado")]                  # não é o gamepad: ignorado
+        with mock.patch.object(hid_win, "HidHandle", FakeHandle):
+            out = switch_pro.read_devices(hids)
+        self.assertEqual(len(out), 1)
+        dev = out[0]
+        self.assertEqual((dev.name, dev.kind, dev.source), ("Pro Controller", KIND_CONTROLLER, "switch"))
+        self.assertEqual((dev.percent, dev.charging, dev.approximate), (90.0, True, True))
+        self.assertEqual(dev.id, "switch:e417d8efad7a")
+
+    def test_switch_pro_unknown_charge_when_only_simple_reports(self):
+        class SimpleHandle:
+            def __init__(self, info):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, timeout_ms):
+                return bytes([0x3F, 0, 0x80])
+
+        with mock.patch.object(hid_win, "HidHandle", SimpleHandle):
+            out = switch_pro.read_devices([self._switch_info()])
+        self.assertEqual(len(out), 1)
+        self.assertIsNone(out[0].percent)
+        self.assertFalse(out[0].approximate)
+
+    def test_two_switch_controllers_get_numbered_names(self):
+        class Handle:
+            def __init__(self, info):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self, timeout_ms):
+                return bytes([0x30, 0, 0x80] + [0] * 46)
+
+        hids = [self._switch_info(serial="bbbb"), self._switch_info(serial="aaaa")]
+        with mock.patch.object(hid_win, "HidHandle", Handle):
+            out = switch_pro.read_devices(hids)
+        self.assertEqual([d.name for d in out], ["Pro Controller 1", "Pro Controller 2"])
+        self.assertEqual([d.id for d in out], ["switch:aaaa", "switch:bbbb"])
+
+    def test_vxe_request_matches_the_atk_app(self):
+        """O pedido capturado do hub.atk.pro (comando 04, checksum 49) e os outros comandos que ele mandou."""
+        self.assertEqual(vxe.build_request(), bytes.fromhex("0804000000000000000000000000000049"))
+        self.assertEqual(vxe.build_request(0x12), bytes.fromhex("081200000000000000000000000000003b"))
+        self.assertEqual(vxe.build_request(0x1D), bytes.fromhex("081d000000000000000000000000000030"))
+
+    def test_vxe_real_reply(self):
+        """Resposta capturada com o mouse em 45% (0x2D), tensão 0x0EF1 = 3825 mV."""
+        real = bytes.fromhex("0804000000022d000ef10000000000001b")
+        self.assertEqual(len(real), 17)
+        self.assertEqual(vxe.parse_reply(real), (45.0, False, 3825))
+
+    def test_vxe_charging_flag_and_bounds(self):
+        rep = bytearray(vxe.PACKET_LEN)
+        rep[0], rep[1], rep[6], rep[7], rep[8], rep[9] = 0x08, 0x04, 80, 1, 0x10, 0x00
+        rep[16] = vxe._checksum(bytes(rep))
+        self.assertEqual(vxe.parse_reply(bytes(rep)), (80.0, True, 4096))
+        rep[6] = 101                                  # fora de 0-100: descarta
+        rep[16] = vxe._checksum(bytes(rep))
+        self.assertIsNone(vxe.parse_reply(bytes(rep)))
+
+    def test_vxe_rejects_other_replies(self):
+        good = bytes.fromhex("0804000000022d000ef10000000000001b")
+        self.assertIsNone(vxe.parse_reply(good[:-1]))                               # curto
+        self.assertIsNone(vxe.parse_reply(good[:-1] + b"\x00"))                     # checksum errado
+        self.assertIsNone(vxe.parse_reply(bytes([0x08, 0x12]) + bytes(15)))         # outro comando
+        self.assertIsNone(vxe.parse_reply(bytes([0x02]) + good[1:]))                # outro relatório
+        self.assertIsNone(vxe.parse_reply(None))
+
+    @staticmethod
+    def _vxe_info(pid=0xF58A, vid=0x3554, page=0xFF02, path="a"):
+        return hid_win.HidInfo(path=f"\\\\?\\hid#vxe{path}", vid=vid, pid=pid, usage_page=page, usage=0x02,
+                               input_len=17, output_len=17, feature_len=0, product="VXE NordicMouse 1K Dongle")
+
+    def test_vxe_read_devices_ignores_stale_reports_and_other_collections(self):
+        battery = bytes.fromhex("0804000000022d000ef10000000000001b")
+        other = bytes([0x08, 0x12] + [0] * 14 + [0x3B])          # resposta de outro comando: ignorada
+
+        class FakeHandle:
+            instances = []
+
+            def __init__(self, info, write=False):
+                self.writes = []
+                self.queue = [bytes([0x08, 0x04] + [0] * 15)]    # relatório antigo, esvaziado antes do pedido
+                FakeHandle.instances.append(self)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def write(self, data, timeout_ms=300):
+                self.writes.append(bytes(data))
+                self.queue += [other, battery]
+                return True
+
+            def read(self, timeout_ms):
+                return self.queue.pop(0) if self.queue else None
+
+        hids = [self._vxe_info(),
+                self._vxe_info(page=0xFF04, path="feature"),     # outra coleção do dongle: ignorada
+                self._vxe_info(pid=0x1234, path="outro")]        # PID desconhecido: ignorado
+        with mock.patch.object(hid_win, "HidHandle", FakeHandle):
+            out = vxe.read_devices(hids)
+        self.assertEqual(len(out), 1)
+        dev = out[0]
+        self.assertEqual((dev.name, dev.kind, dev.source), ("VXE Mouse", KIND_MOUSE, "vxe"))
+        self.assertEqual((dev.percent, dev.charging, dev.approximate), (45.0, False, False))
+        self.assertEqual(FakeHandle.instances[0].writes, [vxe.build_request()])
+
+    def test_vxe_no_reply_keeps_the_mouse_with_unknown_charge(self):
+        class Silent:
+            def __init__(self, info, write=False):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def write(self, data, timeout_ms=300):
+                return True
+
+            def read(self, timeout_ms):
+                return None
+
+        with mock.patch.object(hid_win, "HidHandle", Silent):
+            out = vxe.read_devices([self._vxe_info()])
+        self.assertEqual(len(out), 1)
+        self.assertIsNone(out[0].percent)
+
+    def test_vxe_real_wired_reply_is_charging(self):
+        """Resposta do R1 PRO MAX no cabo (F58C): 80%, carregando, 4021 mV (tensão mais alta com a carga)."""
+        real = bytes.fromhex("0804000000025001" "0fb5" "000000000000" "32")
+        self.assertEqual(len(real), 17)
+        self.assertEqual(vxe.parse_reply(real), (80.0, True, 4021))
+
+    @staticmethod
+    def _vxe_fake_by_pid(replies):
+        """Handle falso: cada PID responde (ou fica mudo) conforme `replies`."""
+
+        class Handle:
+            def __init__(self, info, write=False):
+                self.reply = replies.get(info.pid)
+                self.queue = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def write(self, data, timeout_ms=300):
+                if self.reply is not None:
+                    self.queue.append(self.reply)
+                return True
+
+            def read(self, timeout_ms):
+                return self.queue.pop(0) if self.queue else None
+
+        return Handle
+
+    def test_vxe_wired_mouse_replaces_the_silent_dongle_without_duplicating(self):
+        wired = bytes.fromhex("0804000000025001" "0fb5" "000000000000" "32")
+        handle = self._vxe_fake_by_pid({0xF58C: wired})                 # dongle mudo, mouse no cabo responde
+        hids = [self._vxe_info(), self._vxe_info(pid=0xF58C, path="cabo")]
+        with mock.patch.object(hid_win, "HidHandle", handle):
+            out = vxe.read_devices(hids)
+        self.assertEqual(len(out), 1)
+        self.assertEqual((out[0].name, out[0].percent, out[0].charging), ("VXE Mouse", 80.0, True))
+        self.assertTrue(out[0].id.endswith("hid#vxea"))                 # fica com o id do dongle, não o do cabo
+
+    def test_vxe_wired_alone_and_wireless_alone(self):
+        wired = bytes.fromhex("0804000000025001" "0fb5" "000000000000" "32")
+        wireless = bytes.fromhex("0804000000022d000ef10000000000001b")
+        with mock.patch.object(hid_win, "HidHandle", self._vxe_fake_by_pid({0xF58C: wired})):
+            out = vxe.read_devices([self._vxe_info(pid=0xF58C, path="cabo")])
+        self.assertEqual([(d.percent, d.charging) for d in out], [(80.0, True)])
+        with mock.patch.object(hid_win, "HidHandle", self._vxe_fake_by_pid({0xF58A: wireless})):
+            out = vxe.read_devices([self._vxe_info()])
+        self.assertEqual([(d.percent, d.charging) for d in out], [(45.0, False)])
+
+    def test_vxe_dongle_with_reading_and_second_wired_mouse_stay_separate(self):
+        wired = bytes.fromhex("0804000000025001" "0fb5" "000000000000" "32")
+        wireless = bytes.fromhex("0804000000022d000ef10000000000001b")
+        handle = self._vxe_fake_by_pid({0xF58A: wireless, 0xF58C: wired})
+        hids = [self._vxe_info(), self._vxe_info(pid=0xF58C, path="cabo")]
+        with mock.patch.object(hid_win, "HidHandle", handle):
+            out = vxe.read_devices(hids)
+        self.assertEqual(sorted(d.percent for d in out), [45.0, 80.0])
+        self.assertEqual(len({d.id for d in out}), 2)
+        self.assertEqual(sorted(d.name for d in out), ["VXE Mouse 1", "VXE Mouse 2"])
+
+    def test_gaming_input_charge_from_report(self):
+        cfr = gaming_input.charge_from_report
+        self.assertEqual(cfr(100, 1000, 1), (10.0, False))            # o GuliKit: 100/1000 mWh, descarregando
+        self.assertEqual(cfr(500, 1000, 3), (50.0, True))             # carregando
+        self.assertEqual(cfr(1000, 1000, 2), (100.0, False))          # parado (cheio, no cabo)
+        self.assertEqual(cfr(1500, 1000, 1), (100.0, False))          # acima do total: limita
+        self.assertEqual(cfr(0, 1000, 1), (0.0, False))
+        self.assertIsNone(cfr(100, 1000, 0))                          # sem bateria
+        self.assertEqual(cfr(None, None, 1), (None, False))           # sem números: carga desconhecida
+        self.assertEqual(cfr(100, 0, 3), (None, True))
+        self.assertIsNone(cfr(100, 1000, "?"))
+
+    def test_gaming_input_name_choice(self):
+        generic = "HID-compliant game controller"
+        self.assertEqual(gaming_input.choose_name(generic, "GuliKit Controller XW", "Xbox Bluetooth Gamepad"),
+                         "GuliKit Controller XW")
+        self.assertEqual(gaming_input.choose_name(generic, None, "Xbox Bluetooth Gamepad"), "Xbox Bluetooth Gamepad")
+        self.assertEqual(gaming_input.choose_name("Controlador de jogo compatível com HID", None, None), "Controller")
+        self.assertEqual(gaming_input.choose_name("Wireless Controller", None, "x"), "Wireless Controller")
+
+    @staticmethod
+    def _wgi_controller(vid=0x045E, pid=0x02E0, ident="a", name="HID-compliant game controller", wireless=True,
+                        report=(100, 1000, 1)):
+        class Report:
+            remaining_capacity_in_milliwatt_hours = report[0] if report else None
+            full_charge_capacity_in_milliwatt_hours = report[1] if report else None
+            status = report[2] if report else 0
+
+        class Ctrl:
+            hardware_vendor_id, hardware_product_id, non_roamable_id = vid, pid, ident
+            display_name, is_wireless = name, wireless
+
+            def try_get_battery_report(self):
+                return Report if report is not None else None
+
+        return Ctrl()
+
+    def _wgi_read(self, controllers, hids=(), claimed=None, names=None):
+        class Api:
+            raw_game_controllers = controllers
+
+        with mock.patch.object(gaming_input, "_api", Api), mock.patch.object(gaming_input, "_warm", True), \
+                mock.patch.object(hid_win, "bluetooth_names", return_value=names or {}):
+            return gaming_input.read_devices(list(hids), claimed)
+
+    def test_gaming_input_reads_gulikit_with_bluetooth_name(self):
+        hid = hid_win.HidInfo(path="p", vid=0x045E, pid=0x02E0, usage_page=1, usage=5, input_len=16, output_len=0,
+                              feature_len=0, product="Xbox Bluetooth Gamepad", serial="98b6eac4320e")
+        out = self._wgi_read([self._wgi_controller()], [hid], names={"98b6eac4320e": "GuliKit Controller XW"})
+        self.assertEqual(len(out), 1)
+        dev = out[0]
+        self.assertEqual((dev.name, dev.kind, dev.source), ("GuliKit Controller XW", KIND_CONTROLLER, "gaming"))
+        self.assertEqual((dev.percent, dev.charging, dev.approximate), (10.0, False, True))
+
+    def test_gaming_input_skips_controllers_other_readers_already_gave(self):
+        sony_pad = self._wgi_controller(vid=0x054C, pid=0x0CE6, ident="s", name="Wireless Controller")
+        other = self._wgi_controller(vid=0x2DC8, pid=0x3106, ident="o", name="8BitDo Pro 3")
+        out = self._wgi_read([sony_pad, other], claimed={0x054C: 1})
+        self.assertEqual([d.name for d in out], ["8BitDo Pro 3"])
+        out = self._wgi_read([sony_pad, other], claimed={})                 # ninguém reivindicou: aparece
+        self.assertEqual(len(out), 2)
+
+    def test_gaming_input_claims_only_as_many_as_delivered(self):
+        a = self._wgi_controller(vid=0x045E, ident="a", name="Pad")
+        b = self._wgi_controller(vid=0x045E, ident="b", name="Pad")
+        out = self._wgi_read([a, b], claimed={0x045E: 1})                  # um Xbox já lido pelo XInput
+        self.assertEqual(len(out), 1)
+
+    def test_gaming_input_wired_and_unreported_controllers(self):
+        wired_none = self._wgi_controller(ident="w", wireless=False, report=None)
+        wired_blank = self._wgi_controller(ident="x", wireless=False, report=(None, None, 1))
+        wireless_blank = self._wgi_controller(ident="y", wireless=True, report=(None, None, 1), name="Pad")
+        absent = self._wgi_controller(ident="z", report=(100, 1000, 0))
+        # GuliKit no cabo: o Windows inventa 1000/1000 mWh "descarregando"; não pode virar um cartão de 100%
+        wired_fake = self._wgi_controller(vid=0x045E, pid=0x028E, ident="f", wireless=False, report=(1000, 1000, 1),
+                                          name="Xbox 360 Controller for Windows")
+        out = self._wgi_read([wired_none, wired_blank, wired_fake, wireless_blank, absent])
+        self.assertEqual([(d.name, d.percent, d.approximate) for d in out], [("Pad", None, False)])
+
+    def test_gaming_input_two_controllers_get_numbered_names(self):
+        out = self._wgi_read([self._wgi_controller(ident="b", name="Pad"), self._wgi_controller(ident="a", name="Pad")])
+        self.assertEqual([d.name for d in out], ["Pad 1", "Pad 2"])
+        self.assertEqual([d.id for d in out], ["gaming:a", "gaming:b"])
+
+    def test_gaming_input_without_winrt_packages_returns_nothing(self):
+        with mock.patch.object(gaming_input, "_api", False):
+            self.assertEqual(gaming_input.read_devices([]), [])
+
+    def test_claims_by_vendor_from_other_sources(self):
+        mk = lambda src, i: BatteryDevice(f"{src}{i}", "x", KIND_CONTROLLER, 50.0, source=src)   # noqa: E731
+        self.assertEqual(claimed_by_vendor([mk("sony", 1), mk("sony", 2), mk("switch", 1), mk("xinput", 1),
+                                            mk("logitech", 1), mk("vxe", 1)]),
+                         {0x054C: 2, 0x057E: 1, 0x045E: 1})
 
     def test_logitech_hidpp(self):
         req = logitech.build_request(1, 0x00, 0, b"\x10\x04")

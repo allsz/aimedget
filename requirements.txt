@@ -3,5 +3,9 @@ PySide6==6.12.0
 winrt-runtime==3.2.1
 winrt-Windows.Foundation==3.2.1
 winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Gaming.Input==3.2.1
+winrt-Windows.Devices.Power==3.2.1
 winrt-Windows.Media.Control==3.2.1
 winrt-Windows.Storage.Streams==3.2.1
+winrt-Windows.System==3.2.1
+winrt-Windows.System.Power==3.2.1

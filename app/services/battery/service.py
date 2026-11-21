@@ -15,13 +15,28 @@ from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from app.services.battery import hid_win, logitech, sony, xinput
+from app.services.battery import gaming_input, hid_win, logitech, sony, switch_pro, vxe, xinput
 from app.services.battery.models import BatteryDevice, sort_devices
 
 log = logging.getLogger(__name__)
 
 INTERVAL_S = 60.0
 GRACE_POLLS = 2
+
+
+MICROSOFT_VID = 0x045E
+
+# Fonte -> fabricante dos controles que ela já entrega (a leitura do Windows pula esses, para não duplicar)
+CLAIM_VENDOR = {"xinput": MICROSOFT_VID, "sony": sony.SONY_VID, "switch": switch_pro.NINTENDO_VID}
+
+
+def claimed_by_vendor(devices: list[BatteryDevice]) -> dict[int, int]:
+    claimed: dict[int, int] = {}
+    for d in devices:
+        vid = CLAIM_VENDOR.get(d.source)
+        if vid is not None:
+            claimed[vid] = claimed.get(vid, 0) + 1
+    return claimed
 
 
 def read_all_sources() -> list[BatteryDevice]:
@@ -31,15 +46,21 @@ def read_all_sources() -> list[BatteryDevice]:
     except Exception:  # noqa: BLE001 - uma fonte quebrada não derruba as outras
         log.exception("battery: xinput")
     try:
-        hids = hid_win.enumerate_hid({sony.SONY_VID, logitech.LOGI_VID})
+        hids = hid_win.enumerate_hid({sony.SONY_VID, logitech.LOGI_VID, switch_pro.NINTENDO_VID, vxe.VXE_VID,
+                                      MICROSOFT_VID})
     except Exception:  # noqa: BLE001
         log.exception("battery: enumerate")
         hids = []
-    for name, fn in (("sony", sony.read_devices), ("logitech", logitech.read_devices)):
+    for name, fn in (("sony", sony.read_devices), ("switch", switch_pro.read_devices),
+                     ("logitech", logitech.read_devices), ("vxe", vxe.read_devices)):
         try:
             devices += fn(hids)
         except Exception:  # noqa: BLE001
             log.exception("battery: %s", name)
+    try:
+        devices += gaming_input.read_devices(hids, claimed_by_vendor(devices))
+    except Exception:  # noqa: BLE001
+        log.exception("battery: gaming")
     return devices
 
 

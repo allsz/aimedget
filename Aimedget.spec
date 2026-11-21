@@ -65,6 +65,10 @@ hiddenimports = [
     'winrt.system',
     'winrt.windows.foundation',
     'winrt.windows.foundation.collections',
+    'winrt.windows.gaming.input',      # bateria de controles pela API do Windows (battery/gaming_input.py)
+    'winrt.windows.devices.power',
+    'winrt.windows.system',
+    'winrt.windows.system.power',
     'winrt.windows.media.control',
     'winrt.windows.storage.streams',
     'PySide6.QtSvg',

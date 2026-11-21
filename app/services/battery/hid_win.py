@@ -318,3 +318,66 @@ class HidHandle:
             return bool(k32.GetOverlappedResult(self._h, ctypes.byref(ov), ctypes.byref(n), False))
         finally:
             k32.CloseHandle(ev)
+
+
+class SP_DEVINFO_DATA(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("ClassGuid", GUID), ("DevInst", wintypes.DWORD),
+                ("Reserved", ctypes.c_size_t)]
+
+
+DIGCF_ALLCLASSES = 0x4
+SPDRP_FRIENDLYNAME = 0xC
+
+
+def bluetooth_names() -> dict[str, str]:
+    """Nome amigável de cada dispositivo Bluetooth clássico presente, por endereço (12 hex minúsculos).
+
+    É o nome que o sistema mostra em Configurações ("GuliKit Controller XW"), que costuma ser melhor do que a
+    string do HID ("Xbox Bluetooth Gamepad"). Qualquer falha devolve o que já deu certo (ou vazio).
+    """
+    libs = _load()
+    if not libs:
+        return {}
+    _k32, sapi, _hid = libs
+    try:
+        sapi.SetupDiGetClassDevsW.argtypes = [ctypes.POINTER(GUID), wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD]
+        sapi.SetupDiGetClassDevsW.restype = wintypes.HANDLE
+        sapi.SetupDiEnumDeviceInfo.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(SP_DEVINFO_DATA)]
+        sapi.SetupDiEnumDeviceInfo.restype = wintypes.BOOL
+        sapi.SetupDiGetDeviceInstanceIdW.argtypes = [wintypes.HANDLE, ctypes.POINTER(SP_DEVINFO_DATA),
+                                                     wintypes.LPWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        sapi.SetupDiGetDeviceInstanceIdW.restype = wintypes.BOOL
+        sapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [wintypes.HANDLE, ctypes.POINTER(SP_DEVINFO_DATA),
+                                                           wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                                           ctypes.c_void_p, wintypes.DWORD,
+                                                           ctypes.POINTER(wintypes.DWORD)]
+        sapi.SetupDiGetDeviceRegistryPropertyW.restype = wintypes.BOOL
+    except (AttributeError, OSError):
+        return {}
+    devs = sapi.SetupDiGetClassDevsW(None, "BTHENUM", None, DIGCF_PRESENT | DIGCF_ALLCLASSES)
+    if not devs or devs == INVALID_HANDLE_VALUE:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        index = 0
+        while True:
+            data = SP_DEVINFO_DATA()
+            data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
+            if not sapi.SetupDiEnumDeviceInfo(devs, index, ctypes.byref(data)):
+                break
+            index += 1
+            idbuf = ctypes.create_unicode_buffer(256)
+            if not sapi.SetupDiGetDeviceInstanceIdW(devs, ctypes.byref(data), idbuf, 256, None):
+                continue
+            parts = idbuf.value.split("\\")
+            # BTHENUM\DEV_<endereço>\...: o próprio dispositivo (os serviços têm {guid}_VID&... no lugar)
+            if len(parts) < 2 or not parts[1].upper().startswith("DEV_"):
+                continue
+            mac = parts[1][4:].lower()
+            namebuf = ctypes.create_unicode_buffer(256)
+            if sapi.SetupDiGetDeviceRegistryPropertyW(devs, ctypes.byref(data), SPDRP_FRIENDLYNAME, None, namebuf,
+                                                      ctypes.sizeof(namebuf), None) and namebuf.value.strip():
+                out[mac] = namebuf.value.strip()
+    finally:
+        sapi.SetupDiDestroyDeviceInfoList(devs)
+    return out

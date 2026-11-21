@@ -66,6 +66,7 @@ run_app.bat
 run_hub.bat
 dev_live.py
 PASSO_A_PASSO_WIDGET.md
+release-notes.md
 
 # Agent metadata
 .codex/
