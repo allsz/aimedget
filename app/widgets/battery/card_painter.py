@@ -233,26 +233,29 @@ def _paint_cell(p: QPainter, pal: Palette, state: BatteryState, cell, d: float, 
         text = kind_label(dev.kind) if state.options.label == LABEL_TYPE else dev.name
         f = _font(ty.fs)
         fm = QFontMetricsF(f)
-        dot = ty.dot if dev.charging else 0.0
-        dot_gap = dot * 0.8 if dot else 0.0
-        text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(10.0, lw - dot - dot_gap))
+        charge = max(0.0, min(1.0, cell.charge.x))
+        dot = ty.dot
+        slot = dot * 1.8 * charge                 # bolinha + vão: abre/fecha com a mola, o nome desliza junto
+        # Corta o nome pelo espaço FINAL (o texto não troca de reticências no meio do movimento)
+        final_slot = dot * 1.8 if dev.charging else 0.0
+        text = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(10.0, lw - final_slot))
         tw = fm.horizontalAdvance(text)
-        total = dot + dot_gap + tw
-        x0 = cx - total / 2.0
+        x0 = cx - (slot + tw) / 2.0
         top = cell.y.x + d + ty.gap
         base = _baseline(top, ty.lh, fm)
         p.save()
         p.setOpacity(alpha)
-        if dot:
-            # Bolinha à esquerda do nome, apoiada na linha de base, menor que a altura da maiúscula
-            k = 1.0 - 0.3 * pulse
+        if charge > 0.003:
+            # Bolinha à esquerda do nome, apoiada na linha de base, menor que a altura da maiúscula; entra crescendo
+            # e acendendo a partir do centro do próprio espaço
+            k = (1.0 - 0.3 * pulse) * (0.35 + 0.65 * charge)
             rr = dot / 2.0 * k
             p.setPen(Qt.PenStyle.NoPen)
             c = QColor(pal.ok)
-            c.setAlphaF(1.0 - 0.6 * pulse)
+            c.setAlphaF((1.0 - 0.6 * pulse) * charge)
             p.setBrush(c)
-            p.drawEllipse(QPointF(x0 + dot / 2.0, base - dot / 2.0), rr, rr)
+            p.drawEllipse(QPointF(x0 + dot / 2.0 * charge, base - dot / 2.0), rr, rr)
         p.setFont(f)
         p.setPen(pal.label if dev.percent is not None else pal.muted)
-        p.drawText(QPointF(x0 + dot + dot_gap, base), text)
+        p.drawText(QPointF(x0 + slot, base), text)
         p.restore()

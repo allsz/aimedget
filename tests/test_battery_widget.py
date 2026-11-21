@@ -322,7 +322,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual((dev.percent, dev.charging, dev.approximate), (45.0, False, False))
         self.assertEqual(FakeHandle.instances[0].writes, [vxe.build_request()])
 
-    def test_vxe_no_reply_keeps_the_mouse_with_unknown_charge(self):
+    def test_vxe_no_reply_hides_the_mouse(self):
+        """Mouse dormindo não responde: sai da lista (como os da Logitech), sem cartão cinza."""
         class Silent:
             def __init__(self, info, write=False):
                 pass
@@ -341,8 +342,7 @@ class ProtocolTests(unittest.TestCase):
 
         with mock.patch.object(hid_win, "HidHandle", Silent):
             out = vxe.read_devices([self._vxe_info()])
-        self.assertEqual(len(out), 1)
-        self.assertIsNone(out[0].percent)
+        self.assertEqual(out, [])
 
     def test_vxe_real_wired_reply_is_charging(self):
         """Resposta do R1 PRO MAX no cabo (F58C): 80%, carregando, 4021 mV (tensão mais alta com a carga)."""
@@ -588,6 +588,36 @@ class MotionTests(unittest.TestCase):
         self.assertTrue(st.cells["d3"].leaving)
         run(st)
         self.assertNotIn("d3", st.cells)
+
+    def test_charging_dot_grows_in_and_out_without_overshoot(self):
+        st = BatteryState(animated=True)
+        st.set_devices(devs(2))
+        run(st)
+        for on in (True, False):
+            st.set_devices(devs(2, charging_ids=("d1",) if on else ()))
+            ch = st.cells["d1"].charge
+            start = ch.x
+            st.step(1 / 120)
+            self.assertTrue(0.0 < ch.x < 1.0)                  # no meio: o espaço da bolinha abre aos poucos
+            seen = [start]
+            for _ in range(600):
+                busy = st.step(1 / 120)
+                seen.append(ch.x)
+                if not busy:
+                    break
+            self.assertTrue(monotonic(seen, tol=0.001))        # o nome desliza num sentido só, sem voltar
+            self.assertTrue(all(-0.001 <= v <= 1.001 for v in seen))
+            self.assertEqual(ch.x, 1.0 if on else 0.0)         # termina exatamente no alvo
+            self.assertFalse(st.busy())
+        self.assertEqual(st.cells["d0"].charge.x, 0.0)         # vizinho não mexe
+
+    def test_charging_dot_is_immediate_without_animations(self):
+        st = BatteryState(animated=False)
+        st.set_devices(devs(1))
+        st.set_devices(devs(1, charging_ids=("d0",)))
+        self.assertEqual(st.cells["d0"].charge.x, 1.0)
+        st.set_devices(devs(1))
+        self.assertEqual(st.cells["d0"].charge.x, 0.0)
 
     def test_without_animations_everything_is_immediate(self):
         st = BatteryState(animated=False)

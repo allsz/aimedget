@@ -104,6 +104,9 @@ def read_devices(hids: list[hid_win.HidInfo]) -> list[BatteryDevice]:
         else:
             found.append(entry)
 
+    # Mouse dormindo não responde: some da lista, como os da Logitech (o DeviceTracker segura o último valor um tempo)
+    found = [f for f in found if f[2] is not None]
+
     # Vários dongles do mesmo modelo ganham número, numa ordem estável (serial/caminho)
     found.sort(key=lambda f: (f[0], f[1]))
     counts: dict[str, int] = {}
