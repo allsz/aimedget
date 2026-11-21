@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
+from app.core.theme_crossfade import theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
 from app.hub.components.accent_wipe import AccentWipe
@@ -449,8 +450,9 @@ class AimedgetHubWindow(QMainWindow):
         self._theme_preference = mode
         config_manager.set_hub_theme(mode)
         resolved = resolve_theme(mode)
-        self._apply_theme(resolved)
-        get_service_bridge().on_theme_changed(resolved)
+        with theme_crossfade(self.shell, shrink=0.0):   # claro/escuro: a mesma dissolvência dos temas, sem encolher a janela
+            self._apply_theme(resolved)
+            get_service_bridge().on_theme_changed(resolved)
 
     def _change_accent(self, accent, committed: bool):
         """Cor de destaque (matiz, '#RRGGBB' ou None = laranja padrão). Ao vivo enquanto arrasta; salva e atualiza

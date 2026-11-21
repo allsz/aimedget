@@ -24,6 +24,7 @@ from app.widgets.volume_mixer.theme_shape import (
     DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, digits_overhang, hairline, paint_digits, paint_plates, pop_amount,
     tilt_transform,
 )
+from app.core.theme_crossfade import theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
 from app.core.frame_clock import FrameTimer
@@ -461,6 +462,13 @@ class VolumeMixerFlyout(QWidget):
         """Propaga o tema ao cabeçalho e a todas as linhas. Não faz nada se o tema não mudou."""
         if theme is self.theme:
             return
+        if self.isVisible():   # já na tela (ex.: escolhendo temas em sequência): troca com a transição comum
+            with theme_crossfade(self):
+                self._apply_theme_now(theme)
+        else:
+            self._apply_theme_now(theme)
+
+    def _apply_theme_now(self, theme: MixerTheme):
         self.theme = theme
         self.master_slider.apply_colors(
             theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive

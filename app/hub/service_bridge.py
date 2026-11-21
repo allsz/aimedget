@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from app.core.anchor_manager import anchor_manager
 from app.core.config_manager import config_manager
 from app.core.osd_anchor import link_flyouts
+from app.core.theme_crossfade import theme_crossfade
 from app.services.audio_endpoint_service import AudioEndpointService
 from app.services.audio_mixer_service import AudioMixerService
 from app.services.hotkey_service import get_hotkey_service
@@ -379,16 +380,24 @@ class HubServiceBridge(QObject):
         if stack_theme.loader.active_id() != DEFAULT_ID and self.music_controller.active_skin_name != stacked:
             if stacked not in config_manager.get_active_widget_skins():
                 self.set_music_skin_active(stacked, True)
-            self.set_music_skin(stacked)   # a skin nova já nasce com o tema escolhido
+            self.set_music_skin(stacked)   # a skin nova já nasce com o tema escolhido (e entra com a própria troca)
+            swapped = True
+        else:
+            swapped = False
         skin = self.music_controller.skin
         if skin is not None and hasattr(skin, "reload_skin_theme"):
-            skin.reload_skin_theme()
+            if swapped:
+                skin.reload_skin_theme()   # skin nova: já entra com a troca própria, um 2º fade por cima seria feio
+            else:
+                with theme_crossfade(skin):   # a mesma transição do Clima, em todo tema
+                    skin.reload_skin_theme()
 
     def apply_timer_theme(self):
         """Aplica o tema do Timer escolhido no Hub ao widget vivo."""
         skin = self.timer_controller.skin
         if skin is not None and hasattr(skin, "reload_skin_theme"):
-            skin.reload_skin_theme()
+            with theme_crossfade(skin):
+                skin.reload_skin_theme()
 
     def apply_weather_theme(self):
         """Aplica o tema da skin Nothing Dot do Clima ao widget vivo (e ativa a skin se necessário)."""
