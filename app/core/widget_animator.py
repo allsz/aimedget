@@ -18,7 +18,7 @@ Para ligar um widget a isto sem repetir código há dois mixins:
 import ctypes
 import sys
 
-from PySide6.QtCore import QEasingCurve, QObject, QPoint, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QObject, QPoint, Qt, QTimer, QVariantAnimation
 from PySide6.QtWidgets import QWidget
 
 SLIDE_PX = 8
@@ -100,11 +100,17 @@ class SlideFadeAnimator(QObject):
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_value)
         self._anim.finished.connect(self._on_finished)
+        # Surgir adiado: num grupo de ancoragem, quem volta espera os vizinhos abrirem o espaço (ver anchor_manager)
+        self._delay_ms = 0
+        self._delay_timer = QTimer(self)
+        self._delay_timer.setSingleShot(True)
+        self._delay_timer.timeout.connect(self._start_delayed)
+        self._delayed_duration = 0
 
     # --- Estado ---
 
     def is_animating(self) -> bool:
-        return self._anim.state() == QVariantAnimation.State.Running
+        return self._anim.state() == QVariantAnimation.State.Running or self._delay_timer.isActive()
 
     def is_hiding(self) -> bool:
         return self.is_animating() and self._target == 0.0
@@ -123,15 +129,34 @@ class SlideFadeAnimator(QObject):
             self._rest = w.pos()
             self._t = 0.0
             self._apply(0.0)
-            w.show()
+            w.show()        # o showEvent pode pedir um surgir adiado (delay_appear)
         elif not self.is_animating():
             return  # já visível e parado
+        delay, self._delay_ms = self._delay_ms, 0
+        if delay > 0 and self._t == 0.0 and animations_enabled() and duration_ms > 0:
+            self._target = 1.0
+            self._widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self._delayed_duration = duration_ms
+            self._delay_timer.start(delay)
+            return
         self._run(1.0, duration_ms)
+
+    def delay_appear(self, ms: int):
+        """Chamado durante o show() (no showEvent): o fade de entrada só começa daqui a `ms`."""
+        self._delay_ms = max(0, int(ms))
+
+    def _start_delayed(self):
+        if self._target == 1.0 and self._widget.isVisible():
+            self._run(1.0, self._delayed_duration)
 
     def hide(self, duration_ms: int):
         w = self._widget
         if not w.isVisible():
             return
+        self._delay_timer.stop()
+        if not self.is_hiding():
+            from app.core.anchor_manager import anchor_manager   # aqui: evita import circular
+            anchor_manager().member_leaving(w)   # num grupo, os outros fecham as fileiras enquanto ele some
         glide = getattr(w, "_position_glide", None)   # deslize de troca de posição em curso (ver position_glide.py)
         if glide is not None:
             glide.stop(settle=True)   # a posição de repouso tem de ser o destino, não um ponto do caminho
@@ -170,6 +195,7 @@ class SlideFadeAnimator(QObject):
         """Conclui a animação em curso no estado final, imediatamente."""
         if not self.is_animating():
             return
+        self._delay_timer.stop()
         self._anim.stop()
         self._finalize()
 

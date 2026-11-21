@@ -9,7 +9,8 @@ que estiverem secas.
 
 - **Referência:** https://designbookmark.com/motion. Molas no modelo de lá (massa 1, Euler semi-implícito, 4
   subpassos): veja `Spring` em `app/hub/components/city_list.py`. Valores já usados: MORPH 320/20, PRESS 520/20,
-  LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30. Curvas: `app/widgets/weather/motion.py`.
+  LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30, CLOSE 280/34 (fechar/reabrir fileiras de
+  um grupo de ancoragem, sem passar do ponto; `app/core/anchor_manager.py`). Curvas: `app/widgets/weather/motion.py`.
 - **Exemplos prontos no app:** entrada "Unfold and rise", remoção com check, arrastar para reordenar (levanta, as
   vizinhas deslizam, assenta) em `city_list.py`; onda de pontos e assentar do cartão no Weather Widget.
 - **Respeite o Windows:** com `animations_enabled()` (app/core/widget_animator.py) falso, tudo acontece na hora.
