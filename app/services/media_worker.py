@@ -98,6 +98,12 @@ def is_browser_app_id(app_id: str) -> bool:
     return bool(_FIREFOX_HASH_AUMID.fullmatch(a)) or any(b in a for b in BROWSER_APP_IDS)
 
 
+def is_web_source(app_id: str) -> bool:
+    """Navegador ou app web de música (PWA): a capa que mandam pode ser um quadro do clipe, não a do álbum."""
+    a = (app_id or "").strip().lower()
+    return is_browser_app_id(a) or any(p in a for p in MUSIC_PWA_IDS)
+
+
 # Termos que denunciam imediatamente vídeos comuns (gameplay, vlogs, notícias, etc.)
 NON_MUSIC_PATTERNS = re.compile(
     r"\b(gameplay|walkthrough|playthrough|tutorial|review|unboxing|podcast|"
@@ -247,8 +253,12 @@ def cached_cover(track_key: str, tag_key: str = "") -> bytes:
     data = _HD_ART_CACHE.get(track_key)
     if data:
         return data
-    for alias in (tag_key, track_key):
-        album_key = alias if alias.startswith("tag:") and _album_cover(alias) else _album_for(alias)
+    # 1º a capa da busca online (para a qual a etiqueta ou a faixa apontam); só depois a capa nativa guardada
+    # direto sob a etiqueta: a do player pode ser um quadro de vídeo espremido, a da busca é a capa oficial
+    candidates = [(alias, _album_for(alias)) for alias in (tag_key, track_key)]
+    if tag_key:
+        candidates.append((tag_key, tag_key))
+    for alias, album_key in candidates:
         data = _album_cover(album_key)
         if data:
             _HD_ART_CACHE[track_key] = data
@@ -1147,8 +1157,9 @@ class WindowsMediaWorker(QObject):
                                     self._hd_cover_locked = True
                                     _HD_ART_CACHE[track_key] = raw_gsmtc
                                     confirm_cover(track_key, raw_gsmtc)
-                                    if tag_key:
-                                        # Com álbum informado, guarda uma vez para todas as faixas dele
+                                    if tag_key and not is_web_source(self.current_source_app_id):
+                                        # Com álbum informado, guarda uma vez para todas as faixas dele. Navegador
+                                        # fica de fora: a "capa" dele pode ser um quadro do clipe espremido no quadrado
                                         store_album_cover(tag_key, raw_gsmtc, aliases=(track_key,))
                                     else:
                                         _save_cover_to_disk(track_key, raw_gsmtc)

@@ -126,6 +126,28 @@ class AlbumCoverCacheTest(unittest.TestCase):
         self.assertEqual(mw.cached_cover("Residuals|Chris Brown", tag), native)
         self.assertEqual(mw.cached_cover("Undrunk|Chris Brown"), native)
 
+    def test_online_cover_beats_native_cover_under_same_tag(self):
+        # Caso real: o YT Music mandou um quadro do clipe espremido no quadrado, guardado sob a etiqueta do álbum,
+        # e ele vencia a capa oficial da busca mesmo depois de reabrir o app
+        tag = mw.album_tag_key("hate that i made you love me", "Ariana Grande")
+        mw.fetch_online_album_art("Undrunk", "Chris Brown", tag)   # busca liga a etiqueta à capa oficial
+        mw.store_album_cover(tag, _img("video-frame"))             # depois chegou o quadro do clipe
+        self._forget_memory()
+        self.assertEqual(mw.cached_cover("Outra|Ariana Grande", tag), _img("https://cdn/brown.jpg"))
+
+    def test_native_tag_cover_still_used_when_nothing_online(self):
+        tag = mw.album_tag_key("Local Album", "Banda")
+        mw.store_album_cover(tag, _img("native"))
+        self._forget_memory()
+        self.assertEqual(mw.cached_cover("Faixa|Banda", tag), _img("native"))
+
+    def test_web_sources_are_recognized(self):
+        self.assertTrue(mw.is_web_source("chrome"))
+        self.assertTrue(mw.is_web_source("308046b0af4a39cb"))   # Firefox
+        self.assertTrue(mw.is_web_source("chrome._crx_cinhimbnkkghhklpknlkffjgod"))   # YT Music instalado
+        self.assertFalse(mw.is_web_source("spotify.exe"))
+        self.assertFalse(mw.is_web_source(""))
+
     def test_legacy_per_track_cover_still_read(self):
         legacy = _img("legacy")
         mw._save_cover_to_disk("Old Song|Chris Brown", legacy)
