@@ -8,7 +8,7 @@ Diretrizes Impeccable (Operate/Tool Mode):
 """
 
 import ctypes
-from PySide6.QtCore import Qt, Signal, QSize, QRectF
+from PySide6.QtCore import Qt, Signal, QSize, QRectF, QEasingCurve, QVariantAnimation
 from PySide6.QtGui import (
     QKeyEvent,
     QFont,
@@ -30,8 +30,14 @@ from PySide6.QtWidgets import (
 
 from app.core.i18n import t
 from app.core.typography import get_ui_font
+from app.core.widget_animator import animations_enabled
+from app.hub.components.fold import Fold
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.services.hotkey_service import HotkeyParser
+from app.services.windows_shortcuts import windows_use
+
+ROWS_MS = 220   # dica e aviso abrindo/fechando (mesma linha do tempo: a altura do cartão varia sem dente)
+ROW_GAP = 4
 
 user32 = ctypes.windll.user32 if hasattr(ctypes, "windll") else None
 
@@ -144,6 +150,8 @@ class ShortcutPicker(QWidget):
         self._default_shortcut = default_shortcut
         self._theme = theme
         self._is_recording = False
+        self._pending: str | None = None     # atalho que o Windows já usa, esperando o "Substituir"
+        self._rows_anim: QVariantAnimation | None = None
 
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
@@ -152,7 +160,7 @@ class ShortcutPicker(QWidget):
     def _build_ui(self):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(4)
+        root_layout.setSpacing(0)   # o espaço fica dentro de cada Fold, para fechar junto com ele
         root_layout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # Linha 1: Badges + Botão Alterar + Botão Padrão
@@ -163,6 +171,7 @@ class ShortcutPicker(QWidget):
 
         # Container dos badges de tecla
         self.badge_box = QFrame(self)
+        self.badge_box.setObjectName("badgeBox")   # o estilo é só dele: os "+" (QLabel também é QFrame) sem borda
         self.badge_box.setCursor(Qt.CursorShape.PointingHandCursor)
         self.badge_layout = QHBoxLayout(self.badge_box)
         self.badge_layout.setContentsMargins(6, 4, 6, 4)
@@ -191,8 +200,27 @@ class ShortcutPicker(QWidget):
         self.lbl_hint = QLabel(t("shortcut_hint"), self)
         self.lbl_hint.setFont(get_ui_font(11, QFont.Weight.Medium))
         self.lbl_hint.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self.lbl_hint.setVisible(False)
-        root_layout.addWidget(self.lbl_hint)
+        self.fold_hint = Fold(self.lbl_hint, gap=ROW_GAP, parent=self)
+        self.fold_hint.set_open(False)
+        root_layout.addWidget(self.fold_hint)
+
+        # Linha 3: o atalho gravado o Windows já usa. Só vale depois do "Substituir".
+        warn = QWidget(self)
+        warn_row = QHBoxLayout(warn)
+        warn_row.setContentsMargins(0, 0, 0, 0)
+        warn_row.setSpacing(8)
+        warn_row.addStretch(1)
+        self.lbl_warn = QLabel("", warn)
+        self.lbl_warn.setFont(get_ui_font(11, QFont.Weight.Medium))
+        warn_row.addWidget(self.lbl_warn, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self.btn_override = QPushButton(t("shortcut_override"), warn)
+        self.btn_override.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_override.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_override.clicked.connect(self._accept_pending)
+        warn_row.addWidget(self.btn_override, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self.fold_warn = Fold(warn, gap=ROW_GAP, parent=self)
+        self.fold_warn.set_open(False)
+        root_layout.addWidget(self.fold_warn)
 
         self._render_badges()
         self._apply_styles()
@@ -211,7 +239,7 @@ class ShortcutPicker(QWidget):
             self.badge_layout.addWidget(rec_badge)
             return
 
-        formatted = HotkeyParser.format_display(self._current_shortcut)
+        formatted = HotkeyParser.format_display(self._pending or self._current_shortcut)
         tokens = [t.strip() for t in formatted.split("+") if t.strip()]
 
         for i, token in enumerate(tokens):
@@ -227,12 +255,12 @@ class ShortcutPicker(QWidget):
 
     def _apply_styles(self):
         accent = self._theme.accent
-        border_color = accent if self._is_recording else self._theme.line
+        border_color = accent if (self._is_recording or self._pending is not None) else self._theme.line
         bg_color = self._theme.panel2 if not self._is_recording else self._theme.panel
 
         self.badge_box.setStyleSheet(
             f"""
-            QFrame {{
+            QFrame#badgeBox {{
                 background-color: {bg_color};
                 border: 1px solid {border_color};
                 border-radius: 7px;
@@ -262,38 +290,98 @@ class ShortcutPicker(QWidget):
         """
         self.btn_edit.setStyleSheet(chip_css)
         self.btn_reset.setStyleSheet(chip_css)
+        self.btn_override.setStyleSheet(chip_css)
 
         # Ajusta larguras mínimas baseadas na métrica de texto real
         fm = self.fontMetrics()
         self.btn_edit.setMinimumWidth(max(78, fm.horizontalAdvance("Cancelar") + 28))
         self.btn_reset.setMinimumWidth(max(68, fm.horizontalAdvance("Padrão") + 24))
 
-        self.btn_reset.setVisible(self._current_shortcut != self._default_shortcut and not self._is_recording)
+        self.btn_reset.setVisible(self._current_shortcut != self._default_shortcut and not self._is_recording
+                                  and self._pending is None)
+        self.lbl_warn.setStyleSheet(
+            f"color: {self._theme.accent}; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;"
+        )
 
         self.lbl_hint.setStyleSheet(
             f"color: {self._theme.accent}; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;"
         )
 
     def _toggle_recording(self):
-        if self._is_recording:
+        if self._is_recording or self._pending is not None:
             self._cancel_recording()
         else:
             self._start_recording()
 
     def _start_recording(self):
         self._is_recording = True
+        self._pending = None
         self.btn_edit.setText(t("shortcut_cancel"))
-        self.lbl_hint.setVisible(True)
         self._render_badges()
         self._apply_styles()
+        self._animate_rows(hint=True, warn=False)
         self.setFocus()
 
     def _cancel_recording(self):
+        """Sai da gravação (e descarta um atalho pendente): volta a mostrar o atalho em uso."""
         self._is_recording = False
+        self._pending = None
         self.btn_edit.setText(t("shortcut_edit"))
-        self.lbl_hint.setVisible(False)
         self._render_badges()
         self._apply_styles()
+        self._animate_rows(hint=False, warn=False)
+
+    def _hold_pending(self, shortcut: str, what: str):
+        """O Windows já usa o atalho gravado: ele espera o "Substituir", com o aviso do que o Windows faz com ele."""
+        self._is_recording = False
+        self._pending = shortcut
+        self.lbl_warn.setText(t("shortcut_windows_uses", what=what))
+        self.btn_edit.setText(t("shortcut_cancel"))
+        self._render_badges()
+        self._apply_styles()
+        self._animate_rows(hint=False, warn=True)
+
+    def _accept_pending(self):
+        if self._pending is not None:
+            self._apply_shortcut(self._pending)
+
+    def _apply_shortcut(self, shortcut: str):
+        self._current_shortcut = shortcut
+        self._pending = None
+        self.shortcut_changed.emit(shortcut)
+        self._cancel_recording()
+
+    def is_pending(self) -> bool:
+        return self._pending is not None
+
+    def _animate_rows(self, hint: bool, warn: bool):
+        """Dica e aviso abrem/fecham juntos, na mesma linha do tempo (sem animações do Windows, na hora)."""
+        if self._rows_anim is not None:
+            self._rows_anim.stop()
+            self._rows_anim = None
+        if not animations_enabled() or not self.isVisible():
+            self.fold_hint.set_open(hint)
+            self.fold_warn.set_open(warn)
+            return
+        anim = QVariantAnimation(self)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(ROWS_MS)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        follow = (anim.valueChanged, lambda: float(anim.currentValue() or 0.0))
+        self.fold_hint.set_open(hint, follow)
+        self.fold_warn.set_open(warn, follow)
+        if not (self.fold_hint.is_animating() or self.fold_warn.is_animating()):
+            anim.deleteLater()
+            return
+        self._rows_anim = anim
+        anim.finished.connect(self._on_rows_done)
+        anim.start()
+
+    def _on_rows_done(self):
+        anim, self._rows_anim = self._rows_anim, None
+        if anim is not None:
+            anim.deleteLater()
 
     def retranslate_ui(self):
         if self._is_recording:
@@ -303,11 +391,12 @@ class ShortcutPicker(QWidget):
         self.btn_reset.setText(t("shortcut_reset"))
         self.btn_reset.setToolTip(t("shortcut_reset_tooltip", hotkey=self._default_shortcut))
         self.lbl_hint.setText(t("shortcut_hint"))
+        self.btn_override.setText(t("shortcut_override"))
+        if self._pending is not None:
+            self.lbl_warn.setText(t("shortcut_windows_uses", what=windows_use(self._pending) or ""))
 
     def _reset_to_default(self):
-        self._current_shortcut = self._default_shortcut
-        self.shortcut_changed.emit(self._default_shortcut)
-        self._cancel_recording()
+        self._apply_shortcut(self._default_shortcut)
 
     def mousePressEvent(self, event):
         # Clicar na área de badges também inicia a gravação
@@ -318,6 +407,9 @@ class ShortcutPicker(QWidget):
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
+        if self._pending is not None and event.key() == Qt.Key.Key_Escape:
+            self._cancel_recording()
+            return
         if not self._is_recording:
             super().keyPressEvent(event)
             return
@@ -377,9 +469,11 @@ class ShortcutPicker(QWidget):
             return
 
         new_shortcut = "+".join(mods + [key_name])
-        self._current_shortcut = new_shortcut
-        self.shortcut_changed.emit(new_shortcut)
-        self._cancel_recording()
+        what = windows_use(new_shortcut)
+        if what and new_shortcut != self._current_shortcut:
+            self._hold_pending(new_shortcut, what)
+            return
+        self._apply_shortcut(new_shortcut)
 
     def focusOutEvent(self, event):
         fw = QApplication.focusWidget()
@@ -392,6 +486,7 @@ class ShortcutPicker(QWidget):
 
     def set_shortcut(self, shortcut: str):
         self._current_shortcut = shortcut
+        self._pending = None
         self._render_badges()
         self._apply_styles()
 

@@ -337,8 +337,8 @@ class BatteryPage(BaseHubPage):
         row.addLayout(hk_info, stretch=1)
         row.setAlignment(hk_info, Qt.AlignmentFlag.AlignVCenter)
         self.hk_picker = ShortcutPicker(
-            current_shortcut=config_manager.get_battery("hotkey", "Win+Alt+B"),
-            default_shortcut="Win+Alt+B",
+            current_shortcut=config_manager.get_battery("hotkey", "Win+Alt+E"),
+            default_shortcut="Win+Alt+E",
             theme=self._theme,
             parent=card,
         )

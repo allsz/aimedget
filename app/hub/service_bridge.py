@@ -204,8 +204,8 @@ class HubServiceBridge(QObject):
         storage_hk = config_manager.get_storage("hotkey", "Win+Alt+S")
         self.hotkey_service.register("storage_toggle", storage_hk, self.toggle_storage_widget)
 
-        # Battery Widget (padrão Win+Alt+B)
-        battery_hk = config_manager.get_battery("hotkey", "Win+Alt+B")
+        # Battery Widget (padrão Win+Alt+E; Win+Alt+B é do HDR do Windows)
+        battery_hk = config_manager.get_battery("hotkey", "Win+Alt+E")
         self.hotkey_service.register("battery_toggle", battery_hk, self.toggle_battery_widget)
 
         # Volume Mixer (padrão Win+Alt+V)
