@@ -721,6 +721,27 @@ class CardTests(unittest.TestCase):
             card.close()
             card.deleteLater()
 
+    def test_size_busy_only_while_the_card_size_moves(self):
+        """O alinhador do anchor espera o tamanho assentar: o arco enchendo ou o hover não contam como tamanho."""
+        from app.widgets.battery.battery_card import BatteryCard
+
+        card = BatteryCard(size=(300, 262))
+        try:
+            card.state.animated = True
+            card.state.set_devices(devs(3))
+            run(card.state)
+            card.state.set_devices([BatteryDevice(d.id, d.name, d.kind, 90.0) for d in devs(3)])   # arco anda
+            card.state.set_hovered(True)                                                           # face anda
+            self.assertTrue(card.state.busy())
+            self.assertFalse(card.is_scale_animating())
+            card.state.set_base_size(420, 262)                                                     # tamanho anda
+            self.assertTrue(card.is_scale_animating())
+            run(card.state)
+            self.assertFalse(card.is_scale_animating())
+        finally:
+            card.close()
+            card.deleteLater()
+
     def test_painter_runs_for_every_option(self):
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QImage, QPainter

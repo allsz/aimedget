@@ -34,6 +34,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
   linha some onde estava e entra no lugar novo, sem passar por cima dos vizinhos nem sair pela borda. A contagem de
   dispositivos esmaece quando falta espaço, em vez de sumir de uma vez.
 - Bateria: carga que ia e voltava entre dois níveis, ou piscava entre "carregando" e "cheio" no fim da carga.
+- Ancoragem: a rede nos estilos "linhas" e "os dois" perdia quadros; agora só a parte acesa é calculada (o dobro
+  de velocidade, desenho igual).
 - Música: um quadro de clipe enviado pelo player podia virar a capa do álbum inteiro; a capa da busca online agora
   tem prioridade.
 - O mixer de volume abria por cima do painel do Windows ao trocar para um fone Bluetooth.
