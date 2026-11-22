@@ -222,14 +222,6 @@ class WeatherCard(FloatingCard):
             units_menu.addAction(act)
         menu.addMenu(units_menu)
 
-        size_menu = FluentMusicMenu(t("weather_menu_size"), menu, theme=theme)
-        for value in SCALES:
-            act = QAction(f"{int(round(value * 100))}%", self)
-            size_menu.set_trailing_check(act, abs(self._scale - value) < 0.01)
-            act.triggered.connect(lambda checked=False, v=value: self.scale_changed.emit(v))
-            size_menu.addAction(act)
-        menu.addMenu(size_menu)
-
         if dev_tools_enabled() and self.state.days:
             menu.addSeparator()
             preview_menu = FluentMusicMenu(t("weather_menu_preview"), menu, theme=theme)

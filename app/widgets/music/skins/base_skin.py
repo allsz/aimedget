@@ -769,26 +769,6 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
 
         self._populate_extra_context_menu(menu, is_dark)
 
-        # Submenu minimalista de redimensionamento e escala
-        from app.core.screen_metrics import MUSIC_SCALE_PRESETS
-        scale_menu = FluentMusicMenu(t("music_menu_size"), menu)
-        scale_icon = self._build_minimal_skin_icon("scale", is_dark)
-        if not scale_icon.isNull():
-            scale_menu.setIcon(scale_icon)
-
-        is_auto = config_manager.is_music_scale_auto()
-        curr_scale = self.scale
-
-        for s_val, s_label in MUSIC_SCALE_PRESETS:
-            act_s = QAction(t(s_label), self)
-            is_active = (not is_auto) and abs(curr_scale - s_val) < 0.005
-            scale_menu.set_trailing_check(act_s, is_active)
-            act_s.triggered.connect(lambda chk=False, s=s_val: self.animate_scale_to(s, save_preference=True))
-            scale_menu.addAction(act_s)
-
-        # "Automático (adaptar à tela)" fica só nas configurações do app (Hub)
-        menu.addMenu(scale_menu)
-
         # Fechar o widget (como no Timer): última opção, separada das preferências
         menu.addSeparator()
         act_configure = QAction(self._build_minimal_skin_icon("configure", is_dark), t("menu_configure_widget"), self)

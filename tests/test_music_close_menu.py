@@ -128,7 +128,7 @@ class MenuTranslationTests(unittest.TestCase):
                     actions, bar = _open_menu_with_bar(_make(cls))
                     texts = [a.text() for a in actions]
                     tooltips = [b.toolTip() for b in bar.buttons.values()] if bar else []
-                    self.assertIn("Size", texts)
+                    self.assertNotIn("Size", texts)
                     self.assertIn("Remember position", tooltips)
                     self.assertNotIn("Tamanho", texts)
                     self.assertNotIn("Lembrar posição", tooltips)
