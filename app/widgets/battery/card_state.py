@@ -27,6 +27,7 @@ FILL_SPRING = (200.0, 26.0)
 FACE_SPRING = (520.0, 30.0)
 CHARGE_SPRING = (280.0, 34.0)   # CLOSE (amortecimento crítico): a bolinha entra/sai sem passar do ponto, discreta
 RISE = 12.0                 # o anel novo sobe estes px enquanto aparece
+ATTACH_PX = 0.5             # arrastando o canto: o cartão já no alvo segue o ponteiro sem mola
 
 FACE_HOVER = "hover"        # ícone; passar o mouse no cartão mostra a porcentagem
 FACE_ICON = "icon"
@@ -233,14 +234,28 @@ class BatteryState:
             self.face_both.snap()
 
     def relayout(self, entering=(), snap: bool = False, direct_size: bool = False):
+        """`direct_size` (arrastando o canto): o cartão segue o ponteiro; os anéis vão de mola (MORPH) até o lugar
+        novo, como um líquido. Podem passar da borda por alguns quadros quando a grade muda: escolhido no protótipo
+        `mockups/battery-resize-liquid.html` (preferido a sumir e reaparecer)."""
         o = self.options
-        L = lay.compute(len(self.order), self.base_w, self.base_h, header=o.header, names=o.names, odd=o.odd)
+        prev = self.layout
+        n = len(self.order)
+        prefer = prev.cols if prev is not None and n > 0 and len(prev.cells) == n else None
+        L = lay.compute(n, self.base_w, self.base_h, header=o.header, names=o.names, odd=o.odd, prefer=prefer)
         self.layout = L
-        self.W.t, self.H.t, self.D.t = L.W, L.H, L.d
         instant = snap or not self.animated
-        if instant or direct_size:
-            self.W.snap()
-            self.H.snap()
+        follow = direct_size and not instant
+        same_grid = prefer is not None and (prev.cols, prev.rows) == (L.cols, L.rows)
+        # Tamanho do cartão, por eixo: perto do alvo, gruda nele; na mesma grade o alvo muda de forma contínua (o
+        # ponteiro, ou o mínimo que os anéis pedem), então o cartão anda junto e mantém o que ainda faltava da mola;
+        # na troca de grade o alvo pula e o cartão vai com mola
+        shifts = [(s, t - s.t, abs(s.x - s.t) < ATTACH_PX) for s, t in ((self.W, L.W), (self.H, L.H))]
+        self.W.t, self.H.t, self.D.t = L.W, L.H, L.d
+        for spring, delta, attached in shifts:
+            if instant or (follow and same_grid and attached):
+                spring.snap()
+            elif follow and same_grid:
+                spring.x += delta       # ainda assentando: anda junto e a mola termina o que faltava
         if instant:
             self.D.snap()
         for i, dev_id in enumerate(self.order):
@@ -269,7 +284,13 @@ class BatteryState:
             s.step(dt)
             busy = busy or not s.settled()
         for dev_id, cell in list(self.cells.items()):
+            # Quem está aparecendo espera o cartão abrir espaço para ele (cartão crescendo): não surge fora da borda
+            waiting = (not cell.leaving and cell.alpha.t > 0.5 and cell.alpha.x < 0.5
+                       and (cell.x.t + self.D.x > self.W.x + 1.0 or cell.y.t + self.D.x > self.H.x + 1.0))
             for s in cell.springs():
+                if waiting and s in (cell.alpha, cell.scale):
+                    busy = True
+                    continue
                 s.step(dt)
                 if s.settled():
                     s.snap()            # termina exatamente no alvo

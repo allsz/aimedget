@@ -32,6 +32,7 @@ from app.widgets.battery.card_state import LABEL_TYPE, BatteryState
 
 RADIUS = 27.0
 PAD = 24.0
+COUNT_FADE = 28.0      # px de largura em que "N dispositivos" esmaece quando o título encosta
 HEAD_TOP, HEAD_LH = 24.0, 22.0
 STROKE = 0.095            # espessura do anel em fração do diâmetro
 LOW_PCT = 20.0
@@ -141,6 +142,11 @@ def paint_battery_card(p: QPainter, rect: QRectF, state: BatteryState, theme: st
     p.restore()
 
 
+def count_fit(slack: float) -> float:
+    """Opacidade da contagem pela folga (px) que sobra ao lado do título: 0 sem folga, 1 com COUNT_FADE ou mais."""
+    return max(0.0, min(1.0, slack / COUNT_FADE))
+
+
 def _paint_header(p: QPainter, pal: Palette, W: float, n: int, count_alpha: float = 1.0):
     f_title = _font(16.0, QFont.Weight.Medium)
     fm_t = QFontMetricsF(f_title)
@@ -151,14 +157,17 @@ def _paint_header(p: QPainter, pal: Palette, W: float, n: int, count_alpha: floa
     fm_c = QFontMetricsF(f_count)
     count_w = fm_c.horizontalAdvance(count) if count else 0.0
     room = W - 2 * PAD
-    show_count = bool(count) and fm_t.horizontalAdvance(title) + 12.0 + count_w <= room
+    # Sem espaço para título + contagem, a contagem esmaece ao longo de COUNT_FADE px de largura em vez de sumir no
+    # corte: ao arrastar o canto ela acompanha o ponteiro
+    fit = count_fit(room - (fm_t.horizontalAdvance(title) + 12.0 + count_w))
+    show_count = bool(count) and fit > 0.0
     p.setFont(f_title)
     p.setPen(pal.text)
     title_room = room - ((count_w + 12.0) if show_count else 0.0)
     p.drawText(QPointF(PAD, base), fm_t.elidedText(title, Qt.TextElideMode.ElideRight, max(10.0, title_room)))
     if show_count:
         p.save()
-        p.setOpacity(p.opacity() * count_alpha)     # aparece/some com movimento (opção "nº de dispositivos")
+        p.setOpacity(p.opacity() * count_alpha * fit)     # aparece/some com movimento (opção e largura)
         p.setFont(f_count)
         p.setPen(pal.muted)
         p.drawText(QPointF(W - PAD - count_w, base), count)

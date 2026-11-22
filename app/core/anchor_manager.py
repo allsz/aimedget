@@ -1345,7 +1345,8 @@ class AnchorManager(QObject):
                 continue
             U = geo.union(rs)
             if g.gain > 0.004 and g.focus is not None:
-                paint_lattice(p, U, U.grown(NET_MARGIN), CELL, style, self._focus_alpha(g, U))
+                paint_lattice(p, U, U.grown(NET_MARGIN), CELL, style, self._focus_alpha(g, U),
+                              active=self._focus_box(g))
                 if g.prox and g.prox["lock"] and g.prox["seam"]:
                     paint_seam(p, g.prox["seam"])
         if self._boom is not None:
@@ -1358,9 +1359,19 @@ class AnchorManager(QObject):
     def _edge_fall(du: float, m: float) -> float:
         return 1.0 - smooth((du - (m - CELL * 2.5)) / (CELL * 2.5))
 
+    @staticmethod
+    def _focus_radius(g: Group) -> float:
+        return CELL * 2.5 + CELL * 4.5 * g.gain     # a parte acesa cresce conforme os widgets se aproximam
+
+    def _focus_box(self, g: Group) -> Rect:
+        """Onde a rede pode acender: o trecho em foco + o raio da luz (além dele `_focus_alpha` é zero)."""
+        x1, y1, x2, y2 = g.focus
+        rf = self._focus_radius(g)
+        return Rect(min(x1, x2) - rf, min(y1, y2) - rf, max(x1, x2) + rf, max(y1, y2) + rf)
+
     def _focus_alpha(self, g: Group, U: Rect):
         f, gain = g.focus, g.gain
-        rf = CELL * 2.5 + CELL * 4.5 * gain     # a parte acesa cresce conforme os widgets se aproximam
+        rf = self._focus_radius(g)
         hot = 1.0 if (g.prox and g.prox["lock"]) else gain * 0.35
         edge = self._edge_fall
 

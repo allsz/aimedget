@@ -151,8 +151,9 @@ class BatteryCard(FloatingCard):
         return self.state.base_w, self.state.base_h
 
     def is_scale_animating(self) -> bool:
-        """Para o alinhador do anchor: o tamanho ainda está assentando."""
-        return self.state.busy()
+        """Para o alinhador do anchor: o TAMANHO do cartão ainda está assentando. Só as molas de largura/altura contam;
+        o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento."""
+        return not (self.state.W.settled() and self.state.H.settled())
 
     def match_card_size(self, target_w: Optional[float] = None, target_h: Optional[float] = None,
                         animate: bool = False):

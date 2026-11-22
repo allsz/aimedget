@@ -347,3 +347,53 @@ def test_anchor_inherits_target_group_gap():
         assert AnchorManager._inherited_gap(g_single, Group("music")) == pytest.approx(geo.GAP)
 
 
+def test_metar_observation_altitude_and_fallbacks():
+    from app.services import weather_service as ws
+
+    # WMO mapping from METAR wxString & cover
+    assert ws.metar_to_wmo_code(None, "FEW", 80) == 1
+    assert ws.metar_to_wmo_code(None, "SCT", 80) == 2
+    assert ws.metar_to_wmo_code(None, "OVC", 0) == 3
+    assert ws.metar_to_wmo_code(None, "CLR", 61) == 0
+    assert ws.metar_to_wmo_code("-RA", "OVC", 0) == 61
+    assert ws.metar_to_wmo_code("+TSRA", "BKN", 0) == 95
+    assert ws.metar_to_wmo_code("FG", "OVC", 0) == 45
+
+    # Nearest METAR filtering (ignores stale and too-far stations)
+    now = 1_795_378_000.0
+    stations = [
+        {"icaoId": "FAR1", "lat": -20.0, "lon": -46.5, "temp": 33, "obsTime": now - 300},
+        {"icaoId": "OLD1", "lat": -22.95, "lon": -46.54, "temp": 18, "obsTime": now - 7200},
+        {"icaoId": "SBGR", "lat": -23.432, "lon": -46.469, "elev": 745, "temp": 30, "cover": "FEW", "obsTime": now - 600},
+    ]
+    nearest = ws.pick_nearest_metar(stations, -22.9519, -46.5419, now)
+    assert nearest is not None and nearest["icaoId"] == "SBGR"
+
+    # Altitude lapse-rate adjustment (30°C at 745m -> 29.4°C at 841m) + high/low clamp
+    rep = WeatherReport(
+        place="Bragança Paulista",
+        current_temp=22.3,
+        current_code=80,
+        is_day=True,
+        days=[DayForecast("2026-11-22", 80, 28.0, 20.0, 24.0)],
+    )
+    ws.apply_metar_observation(rep, nearest, city_elev=841.0)
+    assert rep.current_temp == pytest.approx(29.4, abs=0.1)
+    assert rep.current_code == 1
+    assert rep.days[0].t_max == pytest.approx(29.4, abs=0.1)
+
+    # Nominatim fallback parser
+    nom = ws.parse_nominatim([
+        {"lat": "-22.9519", "lon": "-46.5419", "address": {"municipality": "Bragança Paulista", "state": "São Paulo", "country": "Brasil"}},
+    ])
+    assert len(nom) == 1
+    assert nom[0].name == "Bragança Paulista"
+    assert "São Paulo" in nom[0].detail
+
+    # ipwho.is fallback parser
+    ipw = ws.parse_ipwho_location({"success": True, "city": "Campinas", "latitude": -22.9, "longitude": -47.06, "region": "São Paulo", "country": "Brazil"})
+    assert ipw is not None and ipw.name == "Campinas"
+    assert ws.parse_ipwho_location({"success": False}) is None
+
+
+

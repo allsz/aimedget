@@ -8,9 +8,9 @@ from PySide6.QtWidgets import QApplication
 
 from unittest import mock
 
-from app.services.battery import gaming_input, hid_win, logitech, sony, switch_pro, vxe, xinput
+from app.services.battery import hid_win, logitech, sony, switch_pro, vxe, xinput
 from app.services.battery.models import KIND_CONTROLLER, KIND_KEYBOARD, KIND_MOUSE, BatteryDevice
-from app.services.battery.service import DeviceTracker, claimed_by_vendor
+from app.services.battery.service import DeviceTracker
 from app.widgets.battery import layout as lay
 from app.widgets.battery.card_state import FACE_HOVER, FACE_ICON, BatteryState, Options
 
@@ -127,6 +127,39 @@ class LayoutTests(unittest.TestCase):
         L = lay.compute(3, 260, 240)
         self.assertAlmostEqual(L.edge_y, lay.EDGE, places=3)
         self.assertGreaterEqual(L.gap_y, lay.M * L.d - 1e-6)
+
+    def test_column_switch_has_hysteresis(self):
+        """Arrastando o canto, a troca 3 <-> 2 colunas acontece em larguras diferentes na ida e na volta, e mexer
+        poucos pixels em volta do ponto de troca não fica alternando (o cartão pulava entre 1 e 2 linhas)."""
+        def sweep(widths, H=262):
+            prev, switches = None, []
+            for W in widths:
+                L = lay.compute(3, W, H, prefer=prev)
+                if prev is not None and L.cols != prev:
+                    switches.append(W)
+                prev = L.cols
+            return prev, switches
+
+        _c, down = sweep(range(480, 200, -1))
+        _c, up = sweep(range(200, 481))
+        self.assertEqual(len(down), 1)
+        self.assertEqual(len(up), 1)
+        self.assertGreater(up[0] - down[0], 10)                              # faixa entre as duas trocas
+        jitter = [down[0] + dx for dx in (0, 2, -1, 3, 1, -2, 2, 0)] * 3
+        cols, switches = sweep([down[0] - 1] + jitter)
+        self.assertEqual(switches, [])
+
+    def test_never_grows_past_the_pointer_when_another_layout_fits(self):
+        """Caso real: 3 dispositivos, 268 x 240. Três numa linha pediriam anel < 52 e empurrariam o cartão para além
+        do ponteiro; duas linhas cabem, então ficam duas linhas."""
+        L = lay.compute(3, 268, 240)
+        self.assertFalse(L.grown)
+        self.assertEqual((L.W, L.H), (268, 240))
+        for W in range(190, 480, 2):                     # de 190 para cima sempre cabe sem crescer, qualquer que
+            for prefer in (None, 1, 2, 3):               # seja o layout na tela
+                L = lay.compute(3, W, 240, prefer=prefer)
+                self.assertFalse(L.grown, f"W={W} prefer={prefer}")
+                self.assertEqual((L.W, L.H), (W, 240))
 
     def test_without_header_and_names_rings_get_bigger(self):
         full = lay.compute(6, 300, 262)
@@ -406,100 +439,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len({d.id for d in out}), 2)
         self.assertEqual(sorted(d.name for d in out), ["VXE Mouse 1", "VXE Mouse 2"])
 
-    def test_gaming_input_charge_from_report(self):
-        cfr = gaming_input.charge_from_report
-        self.assertEqual(cfr(100, 1000, 1), (10.0, False))            # o GuliKit: 100/1000 mWh, descarregando
-        self.assertEqual(cfr(500, 1000, 3), (50.0, True))             # carregando
-        self.assertEqual(cfr(1000, 1000, 2), (100.0, False))          # parado (cheio, no cabo)
-        self.assertEqual(cfr(1500, 1000, 1), (100.0, False))          # acima do total: limita
-        self.assertEqual(cfr(0, 1000, 1), (0.0, False))
-        self.assertIsNone(cfr(100, 1000, 0))                          # sem bateria
-        self.assertEqual(cfr(None, None, 1), (None, False))           # sem números: carga desconhecida
-        self.assertEqual(cfr(100, 0, 3), (None, True))
-        self.assertIsNone(cfr(100, 1000, "?"))
-
-    def test_gaming_input_name_choice(self):
-        generic = "HID-compliant game controller"
-        self.assertEqual(gaming_input.choose_name(generic, "GuliKit Controller XW", "Xbox Bluetooth Gamepad"),
-                         "GuliKit Controller XW")
-        self.assertEqual(gaming_input.choose_name(generic, None, "Xbox Bluetooth Gamepad"), "Xbox Bluetooth Gamepad")
-        self.assertEqual(gaming_input.choose_name("Controlador de jogo compatível com HID", None, None), "Controller")
-        self.assertEqual(gaming_input.choose_name("Wireless Controller", None, "x"), "Wireless Controller")
-
-    @staticmethod
-    def _wgi_controller(vid=0x045E, pid=0x02E0, ident="a", name="HID-compliant game controller", wireless=True,
-                        report=(100, 1000, 1)):
-        class Report:
-            remaining_capacity_in_milliwatt_hours = report[0] if report else None
-            full_charge_capacity_in_milliwatt_hours = report[1] if report else None
-            status = report[2] if report else 0
-
-        class Ctrl:
-            hardware_vendor_id, hardware_product_id, non_roamable_id = vid, pid, ident
-            display_name, is_wireless = name, wireless
-
-            def try_get_battery_report(self):
-                return Report if report is not None else None
-
-        return Ctrl()
-
-    def _wgi_read(self, controllers, hids=(), claimed=None, names=None):
-        class Api:
-            raw_game_controllers = controllers
-
-        with mock.patch.object(gaming_input, "_api", Api), mock.patch.object(gaming_input, "_warm", True), \
-                mock.patch.object(hid_win, "bluetooth_names", return_value=names or {}):
-            return gaming_input.read_devices(list(hids), claimed)
-
-    def test_gaming_input_reads_gulikit_with_bluetooth_name(self):
-        hid = hid_win.HidInfo(path="p", vid=0x045E, pid=0x02E0, usage_page=1, usage=5, input_len=16, output_len=0,
-                              feature_len=0, product="Xbox Bluetooth Gamepad", serial="98b6eac4320e")
-        out = self._wgi_read([self._wgi_controller()], [hid], names={"98b6eac4320e": "GuliKit Controller XW"})
-        self.assertEqual(len(out), 1)
-        dev = out[0]
-        self.assertEqual((dev.name, dev.kind, dev.source), ("GuliKit Controller XW", KIND_CONTROLLER, "gaming"))
-        self.assertEqual((dev.percent, dev.charging, dev.approximate), (10.0, False, True))
-
-    def test_gaming_input_skips_controllers_other_readers_already_gave(self):
-        sony_pad = self._wgi_controller(vid=0x054C, pid=0x0CE6, ident="s", name="Wireless Controller")
-        other = self._wgi_controller(vid=0x2DC8, pid=0x3106, ident="o", name="8BitDo Pro 3")
-        out = self._wgi_read([sony_pad, other], claimed={0x054C: 1})
-        self.assertEqual([d.name for d in out], ["8BitDo Pro 3"])
-        out = self._wgi_read([sony_pad, other], claimed={})                 # ninguém reivindicou: aparece
-        self.assertEqual(len(out), 2)
-
-    def test_gaming_input_claims_only_as_many_as_delivered(self):
-        a = self._wgi_controller(vid=0x045E, ident="a", name="Pad")
-        b = self._wgi_controller(vid=0x045E, ident="b", name="Pad")
-        out = self._wgi_read([a, b], claimed={0x045E: 1})                  # um Xbox já lido pelo XInput
-        self.assertEqual(len(out), 1)
-
-    def test_gaming_input_wired_and_unreported_controllers(self):
-        wired_none = self._wgi_controller(ident="w", wireless=False, report=None)
-        wired_blank = self._wgi_controller(ident="x", wireless=False, report=(None, None, 1))
-        wireless_blank = self._wgi_controller(ident="y", wireless=True, report=(None, None, 1), name="Pad")
-        absent = self._wgi_controller(ident="z", report=(100, 1000, 0))
-        # GuliKit no cabo: o Windows inventa 1000/1000 mWh "descarregando"; não pode virar um cartão de 100%
-        wired_fake = self._wgi_controller(vid=0x045E, pid=0x028E, ident="f", wireless=False, report=(1000, 1000, 1),
-                                          name="Xbox 360 Controller for Windows")
-        out = self._wgi_read([wired_none, wired_blank, wired_fake, wireless_blank, absent])
-        self.assertEqual([(d.name, d.percent, d.approximate) for d in out], [("Pad", None, False)])
-
-    def test_gaming_input_two_controllers_get_numbered_names(self):
-        out = self._wgi_read([self._wgi_controller(ident="b", name="Pad"), self._wgi_controller(ident="a", name="Pad")])
-        self.assertEqual([d.name for d in out], ["Pad 1", "Pad 2"])
-        self.assertEqual([d.id for d in out], ["gaming:a", "gaming:b"])
-
-    def test_gaming_input_without_winrt_packages_returns_nothing(self):
-        with mock.patch.object(gaming_input, "_api", False):
-            self.assertEqual(gaming_input.read_devices([]), [])
-
-    def test_claims_by_vendor_from_other_sources(self):
-        mk = lambda src, i: BatteryDevice(f"{src}{i}", "x", KIND_CONTROLLER, 50.0, source=src)   # noqa: E731
-        self.assertEqual(claimed_by_vendor([mk("sony", 1), mk("sony", 2), mk("switch", 1), mk("xinput", 1),
-                                            mk("logitech", 1), mk("vxe", 1)]),
-                         {0x054C: 2, 0x057E: 1, 0x045E: 1})
-
     def test_logitech_hidpp(self):
         req = logitech.build_request(1, 0x00, 0, b"\x10\x04")
         self.assertEqual(len(req), 20)
@@ -642,6 +581,83 @@ class MotionTests(unittest.TestCase):
         hs, ws = run(st)
         self.assertTrue(monotonic(hs) and monotonic(ws))
 
+    @staticmethod
+    def _drag(n, path, animated=True):
+        """Arrasta o canto pelo caminho (um quadro de 120 Hz por movimento); devolve o estado e, por quadro, quanto o
+        cartão andou, quanto o anel que mais andou se moveu e a menor opacidade de um anel."""
+        st = BatteryState(animated=animated, base_w=path[0][0], base_h=path[0][1])
+        st.set_devices(devs(n))
+        run(st)
+        worst = {"step_w": 0.0, "step_h": 0.0, "ring_step": 0.0, "min_alpha": 1.0, "leaving": 0}
+        pw, ph = st.W.x, st.H.x
+        prev = {k: (c.x.x, c.y.x) for k, c in st.cells.items()}
+        for w, h in path:
+            st.set_base_size(w, h, direct=True)
+            st.step(1 / 120)
+            worst["step_w"] = max(worst["step_w"], abs(st.W.x - pw))
+            worst["step_h"] = max(worst["step_h"], abs(st.H.x - ph))
+            pw, ph = st.W.x, st.H.x
+            for k, c in st.cells.items():
+                px, py = prev.get(k, (c.x.x, c.y.x))
+                worst["ring_step"] = max(worst["ring_step"], ((c.x.x - px) ** 2 + (c.y.x - py) ** 2) ** 0.5)
+                worst["min_alpha"] = min(worst["min_alpha"], c.alpha.x)
+                prev[k] = (c.x.x, c.y.x)
+            worst["leaving"] = max(worst["leaving"], sum(1 for c in st.cells.values() if c.leaving))
+        return st, worst
+
+    def _settled_inside(self, st):
+        run(st)
+        self.assertFalse(st.busy())
+        d = st.D.x
+        for i, dev_id in enumerate(st.order):
+            c = st.cells[dev_id]
+            self.assertEqual((c.x.x, c.y.x), st.layout.cells[i])
+            self.assertTrue(-0.01 <= c.x.x and c.x.x + d <= st.W.x + 0.01 and c.y.x + d <= st.H.x + 0.01)
+
+    def test_corner_drag_card_follows_pointer_without_jumps(self):
+        """O vídeo do bug: arrastando o canto, o cartão pulava de altura. Agora ele anda só o que o ponteiro andou."""
+        widths = list(range(480, 170, -3)) + list(range(170, 481, 3))
+        for n, H in ((2, 262), (3, 240), (3, 262), (4, 262), (5, 240)):
+            st, worst = self._drag(n, [(w, H) for w in widths])
+            msg = f"n={n} H={H} {worst}"
+            self.assertLessEqual(worst["step_w"], 3.0 + 0.5, msg)              # sem pulo de largura
+            self.assertEqual(worst["step_h"], 0.0, msg)                        # arrasto horizontal: altura parada
+            self._settled_inside(st)
+        diagonal = [(300 - i * 1.5, 262 - i) for i in range(80)] + [(180 + i * 2, 182 + i * 0.3) for i in range(120)]
+        st, worst = self._drag(3, diagonal)
+        self.assertLessEqual(max(worst["step_w"], worst["step_h"]), 3.0, worst)
+        self._settled_inside(st)
+
+    def test_rings_slide_like_liquid_when_the_grid_changes(self):
+        """Escolhido no protótipo (mockups/battery-resize-liquid.html): na troca de grade os anéis deslizam de mola até
+        o lugar novo, sem sumir nem pular, e assentam exatamente nele."""
+        st = BatteryState(animated=True, base_w=360, base_h=262)
+        st.set_devices(devs(3))
+        run(st)
+        for w in range(360, 230, -3):                                          # estreita até virar 2 linhas
+            st.set_base_size(w, 262, direct=True)
+            st.step(1 / 120)
+            if st.layout.rows == 2:
+                break
+        self.assertEqual(st.layout.rows, 2)
+        moved = st.cells["d2"]
+        self.assertGreater(abs(moved.y.x - moved.y.t), 10)                      # ainda indo para a linha de baixo
+        path = []
+        for _ in range(240):
+            st.step(1 / 120)
+            path.append((moved.x.x, moved.y.x))
+        steps = [((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(path, path[1:])]
+        self.assertLess(max(steps), 12.0)                                      # desliza, não pula
+        self.assertEqual(moved.alpha.x, 1.0)                                   # nunca some
+        self.assertTrue(all(not c.leaving for c in st.cells.values()))         # sem cópias
+        self._settled_inside(st)
+
+    def test_corner_drag_without_animations_is_immediate(self):
+        st, worst = self._drag(3, [(w, 262) for w in range(360, 200, -5)], animated=False)
+        self.assertEqual(worst["leaving"], 0)
+        for i, dev_id in enumerate(st.order):
+            self.assertEqual((st.cells[dev_id].x.x, st.cells[dev_id].y.x), st.layout.cells[i])
+
     def test_hover_switches_the_face_with_motion(self):
         st = BatteryState(animated=True, options=Options(face=FACE_HOVER))
         st.set_devices(devs(2))
@@ -670,6 +686,16 @@ class CountToggleTests(unittest.TestCase):
         run(st)
         self.assertEqual(st.count_alpha.x, 1.0)
 
+    def test_count_fades_with_width_instead_of_cutting(self):
+        """Estreitando o cartão, "N dispositivos" esmaece ao longo de alguns px em vez de sumir de uma vez."""
+        from app.widgets.battery.card_painter import COUNT_FADE, count_fit
+
+        self.assertEqual(count_fit(-5.0), 0.0)
+        self.assertEqual(count_fit(COUNT_FADE + 5.0), 1.0)
+        values = [count_fit(s / 2) for s in range(-10, int(COUNT_FADE * 2) + 10)]
+        self.assertTrue(monotonic(values, tol=0.0))
+        self.assertLess(max(b - a for a, b in zip(values, values[1:])), 0.05)   # sem degrau
+
     def test_count_without_animations_is_immediate(self):
         st = BatteryState(animated=False)
         st.set_options(Options(count=False))
@@ -693,6 +719,27 @@ class CardTests(unittest.TestCase):
             card.set_base_size(300, 417)
             self.assertEqual((card.state.layout.cols, card.state.layout.rows), (2, 3))
             self.assertEqual(card.card_size(), (300, 417))
+        finally:
+            card.close()
+            card.deleteLater()
+
+    def test_size_busy_only_while_the_card_size_moves(self):
+        """O alinhador do anchor espera o tamanho assentar: o arco enchendo ou o hover não contam como tamanho."""
+        from app.widgets.battery.battery_card import BatteryCard
+
+        card = BatteryCard(size=(300, 262))
+        try:
+            card.state.animated = True
+            card.state.set_devices(devs(3))
+            run(card.state)
+            card.state.set_devices([BatteryDevice(d.id, d.name, d.kind, 90.0) for d in devs(3)])   # arco anda
+            card.state.set_hovered(True)                                                           # face anda
+            self.assertTrue(card.state.busy())
+            self.assertFalse(card.is_scale_animating())
+            card.state.set_base_size(420, 262)                                                     # tamanho anda
+            self.assertTrue(card.is_scale_animating())
+            run(card.state)
+            self.assertFalse(card.is_scale_animating())
         finally:
             card.close()
             card.deleteLater()

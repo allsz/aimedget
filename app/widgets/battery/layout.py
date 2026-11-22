@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
 
 K = 0.55            # folga horizontal mínima, em fração do anel (borda = entre = borda)
 M = 0.30            # folga vertical mínima, em fração do anel
@@ -41,6 +42,13 @@ MAX_SIZE = (1200.0, 900.0)
 
 ODD_CENTER = "center"
 ODD_LEFT = "left"
+
+# Histerese da troca de colunas: um layout já na tela só é trocado por um de MAIS linhas quando o anel dele cai abaixo
+# de 82% do melhor (para MENOS linhas a troca continua em 90%). Sem a faixa 82-90%, arrastar o canto perto do limite
+# fazia o cartão pular entre 1 e 2 linhas a cada pixel.
+KEEP = 0.82
+SWITCH = 1.04       # e só troca por um de MENOS linhas com o anel 4% acima do limite (90% ou D_MIN)
+GROWN_KEEP = 1.08   # cartão crescido (anel no mínimo): fica com o layout da tela até 8% mais área que o menor
 
 
 def clamp(v: float, lo: float, hi: float) -> float:
@@ -117,7 +125,7 @@ class Layout:
         return typo(self.d, names)
 
 
-def _fit(n: int, W: float, H: float, header: bool, names: bool) -> tuple[int, int, float]:
+def _fit(n: int, W: float, H: float, header: bool, names: bool, prefer: Optional[int] = None) -> tuple[int, int, float]:
     hc = H - _top(header)
     cands = []
     for c in range(1, n + 1):
@@ -136,39 +144,61 @@ def _fit(n: int, W: float, H: float, header: bool, names: bool) -> tuple[int, in
             d = lo
         cands.append((c, r, d))
     best = max(d for _c, _r, d in cands)
-    ok = [x for x in cands if x[2] >= best * 0.9]
+
+    def floor_ok(d: float) -> bool:
+        # Abaixo de D_MIN o cartão teria de crescer além do ponteiro: só vale se nenhum layout cabe sem crescer
+        return d >= D_MIN or best < D_MIN
+
+    ok = [x for x in cands if x[2] >= best * 0.9 and floor_ok(x[2])]
     ok.sort(key=lambda x: (x[1], -x[2]))
-    return ok[0]
+    choice = ok[0]
+    if prefer is not None and prefer != choice[0]:
+        cur = next((x for x in cands if x[0] == prefer), None)
+        if cur is not None and cur[2] >= best * KEEP and floor_ok(cur[2]):
+            if cur[1] <= choice[1]:
+                return cur                              # trocar daria mais linhas: fica com o que está na tela
+            if choice[2] < max(best * 0.9, D_MIN) * SWITCH:
+                return cur                              # menos linhas, mas ainda no limite: espera passar dele
+    return choice
 
 
-def solve(n: int, W: float, H: float, header: bool = True, names: bool = True) -> tuple[int, int, float, float, float, bool]:
-    """(colunas, linhas, anel, largura, altura, cresceu) para `n` dispositivos num cartão W x H."""
+def solve(n: int, W: float, H: float, header: bool = True, names: bool = True,
+          prefer: Optional[int] = None) -> tuple[int, int, float, float, float, bool]:
+    """(colunas, linhas, anel, largura, altura, cresceu) para `n` dispositivos num cartão W x H. `prefer`: colunas do
+    layout que já está na tela (histerese, ver KEEP)."""
     n = max(1, int(n))
     W = clamp(float(W), *[MIN_SIZE[0], MAX_SIZE[0]])
     H = clamp(float(H), *[MIN_SIZE[1], MAX_SIZE[1]])
-    c, r, d = _fit(n, W, H, header, names)
+    c, r, d = _fit(n, W, H, header, names, prefer)
     if d >= D_MIN:
         return c, r, d, W, H, False
     d = D_MIN
     best = None
+    options = {}
     for cc in range(1, n + 1):
         rr = math.ceil(n / cc)
         w = max(W, math.ceil(d * (cc + (cc + 1) * K)))
         h = max(H, math.ceil(_top(header) + _need_h(d, rr, names, header)))
         area = w * h
+        options[cc] = (cc, rr, w, h, area)
         if best is None or area < best[4] - 1 or (abs(area - best[4]) <= 1 and rr < best[1]):
             best = (cc, rr, w, h, area)
+    # Mesma histerese no cartão crescido: sem ela, a menor área alterna entre largo e alto a cada pixel
+    cur = options.get(prefer) if prefer is not None else None
+    if cur is not None and cur[4] <= best[4] * GROWN_KEEP:
+        best = cur
     cc, rr, w, h, _a = best
     return cc, rr, d, float(w), float(h), True
 
 
-def compute(n: int, W: float, H: float, header: bool = True, names: bool = True, odd: str = ODD_CENTER) -> Layout:
+def compute(n: int, W: float, H: float, header: bool = True, names: bool = True, odd: str = ODD_CENTER,
+            prefer: Optional[int] = None) -> Layout:
     """Layout completo: tamanho final do cartão, anel e o canto de cada anel."""
     if n <= 0:
         W = clamp(float(W), MIN_SIZE[0], MAX_SIZE[0])
         H = clamp(float(H), MIN_SIZE[1], MAX_SIZE[1])
         return Layout(W=W, H=H, d=D_MIN, cols=0, rows=0, gap_x=0.0, gap_y=0.0, cells=(), top=_top(header))
-    c, r, d, W2, H2, grown = solve(n, W, H, header, names)
+    c, r, d, W2, H2, grown = solve(n, W, H, header, names, prefer)
     ty = typo(d, names)
     top = _top(header)
     gap_x = (W2 - c * d) / (c + 1)

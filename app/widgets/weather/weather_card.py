@@ -7,8 +7,6 @@ Janela do Weather Widget: cartão flutuante sem moldura baseado em `FloatingCard
   pontos e Win+D) é herdada de `FloatingCard`.
 """
 
-import os
-import sys
 import time
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
@@ -31,7 +29,6 @@ from app.ui_components.floating_card import (
 )
 from app.ui_components.fluent_menu import FluentMusicMenu
 from app.ui_components.menu_action_bar import ActionBarItem
-from app.widgets.weather import conditions as cond
 from app.widgets.weather.card_painter import paint_card, tab_at, tab_rect
 from app.widgets.weather.card_state import CardState
 from app.widgets.weather.sky_painter import CARD_H, CARD_W
@@ -44,17 +41,11 @@ WHEEL_THRESHOLD = 0.75       # fração de entalhe que conta como um passo (touc
 CITY_STEP_COOLDOWN_S = 0.25  # pausa mínima entre duas trocas de cidade pela roda
 
 
-def dev_tools_enabled() -> bool:
-    """Menu de pré-visualização das condições: rodando do código-fonte ou com AIMEDGET_DEV=1."""
-    return not getattr(sys, "frozen", False) or os.environ.get("AIMEDGET_DEV") == "1"
-
-
 class WeatherCard(FloatingCard):
     ANCHOR_KEY = "weather"
     refresh_requested = Signal()
     units_changed = Signal(str)            # 'c' / 'f'
     day_selected = Signal(int)
-    preview_condition_requested = Signal(str)
     city_step = Signal(int)                # +1 próxima cidade, -1 anterior (a lista dá a volta)
     city_selected = Signal(int)            # escolhida no menu "Cidade"
     manage_cities_requested = Signal()     # "Gerenciar cidades…": abre o Hub na página do Clima
@@ -221,20 +212,6 @@ class WeatherCard(FloatingCard):
             act.triggered.connect(lambda checked=False, k=key: self.units_changed.emit(k))
             units_menu.addAction(act)
         menu.addMenu(units_menu)
-
-        if dev_tools_enabled() and self.state.days:
-            menu.addSeparator()
-            preview_menu = FluentMusicMenu(t("weather_menu_preview"), menu, theme=theme)
-            current = self.state.days[self.state.selected].condition
-            for key in cond.ALL_CONDITIONS:
-                label = t(f"weather_cond_{cond.name_key(key)}")
-                if key in cond.DAY_OF:
-                    label += " " + t("weather_menu_night_suffix")
-                act = QAction(label, self)
-                preview_menu.set_trailing_check(act, key == current)
-                act.triggered.connect(lambda checked=False, k=key: self.preview_condition_requested.emit(k))
-                preview_menu.addAction(act)
-            menu.addMenu(preview_menu)
 
         menu.addSeparator()
         act_configure = QAction(t("menu_configure_widget"), self)
