@@ -4,6 +4,39 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.1.1] - 2026-11-22
+
+### Adicionado
+- Bateria: novos dispositivos. **Switch Pro Controller** por Bluetooth (inclui o 8BitDo Pro 3 no modo Switch; 4
+  níveis, então aproximado), **mouses VXE/ATK** pelo dongle ou pelo cabo (porcentagem exata e carregando) e
+  **qualquer dispositivo Bluetooth** que informe a carga ao Windows (fones, dispositivos LE).
+- Bateria: com algo carregando, a leitura passa a cada 15 s (antes 60 s), então a carga sobe na tela e o "cheio"
+  aparece logo.
+- Item **Configurar** no menu de todos os widgets: abre o Hub na página do widget.
+- Atalhos: aviso antes de usar uma combinação que o Windows já usa ("Usado pelo Windows: ..."); só é salva depois
+  de "Substituir".
+- Cronômetro mostra MM:SS:cc e passa a HH:MM:SS em 1 h, com transição animada.
+
+### Alterado
+- Bateria: dispositivos ligados ou desligados aparecem e somem em poucos segundos (antes até 1 minuto). O ponto de
+  carregando cresce e some com movimento, e o nome desliza junto.
+- Bateria: um mouse VXE dormindo sai do cartão, como os da Logitech, em vez de ficar cinza.
+- O atalho padrão da Bateria passa a ser **Win+Alt+E** (Win+Alt+B liga e desliga o HDR do Windows).
+- Capas de música ficam guardadas por álbum: as faixas de um álbum não baixam a mesma imagem de novo, e capas iguais
+  aparecem na hora.
+- O mixer de volume fica sempre branco, com um halo suave que o mantém legível em qualquer fundo.
+- Clima no Hub: as opções da previsão ficam juntas num cartão só.
+- O tamanho dos widgets sai do menu de contexto e fica só no Hub.
+
+### Corrigido
+- Bateria: carga que ia e voltava entre dois níveis, ou piscava entre "carregando" e "cheio" no fim da carga.
+- Música: um quadro de clipe enviado pelo player podia virar a capa do álbum inteiro; a capa da busca online agora
+  tem prioridade.
+- O mixer de volume abria por cima do painel do Windows ao trocar para um fone Bluetooth.
+- Ancoragem: o brilho segue o contorno real do cartão (quadrado, estrela, skins em imagem), e um widget que sai do
+  meio de um grupo não deixa mais um buraco nele.
+- Skins em imagem podiam fechar o app ao abrir.
+
 ## [1.1.0] - 2026-11-20
 
 ### Adicionado
