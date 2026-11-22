@@ -356,11 +356,11 @@ class ParallelReadTests(unittest.TestCase):
                 time.sleep(0.2)
                 return [dev(name)]
             return fn
-        seen_claimed = {}
+        seen = {}
 
-        def gaming(hids, claimed):
-            seen_claimed.update(claimed)
-            return [dev("gaming")]
+        def skip(hids, devices):
+            seen["n"] = len(devices)
+            return set()
 
         with mock.patch.object(svc.xinput, "read_devices", slow("xinput")), \
                 mock.patch.object(svc.hid_win, "enumerate_hid", lambda _v: []), \
@@ -368,16 +368,15 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.switch_pro, "read_devices", slow("switch")), \
                 mock.patch.object(svc.logitech, "read_devices", slow("logitech")), \
                 mock.patch.object(svc.vxe, "read_devices", slow("vxe")), \
-                mock.patch.object(svc.gaming_input, "read_devices", gaming), \
                 mock.patch.object(svc.bluetooth, "read_devices", lambda skip: [dev("bluetooth")]), \
-                mock.patch.object(svc, "claimed_by_vendor", lambda devs: {"n": len(devs)}):
+                mock.patch.object(svc, "bluetooth_skip", skip):
             t0 = time.monotonic()
             out = REAL_READ()
             elapsed = time.monotonic() - t0
         self.assertEqual([d.id for d in out],
-                         ["xinput", "sony", "switch", "logitech", "vxe", "gaming", "bluetooth"])
+                         ["xinput", "sony", "switch", "logitech", "vxe", "bluetooth"])
         self.assertLess(elapsed, 0.6)           # em série seriam 1.0 s
-        self.assertEqual(seen_claimed, {"n": 5})   # a leitura do Windows vê tudo das outras
+        self.assertEqual(seen, {"n": 5})        # o Bluetooth genérico vê tudo das outras
 
     def test_broken_source_does_not_break_others(self):
         def boom(*_a):
@@ -388,7 +387,6 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.switch_pro, "read_devices", boom), \
                 mock.patch.object(svc.logitech, "read_devices", lambda h: []), \
                 mock.patch.object(svc.vxe, "read_devices", lambda h: []), \
-                mock.patch.object(svc.gaming_input, "read_devices", lambda h, c: []), \
                 mock.patch.object(svc.bluetooth, "read_devices", boom), \
                 self.assertLogs("app.services.battery.service", "ERROR"):
             out = REAL_READ()

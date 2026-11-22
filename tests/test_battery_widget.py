@@ -8,9 +8,9 @@ from PySide6.QtWidgets import QApplication
 
 from unittest import mock
 
-from app.services.battery import gaming_input, hid_win, logitech, sony, switch_pro, vxe, xinput
+from app.services.battery import hid_win, logitech, sony, switch_pro, vxe, xinput
 from app.services.battery.models import KIND_CONTROLLER, KIND_KEYBOARD, KIND_MOUSE, BatteryDevice
-from app.services.battery.service import DeviceTracker, claimed_by_vendor
+from app.services.battery.service import DeviceTracker
 from app.widgets.battery import layout as lay
 from app.widgets.battery.card_state import FACE_HOVER, FACE_ICON, BatteryState, Options
 
@@ -405,100 +405,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(sorted(d.percent for d in out), [45.0, 80.0])
         self.assertEqual(len({d.id for d in out}), 2)
         self.assertEqual(sorted(d.name for d in out), ["VXE Mouse 1", "VXE Mouse 2"])
-
-    def test_gaming_input_charge_from_report(self):
-        cfr = gaming_input.charge_from_report
-        self.assertEqual(cfr(100, 1000, 1), (10.0, False))            # o GuliKit: 100/1000 mWh, descarregando
-        self.assertEqual(cfr(500, 1000, 3), (50.0, True))             # carregando
-        self.assertEqual(cfr(1000, 1000, 2), (100.0, False))          # parado (cheio, no cabo)
-        self.assertEqual(cfr(1500, 1000, 1), (100.0, False))          # acima do total: limita
-        self.assertEqual(cfr(0, 1000, 1), (0.0, False))
-        self.assertIsNone(cfr(100, 1000, 0))                          # sem bateria
-        self.assertEqual(cfr(None, None, 1), (None, False))           # sem números: carga desconhecida
-        self.assertEqual(cfr(100, 0, 3), (None, True))
-        self.assertIsNone(cfr(100, 1000, "?"))
-
-    def test_gaming_input_name_choice(self):
-        generic = "HID-compliant game controller"
-        self.assertEqual(gaming_input.choose_name(generic, "GuliKit Controller XW", "Xbox Bluetooth Gamepad"),
-                         "GuliKit Controller XW")
-        self.assertEqual(gaming_input.choose_name(generic, None, "Xbox Bluetooth Gamepad"), "Xbox Bluetooth Gamepad")
-        self.assertEqual(gaming_input.choose_name("Controlador de jogo compatível com HID", None, None), "Controller")
-        self.assertEqual(gaming_input.choose_name("Wireless Controller", None, "x"), "Wireless Controller")
-
-    @staticmethod
-    def _wgi_controller(vid=0x045E, pid=0x02E0, ident="a", name="HID-compliant game controller", wireless=True,
-                        report=(100, 1000, 1)):
-        class Report:
-            remaining_capacity_in_milliwatt_hours = report[0] if report else None
-            full_charge_capacity_in_milliwatt_hours = report[1] if report else None
-            status = report[2] if report else 0
-
-        class Ctrl:
-            hardware_vendor_id, hardware_product_id, non_roamable_id = vid, pid, ident
-            display_name, is_wireless = name, wireless
-
-            def try_get_battery_report(self):
-                return Report if report is not None else None
-
-        return Ctrl()
-
-    def _wgi_read(self, controllers, hids=(), claimed=None, names=None):
-        class Api:
-            raw_game_controllers = controllers
-
-        with mock.patch.object(gaming_input, "_api", Api), mock.patch.object(gaming_input, "_warm", True), \
-                mock.patch.object(hid_win, "bluetooth_names", return_value=names or {}):
-            return gaming_input.read_devices(list(hids), claimed)
-
-    def test_gaming_input_reads_gulikit_with_bluetooth_name(self):
-        hid = hid_win.HidInfo(path="p", vid=0x045E, pid=0x02E0, usage_page=1, usage=5, input_len=16, output_len=0,
-                              feature_len=0, product="Xbox Bluetooth Gamepad", serial="98b6eac4320e")
-        out = self._wgi_read([self._wgi_controller()], [hid], names={"98b6eac4320e": "GuliKit Controller XW"})
-        self.assertEqual(len(out), 1)
-        dev = out[0]
-        self.assertEqual((dev.name, dev.kind, dev.source), ("GuliKit Controller XW", KIND_CONTROLLER, "gaming"))
-        self.assertEqual((dev.percent, dev.charging, dev.approximate), (10.0, False, True))
-
-    def test_gaming_input_skips_controllers_other_readers_already_gave(self):
-        sony_pad = self._wgi_controller(vid=0x054C, pid=0x0CE6, ident="s", name="Wireless Controller")
-        other = self._wgi_controller(vid=0x2DC8, pid=0x3106, ident="o", name="8BitDo Pro 3")
-        out = self._wgi_read([sony_pad, other], claimed={0x054C: 1})
-        self.assertEqual([d.name for d in out], ["8BitDo Pro 3"])
-        out = self._wgi_read([sony_pad, other], claimed={})                 # ninguém reivindicou: aparece
-        self.assertEqual(len(out), 2)
-
-    def test_gaming_input_claims_only_as_many_as_delivered(self):
-        a = self._wgi_controller(vid=0x045E, ident="a", name="Pad")
-        b = self._wgi_controller(vid=0x045E, ident="b", name="Pad")
-        out = self._wgi_read([a, b], claimed={0x045E: 1})                  # um Xbox já lido pelo XInput
-        self.assertEqual(len(out), 1)
-
-    def test_gaming_input_wired_and_unreported_controllers(self):
-        wired_none = self._wgi_controller(ident="w", wireless=False, report=None)
-        wired_blank = self._wgi_controller(ident="x", wireless=False, report=(None, None, 1))
-        wireless_blank = self._wgi_controller(ident="y", wireless=True, report=(None, None, 1), name="Pad")
-        absent = self._wgi_controller(ident="z", report=(100, 1000, 0))
-        # GuliKit no cabo: o Windows inventa 1000/1000 mWh "descarregando"; não pode virar um cartão de 100%
-        wired_fake = self._wgi_controller(vid=0x045E, pid=0x028E, ident="f", wireless=False, report=(1000, 1000, 1),
-                                          name="Xbox 360 Controller for Windows")
-        out = self._wgi_read([wired_none, wired_blank, wired_fake, wireless_blank, absent])
-        self.assertEqual([(d.name, d.percent, d.approximate) for d in out], [("Pad", None, False)])
-
-    def test_gaming_input_two_controllers_get_numbered_names(self):
-        out = self._wgi_read([self._wgi_controller(ident="b", name="Pad"), self._wgi_controller(ident="a", name="Pad")])
-        self.assertEqual([d.name for d in out], ["Pad 1", "Pad 2"])
-        self.assertEqual([d.id for d in out], ["gaming:a", "gaming:b"])
-
-    def test_gaming_input_without_winrt_packages_returns_nothing(self):
-        with mock.patch.object(gaming_input, "_api", False):
-            self.assertEqual(gaming_input.read_devices([]), [])
-
-    def test_claims_by_vendor_from_other_sources(self):
-        mk = lambda src, i: BatteryDevice(f"{src}{i}", "x", KIND_CONTROLLER, 50.0, source=src)   # noqa: E731
-        self.assertEqual(claimed_by_vendor([mk("sony", 1), mk("sony", 2), mk("switch", 1), mk("xinput", 1),
-                                            mk("logitech", 1), mk("vxe", 1)]),
-                         {0x054C: 2, 0x057E: 1, 0x045E: 1})
 
     def test_logitech_hidpp(self):
         req = logitech.build_request(1, 0x00, 0, b"\x10\x04")
