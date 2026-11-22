@@ -11,7 +11,7 @@ from app.widgets.timer.duration_rules import (
 )
 from app.core.typography import get_ui_font
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
-from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
+from app.widgets.timer.skins.skin import TimerState, digits_geometry, paint_windows_timer
 from app.core.frame_clock import FrameTimer
 
 
@@ -102,51 +102,14 @@ class WindowsTimerSkin(BaseTimerSkin):
         Calcula as geometrias exatas de cada segmento de tempo (horas, minutos, segundos e separadores).
         Permite detecção precisa de hover inteligente e renderização desacoplada.
         """
-        card = self.get_card_rect()
-        scale = self.get_scale()
-        tot = max(0, int(round(self.current_seconds)))
-        hrs = tot // 3600
-        mins = (tot % 3600) // 60
-        secs = tot % 60
-
-        hh_str = f"{hrs:02d}"
-        mm_str = f"{mins:02d}"
-        ss_str = f"{secs:02d}"
-        colon = ":"
-
-        digits_font_size = max(16, int(25 * scale))
-        font = get_ui_font(digits_font_size, QFont.Weight.DemiBold)
-        fm = QFontMetricsF(font)
-
-        w_hh = fm.horizontalAdvance(hh_str)
-        w_c1 = fm.horizontalAdvance(colon)
-        w_mm = fm.horizontalAdvance(mm_str)
-        w_c2 = fm.horizontalAdvance(colon)
-        w_ss = fm.horizontalAdvance(ss_str)
-
-        total_w = w_hh + w_c1 + w_mm + w_c2 + w_ss
-        start_x = card.left() + (card.width() - total_w) / 2.0
-        y = card.top() + 32 * scale
-        h = 40 * scale
-
-        rects = {
-            "hours": QRectF(start_x, y, w_hh, h),
-            "colon1": QRectF(start_x + w_hh, y, w_c1, h),
-            "minutes": QRectF(start_x + w_hh + w_c1, y, w_mm, h),
-            "colon2": QRectF(start_x + w_hh + w_c1 + w_mm, y, w_c2, h),
-            "seconds": QRectF(start_x + w_hh + w_c1 + w_mm + w_c2, y, w_ss, h),
-        }
-        texts = {
-            "hours": hh_str,
-            "colon1": colon,
-            "minutes": mm_str,
-            "colon2": colon,
-            "seconds": ss_str,
-        }
+        rects, texts, font, _vis, _cell = digits_geometry(
+            self.get_card_rect(), self.get_scale(), self.current_seconds, self.mode, self.time_morph)
         return rects, texts, font
 
     def get_time_segment_at(self, pos: QPointF) -> str | None:
         """Retorna 'hours', 'minutes' ou 'seconds' se o mouse estiver sobre o segmento numérico correspondente."""
+        if self.mode == "stopwatch":
+            return None   # o Cronômetro não tem número para editar
         rects, _, _ = self.get_digits_geometry()
         card = self.get_card_rect()
         scale = self.get_scale()
@@ -233,6 +196,7 @@ class WindowsTimerSkin(BaseTimerSkin):
             select_color=self.skin_theme.select_border,
             alarm_time=self.alarm_time,
             alarm_finished=self.alarm_finished,
+            time_morph=self.time_morph,
         )
         m = float(self.art_margin)
         paint_windows_timer(p, QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m), state, self.theme,
@@ -572,6 +536,9 @@ class WindowsTimerSkin(BaseTimerSkin):
 
     def wheelEvent(self, event: QWheelEvent):
         """Scroll do mouse inteligente: ajusta individualmente horas, minutos ou segundos."""
+        if self.mode == "stopwatch":   # o Cronômetro só conta: não há tempo para ajustar
+            event.accept()
+            return
         if not self.is_running:
             delta = event.angleDelta().y()
             if delta == 0:

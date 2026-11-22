@@ -23,6 +23,9 @@ from app.core.theme_art import paint_background, paint_stickers
 from app.core.typography import get_ui_font
 from app.hub.theme import HubTheme, THEME_DARK
 from app.widgets.timer.alarm_rules import format_clock
+from app.widgets.timer.time_layout import (
+    COLON_KEYS, SLOT_KEYS, cell_advance, layout_slots, morph_target, slot_texts, slot_visibility,
+)
 
 
 @dataclass
@@ -44,6 +47,7 @@ class TimerState:
     select_color: QColor | None = None  # None: branco no tema escuro, escuro no claro
     alarm_time: int = 0                 # Alarme: horário (segundos desde a meia-noite)
     alarm_finished: bool = False        # Alarme: tocou (rótulo "CONCLUÍDO")
+    time_morph: float | None = None     # 0 = MM:SS:cc, 1 = HH:MM:SS (animado pela skin); None: o formato do modo, direto
 
 
 SHADOW_PAD = 8.0
@@ -69,6 +73,24 @@ def mode_label(state: TimerState) -> str:
 
 def natural_size(state: TimerState | None = None) -> QSizeF:
     return QSizeF(DEFAULT_SIZE, DEFAULT_SIZE)
+
+
+def digits_geometry(card: QRectF, scale: float, seconds: float, mode: str, morph: float):
+    """Retângulos, textos, fonte, visibilidade (0..1) e largura da célula de cada campo do tempo, centrados no cartão.
+    Só o Cronômetro usa células fixas (os centésimos mudam rápido e fariam o texto balançar); Temporizador e Alarme
+    seguem com a largura natural dos números. `cell` é None nesse caso."""
+    font = get_ui_font(max(16, int(25 * scale)), QFont.Weight.DemiBold)
+    fm = QFontMetricsF(font)
+    if mode == "stopwatch":
+        cell = max(fm.horizontalAdvance(str(d)) for d in range(10))
+        digit_w = cell_advance(cell)
+    else:
+        cell, digit_w = None, fm.horizontalAdvance
+    texts = slot_texts(mode, seconds)
+    vis = slot_visibility(morph)
+    rects = layout_slots(card.center().x(), card.top() + 32 * scale, 40 * scale, digit_w, fm.horizontalAdvance(":"),
+                         texts, vis)
+    return rects, texts, font, vis, cell
 
 
 def _paint_select_sweep(p: QPainter, rect: QRectF, radius: float, scale: float, state: TimerState, theme: HubTheme):
@@ -155,52 +177,27 @@ def paint_windows_timer(
         mode_text,
     )
 
-    # 4. Display Digital do Tempo
-    total_sec = max(0, int(round(state.current_seconds)))
-    hh, rem = divmod(total_sec, 3600)
-    mm, ss = divmod(rem, 60)
-    hh_str, mm_str, ss_str = f"{hh:02d}", f"{mm:02d}", f"{ss:02d}"
-    colon = ":"
-
-    font_size = max(16, int(25 * scale))
-    digits_font = get_ui_font(font_size, QFont.Weight.DemiBold)
+    # 4. Display Digital do Tempo (HH:MM:SS, ou MM:SS:cc no Cronômetro abaixo de 1 h)
+    morph = state.time_morph if state.time_morph is not None else morph_target(state.mode, state.current_seconds)
+    rects, texts, digits_font, vis, cell = digits_geometry(card, scale, state.current_seconds, state.mode, morph)
     p.setFont(digits_font)
 
-    fm = QFontMetricsF(digits_font)
-    w_hh = fm.horizontalAdvance(hh_str)
-    w_c1 = fm.horizontalAdvance(colon)
-    w_mm = fm.horizontalAdvance(mm_str)
-    w_c2 = fm.horizontalAdvance(colon)
-    w_ss = fm.horizontalAdvance(ss_str)
-
-    total_w = w_hh + w_c1 + w_mm + w_c2 + w_ss
-    start_x = card.left() + (card.width() - total_w) / 2.0
-    digits_y = card.top() + 32 * scale
-    digits_h = 40 * scale
-
-    rects = {
-        "hours": QRectF(start_x, digits_y, w_hh, digits_h),
-        "colon1": QRectF(start_x + w_hh, digits_y, w_c1, digits_h),
-        "minutes": QRectF(start_x + w_hh + w_c1, digits_y, w_mm, digits_h),
-        "colon2": QRectF(start_x + w_hh + w_c1 + w_mm, digits_y, w_c2, digits_h),
-        "seconds": QRectF(start_x + w_hh + w_c1 + w_mm + w_c2, digits_y, w_ss, digits_h),
-    }
-    texts = {
-        "hours": hh_str,
-        "colon1": colon,
-        "minutes": mm_str,
-        "colon2": colon,
-        "seconds": ss_str,
-    }
-
-    for seg_key in ("hours", "colon1", "minutes", "colon2", "seconds"):
+    for seg_key in SLOT_KEYS:
         r = rects[seg_key]
         txt = texts[seg_key]
+        seg_vis = vis[seg_key]
+        if seg_vis <= 0.004:
+            continue   # campo recolhido (horas ou milissegundos que não estão no formato de agora)
         is_seg_hovered = (
             state.is_smart_hover_enabled
             and not state.is_running
+            and state.mode != "stopwatch"
             and state.hovered_time_segment == seg_key
         )
+        p.save()
+        if seg_vis < 0.999:   # entrando/saindo: aparece junto com a largura, sem vazar para o vizinho
+            p.setClipRect(r.adjusted(-2.0 * scale, -r.height(), 2.0 * scale, r.height()))
+            p.setOpacity(p.opacity() * seg_vis)
         if is_seg_hovered:
             p.setPen(Qt.PenStyle.NoPen)
             pill_bg = QColor(theme.accent)
@@ -217,10 +214,16 @@ def paint_windows_timer(
         else:
             p.setPen(QColor(theme.text))
 
-        p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+        if seg_key in COLON_KEYS or cell is None:
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+        else:   # dígito a dígito, cada um no centro da sua célula: os centésimos não fazem o texto balançar
+            x0 = r.left() + (r.width() - len(txt) * cell) / 2.0
+            for i, ch in enumerate(txt):
+                p.drawText(QRectF(x0 + i * cell, r.top(), cell, r.height()), Qt.AlignmentFlag.AlignCenter, ch)
         if state.select_segment == seg_key and 0.0 < state.select_progress < 1.0:
             _paint_select_sweep(p, r.adjusted(-3.0 * scale, 2.0 * scale, 3.0 * scale, -2.0 * scale), 4.0 * scale,
                                 scale, state, theme)
+        p.restore()
 
     # 5. Botões de Ação
     play_diam = 40.0 * scale

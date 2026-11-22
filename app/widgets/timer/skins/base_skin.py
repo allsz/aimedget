@@ -12,10 +12,12 @@ from app.core.widget_animator import AnimatedSkinMixin
 from app.core.desktop_pin import DesktopPinMixin
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
+from app.hub.components.tab_pill import Blend
 from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.fluent_menu import get_fluent_menu_stylesheet
 from app.ui_components.menu_action_bar import ActionBarItem, attach_action_bar
 from app.widgets.timer import theme as timer_theme
+from app.widgets.timer.time_layout import MORPH_SPRING, morph_target
 from app.core.frame_clock import FrameTimer
 
 
@@ -154,6 +156,10 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.alarm_time: int = 0            # horário do Alarme (o controller mantém atualizado)
         self.alarm_finished: bool = False   # o alarme tocou: rótulo "CONCLUÍDO" até a próxima ação
         i18n.language_changed.connect(self.update)   # o rótulo do topo é desenhado no idioma do app
+
+        # Formato do tempo (HH:MM:SS <-> MM:SS:cc): a mola abre/fecha os campos que entram/saem, sem corte
+        self._morph_target = morph_target(self.mode, self.current_seconds)
+        self._morph = Blend(self._morph_target, self.update, self, spring=MORPH_SPRING)
 
         # Interações de mouse
         self._drag_pos = QPoint()
@@ -300,7 +306,16 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.mode = mode
         if not is_running and mode == "timer":
             self.target_duration = current_seconds
+        target = morph_target(mode, current_seconds)
+        if target != self._morph_target:
+            self._morph_target = target
+            self._morph.set(target, animated=self.isVisible())   # escondido: já fica no formato certo
         self.update()
+
+    @property
+    def time_morph(self) -> float:
+        """0 = MM:SS:cc, 1 = HH:MM:SS; no meio da troca de formato, o valor intermediário da mola."""
+        return max(0.0, min(1.0, self._morph.value))
 
     @staticmethod
     def format_time_digits(seconds: float) -> str:
