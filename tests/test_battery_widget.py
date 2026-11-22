@@ -128,6 +128,39 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(L.edge_y, lay.EDGE, places=3)
         self.assertGreaterEqual(L.gap_y, lay.M * L.d - 1e-6)
 
+    def test_column_switch_has_hysteresis(self):
+        """Arrastando o canto, a troca 3 <-> 2 colunas acontece em larguras diferentes na ida e na volta, e mexer
+        poucos pixels em volta do ponto de troca não fica alternando (o cartão pulava entre 1 e 2 linhas)."""
+        def sweep(widths, H=262):
+            prev, switches = None, []
+            for W in widths:
+                L = lay.compute(3, W, H, prefer=prev)
+                if prev is not None and L.cols != prev:
+                    switches.append(W)
+                prev = L.cols
+            return prev, switches
+
+        _c, down = sweep(range(480, 200, -1))
+        _c, up = sweep(range(200, 481))
+        self.assertEqual(len(down), 1)
+        self.assertEqual(len(up), 1)
+        self.assertGreater(up[0] - down[0], 10)                              # faixa entre as duas trocas
+        jitter = [down[0] + dx for dx in (0, 2, -1, 3, 1, -2, 2, 0)] * 3
+        cols, switches = sweep([down[0] - 1] + jitter)
+        self.assertEqual(switches, [])
+
+    def test_never_grows_past_the_pointer_when_another_layout_fits(self):
+        """Caso real: 3 dispositivos, 268 x 240. Três numa linha pediriam anel < 52 e empurrariam o cartão para além
+        do ponteiro; duas linhas cabem, então ficam duas linhas."""
+        L = lay.compute(3, 268, 240)
+        self.assertFalse(L.grown)
+        self.assertEqual((L.W, L.H), (268, 240))
+        for W in range(190, 480, 2):                     # de 190 para cima sempre cabe sem crescer, qualquer que
+            for prefer in (None, 1, 2, 3):               # seja o layout na tela
+                L = lay.compute(3, W, 240, prefer=prefer)
+                self.assertFalse(L.grown, f"W={W} prefer={prefer}")
+                self.assertEqual((L.W, L.H), (W, 240))
+
     def test_without_header_and_names_rings_get_bigger(self):
         full = lay.compute(6, 300, 262)
         bare = lay.compute(6, 300, 262, header=False, names=False)
@@ -548,6 +581,81 @@ class MotionTests(unittest.TestCase):
         hs, ws = run(st)
         self.assertTrue(monotonic(hs) and monotonic(ws))
 
+    @staticmethod
+    def _drag(n, path, animated=True):
+        """Arrasta o canto pelo caminho (um quadro de 120 Hz por movimento); devolve o estado e o pior de cada quadro:
+        quanto o cartão andou num quadro, quanto um anel visível saiu do cartão e quanto dois anéis se sobrepuseram."""
+        st = BatteryState(animated=animated, base_w=path[0][0], base_h=path[0][1])
+        st.set_devices(devs(n))
+        run(st)
+        worst = {"step_w": 0.0, "step_h": 0.0, "out": 0.0, "overlap": 0.0}
+        pw, ph = st.W.x, st.H.x
+        for w, h in path:
+            st.set_base_size(w, h, direct=True)
+            st.step(1 / 120)
+            worst["step_w"] = max(worst["step_w"], abs(st.W.x - pw))
+            worst["step_h"] = max(worst["step_h"], abs(st.H.x - ph))
+            pw, ph = st.W.x, st.H.x
+            d = st.D.x
+            shown = [c for c in st.cells.values() if not c.leaving and c.alpha.x > 0.5]
+            for c in shown:
+                worst["out"] = max(worst["out"], -c.x.x, c.x.x + d - st.W.x, c.y.x + d - st.H.x)
+            for i, a in enumerate(shown):
+                for b in shown[i + 1:]:
+                    gap = ((a.x.x - b.x.x) ** 2 + (a.y.x - b.y.x) ** 2) ** 0.5
+                    worst["overlap"] = max(worst["overlap"], d - gap)
+        return st, worst
+
+    def test_corner_drag_keeps_card_on_pointer_and_rings_inside(self):
+        """O vídeo do bug: arrastando o canto, o cartão pulava de altura e um anel cruzava o cartão por cima do
+        vizinho e saía pela borda. Agora: o cartão anda só o que o ponteiro andou, nenhum anel sai, nenhum cruza."""
+        widths = list(range(480, 170, -3)) + list(range(170, 481, 3))
+        for n, H in ((2, 262), (3, 240), (3, 262), (4, 262), (5, 240)):
+            st, worst = self._drag(n, [(w, H) for w in widths])
+            msg = f"n={n} H={H} {worst}"
+            self.assertLessEqual(worst["step_w"], 3.0 + 0.5, msg)              # sem pulo de largura
+            self.assertEqual(worst["step_h"], 0.0, msg)                        # arrasto horizontal: altura parada
+            self.assertLessEqual(worst["out"], 0.5, msg)
+            self.assertLessEqual(worst["overlap"], 0.5, msg)
+            self.assertGreater(st.hops, 0, msg)                                # passou pela troca de grade
+        diagonal = [(300 - i * 1.5, 262 - i) for i in range(80)] + [(180 + i * 2, 182 + i * 0.3) for i in range(120)]
+        st, worst = self._drag(3, diagonal)
+        self.assertLessEqual(max(worst["step_w"], worst["step_h"]), 3.0, worst)
+        self.assertLessEqual(worst["out"], 0.5, worst)
+        many = [(w, 262) for w in widths]                                      # cartão empurrado (anéis no mínimo)
+        st, worst = self._drag(8, many)
+        self.assertLessEqual(worst["out"], 0.5, worst)
+        self.assertLessEqual(worst["overlap"], 0.5, worst)
+
+    def test_row_change_fades_out_and_rises_in_then_ends_clean(self):
+        st = BatteryState(animated=True, base_w=360, base_h=262)
+        st.set_devices(devs(3))
+        run(st)
+        self.assertEqual(st.layout.rows, 1)
+        for w in range(360, 230, -3):                                          # estreita até virar 2 linhas
+            st.set_base_size(w, 262, direct=True)
+            st.step(1 / 120)
+            if st.layout.rows == 2:
+                break
+        self.assertEqual(st.layout.rows, 2)
+        hopped = sorted(k.split("\x00")[0] for k, c in st.cells.items() if c.leaving)
+        self.assertIn("d2", hopped)                     # trocou de linha: uma cópia esmaece onde ele estava
+        self.assertNotIn("d0", hopped)                  # quem quase não anda só desliza
+        moved = st.cells["d2"]
+        self.assertLess(moved.alpha.x, 0.5)                                    # e ele reaparece no lugar novo
+        self.assertGreater(moved.y.x, moved.y.t)                               # subindo, não cruzando
+        run(st)
+        self.assertFalse(st.busy())
+        self.assertEqual(sorted(st.cells), ["d0", "d1", "d2"])                 # cópias removidas
+        self.assertEqual((moved.alpha.x, moved.x.x, moved.y.x), (1.0, moved.x.t, moved.y.t))
+
+    def test_corner_drag_without_animations_is_immediate(self):
+        st, worst = self._drag(3, [(w, 262) for w in range(360, 200, -5)], animated=False)
+        self.assertEqual(st.hops, 0)
+        self.assertEqual(sorted(st.cells), ["d0", "d1", "d2"])
+        for i, dev_id in enumerate(st.order):
+            self.assertEqual((st.cells[dev_id].x.x, st.cells[dev_id].y.x), st.layout.cells[i])
+
     def test_hover_switches_the_face_with_motion(self):
         st = BatteryState(animated=True, options=Options(face=FACE_HOVER))
         st.set_devices(devs(2))
@@ -575,6 +683,16 @@ class CountToggleTests(unittest.TestCase):
         st.set_options(Options(count=True))
         run(st)
         self.assertEqual(st.count_alpha.x, 1.0)
+
+    def test_count_fades_with_width_instead_of_cutting(self):
+        """Estreitando o cartão, "N dispositivos" esmaece ao longo de alguns px em vez de sumir de uma vez."""
+        from app.widgets.battery.card_painter import COUNT_FADE, count_fit
+
+        self.assertEqual(count_fit(-5.0), 0.0)
+        self.assertEqual(count_fit(COUNT_FADE + 5.0), 1.0)
+        values = [count_fit(s / 2) for s in range(-10, int(COUNT_FADE * 2) + 10)]
+        self.assertTrue(monotonic(values, tol=0.0))
+        self.assertLess(max(b - a for a, b in zip(values, values[1:])), 0.05)   # sem degrau
 
     def test_count_without_animations_is_immediate(self):
         st = BatteryState(animated=False)

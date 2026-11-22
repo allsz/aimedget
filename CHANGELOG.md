@@ -29,6 +29,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - O tamanho dos widgets sai do menu de contexto e fica só no Hub.
 
 ### Corrigido
+- Bateria: redimensionar pelo canto não faz mais o cartão pular de altura nem os anéis cruzarem o cartão. Perto do
+  ponto em que o layout troca de colunas ele não fica alternando, o cartão segue o ponteiro, e um anel que muda de
+  linha some onde estava e entra no lugar novo, sem passar por cima dos vizinhos nem sair pela borda. A contagem de
+  dispositivos esmaece quando falta espaço, em vez de sumir de uma vez.
 - Bateria: carga que ia e voltava entre dois níveis, ou piscava entre "carregando" e "cheio" no fim da carga.
 - Música: um quadro de clipe enviado pelo player podia virar a capa do álbum inteiro; a capa da busca online agora
   tem prioridade.
