@@ -1,7 +1,10 @@
 """
 BatteryService - lê as fontes numa thread de fundo e entrega a lista ao widget.
 
-- Só roda com o widget na tela (start/stop); a primeira leitura é imediata, depois a cada `INTERVAL_S`.
+- Só roda com o widget na tela (start/stop); a primeira leitura é imediata, depois a cada `INTERVAL_S` (ou
+  `CHARGING_INTERVAL_S` enquanto algum dispositivo carrega).
+- Carga andando "para trás" (caindo enquanto carrega, subindo enquanto descarrega) só vale se a leitura seguinte
+  repetir: segura o vaivém na fronteira de um nível e o pisca-pisca carregando/cheio do fim da carga.
 - Um dispositivo que some numa leitura fica por mais `GRACE_POLLS` leituras com o último valor: um mouse que dormiu
   não pisca para fora e para dentro do cartão. Depois disso ele sai (com animação, no cartão).
 - Cada fonte é isolada: se uma falhar, as outras continuam.
@@ -33,6 +36,8 @@ from app.services.battery.models import BatteryDevice, sort_devices
 log = logging.getLogger(__name__)
 
 INTERVAL_S = 60.0
+# Com algum dispositivo carregando lemos mais vezes, para a carga subir na tela (e o "cheio" aparecer logo)
+CHARGING_INTERVAL_S = 15.0
 GRACE_POLLS = 2
 # Depois de um aviso do sistema (dispositivo entrou/saiu, PC acordou): leituras extras nestes instantes. O primeiro
 # atraso junta a rajada de avisos; os outros pegam o receptor/Bluetooth que ainda está voltando do sono.
@@ -136,6 +141,34 @@ class DeviceTracker:
         self.grace = grace
         self._last: dict[str, BatteryDevice] = {}
         self._missed: dict[str, int] = {}
+        self._pending: dict[str, BatteryDevice] = {}   # leitura "para trás" esperando a confirmação
+
+    def _forget(self, dev_id: str):
+        del self._last[dev_id]
+        self._missed.pop(dev_id, None)
+        self._pending.pop(dev_id, None)
+
+    def _steady(self, dev: BatteryDevice) -> BatteryDevice:
+        """O que mostrar para esta leitura. Carregando a carga não cai; descarregando ela não sobe. Uma leitura na
+        contramão (vaivém entre dois níveis, carregando <-> cheio no fim da carga) segura o valor anterior até a
+        leitura seguinte repetir a mesma coisa. Sair do "carregando" (tirou o cabo, ou encheu) vale na hora."""
+        prev = self._last.get(dev.id)
+        if prev is None or prev.percent is None or dev.percent is None:
+            self._pending.pop(dev.id, None)
+            return dev
+        if dev.charging:
+            backwards = dev.percent < prev.percent
+        else:
+            backwards = not prev.charging and dev.percent > prev.percent
+        if not backwards:
+            self._pending.pop(dev.id, None)
+            return dev
+        held = self._pending.get(dev.id)
+        if held is not None and (held.percent, held.charging) == (dev.percent, dev.charging):
+            del self._pending[dev.id]
+            return dev
+        self._pending[dev.id] = dev
+        return prev
 
     def update(self, reading: list[BatteryDevice], count_misses: bool = True,
                drop_missing: bool = False) -> list[BatteryDevice]:
@@ -144,31 +177,33 @@ class DeviceTracker:
           não responder é estar desligado ou fora de alcance;
         - pelo dongle (mouse/teclado): pode só estar dormindo. `count_misses=False` (leituras extras) não gasta a
           carência; senão um mouse dormindo sairia só porque outro dispositivo foi ligado;
-        - `drop_missing=True` (atualizar à mão): todo mundo que não respondeu sai."""
+        - `drop_missing=True` (atualizar à mão): todo mundo que não respondeu sai, e a carga vale como veio (sem
+          segurar a leitura "para trás")."""
         now = {d.id: d for d in reading}
         for dev_id in list(self._last):
             if dev_id in now:
                 continue
             if drop_missing:
-                del self._last[dev_id]
-                self._missed.pop(dev_id, None)
+                self._forget(dev_id)
                 continue
             if self._last[dev_id].source in STREAMING_SOURCES:
                 # Um soluço do Bluetooth não tira o controle: a primeira falta pede confirmação (leitura logo em
                 # seguida, ver `unconfirmed`); a segunda seguida tira.
                 self._missed[dev_id] = self._missed.get(dev_id, 0) + 1
                 if self._missed[dev_id] >= 2:
-                    del self._last[dev_id]
-                    del self._missed[dev_id]
+                    self._forget(dev_id)
                 continue
             if not count_misses:
                 continue
             self._missed[dev_id] = self._missed.get(dev_id, 0) + 1
             if self._missed[dev_id] > self.grace:
-                del self._last[dev_id]
-                del self._missed[dev_id]
+                self._forget(dev_id)
         for dev_id, dev in now.items():
-            self._last[dev_id] = dev
+            if drop_missing:
+                self._pending.pop(dev_id, None)
+                self._last[dev_id] = dev
+            else:
+                self._last[dev_id] = self._steady(dev)
             self._missed.pop(dev_id, None)
         return sort_devices(self._last.values())
 
@@ -183,8 +218,10 @@ class BatteryService(QObject):
     def __init__(self, parent=None, reader: Optional[Callable[[], list]] = None, interval_s: float = INTERVAL_S,
                  burst_delays: tuple = BURST_DELAYS_S, activity: Optional[Callable[[], Optional[int]]] = None,
                  activity_check_s: float = ACTIVITY_CHECK_S, activity_gap_s: float = ACTIVITY_GAP_S,
-                 missing_ttl_s: float = MISSING_TTL_S, confirm_delay_s: float = CONFIRM_DELAY_S):
+                 missing_ttl_s: float = MISSING_TTL_S, confirm_delay_s: float = CONFIRM_DELAY_S,
+                 charging_interval_s: float = CHARGING_INTERVAL_S):
         super().__init__(parent)
+        self._charging_interval = float(charging_interval_s)
         self._confirm_delay = float(confirm_delay_s)
         self._activity = activity or system_events.last_input_tick
         self._activity_check = float(activity_check_s)
@@ -348,8 +385,13 @@ class BatteryService(QObject):
             self.devices_updated.emit(devices)
 
             with self._lock:
+                # Carregando: próxima leitura mais cedo. Vale também quando o cabo entrou numa leitura extra (rajada)
+                charging = any(d.charging for d in devices)
+                step = min(self._interval, self._charging_interval) if charging else self._interval
                 if regular:
-                    self._next_poll = done + self._interval
+                    self._next_poll = done + step
+                elif charging:
+                    self._next_poll = min(self._next_poll, done + step)
                 if self._event_at is not None and changed:
                     log.info("battery: %s -> list changed %.2fs after the event (read %.2fs, %d device(s))",
                              self._event_reason, done - self._event_at, done - t0, len(devices))

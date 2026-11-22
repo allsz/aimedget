@@ -251,6 +251,104 @@ class TrackerMissTests(unittest.TestCase):
         self.assertEqual([d.id for d in out], ["b"])
 
 
+def chg(i, pct, charging):
+    return BatteryDevice(id=i, name=i, kind="controller", percent=pct, charging=charging, approximate=False,
+                         source="sony")
+
+
+class ChargingSteadyTests(unittest.TestCase):
+    """Carga andando para trás só vale confirmada; ligar/desligar o cabo vale na hora."""
+
+    def shown(self, tr, *readings, **kw):
+        return [(d.percent, d.charging) for r in readings for d in tr.update([r], **kw)]
+
+    def test_rising_while_charging_and_falling_while_discharging_pass_at_once(self):
+        tr = DeviceTracker()
+        self.assertEqual(self.shown(tr, chg("ds", 45, True), chg("ds", 55, True), chg("ds", 65, True)),
+                         [(45, True), (55, True), (65, True)])
+        tr = DeviceTracker()
+        self.assertEqual(self.shown(tr, chg("ds", 65, False), chg("ds", 55, False)), [(65, False), (55, False)])
+
+    def test_plug_and_unplug_show_at_once(self):
+        tr = DeviceTracker()
+        self.assertEqual(self.shown(tr, chg("ds", 45, False), chg("ds", 45, True), chg("ds", 45, False)),
+                         [(45, False), (45, True), (45, False)])
+
+    def test_trickle_at_the_end_of_charge_does_not_blink(self):
+        """Perto do fim o DualSense alterna "carregando 95%" e "cheio": o cartão fica no cheio."""
+        tr = DeviceTracker()
+        seq = [chg("ds", 95, True), chg("ds", 100, False), chg("ds", 95, True), chg("ds", 100, False),
+               chg("ds", 95, True), chg("ds", 100, False)]
+        self.assertEqual(self.shown(tr, *seq)[1:], [(100, False)] * 5)
+
+    def test_level_jitter_while_discharging_is_held(self):
+        tr = DeviceTracker()
+        seq = [chg("m", 55, False), chg("m", 45, False), chg("m", 55, False), chg("m", 45, False)]
+        self.assertEqual(self.shown(tr, *seq), [(55, False), (45, False), (45, False), (45, False)])
+
+    def test_backwards_change_sticks_when_repeated(self):
+        tr = DeviceTracker()
+        seq = [chg("ds", 100, False), chg("ds", 95, True), chg("ds", 95, True)]   # plugou de verdade, já cheio
+        self.assertEqual(self.shown(tr, *seq), [(100, False), (100, False), (95, True)])
+
+    def test_manual_refresh_shows_the_raw_reading(self):
+        tr = DeviceTracker()
+        tr.update([chg("m", 45, False)])
+        self.assertEqual(self.shown(tr, chg("m", 55, False), drop_missing=True), [(55, False)])
+
+    def test_unknown_charge_passes_through(self):
+        tr = DeviceTracker()
+        self.assertEqual(self.shown(tr, chg("x", None, False), chg("x", 50, False), chg("x", None, True)),
+                         [(None, False), (50, False), (None, True)])
+
+    def test_device_that_left_and_came_back_is_not_held(self):
+        tr = DeviceTracker()
+        tr.update([chg("ds", 20, False)])
+        tr.update([], count_misses=False)
+        tr.update([], count_misses=False)              # controle saiu
+        self.assertEqual(self.shown(tr, chg("ds", 90, False)), [(90, False)])   # carregou em outro lugar
+
+
+class ChargingIntervalTests(unittest.TestCase):
+    def make(self, reader):
+        s = BatteryService(reader=reader, interval_s=60.0, charging_interval_s=0.05, burst_delays=(0.01,),
+                           activity=lambda: None)
+        self.addCleanup(s.stop)
+        s.start()
+        self.assertTrue(wait_until(lambda: s.reads >= 1))
+        return s
+
+    def test_reads_often_while_charging_and_slow_again_after(self):
+        r = ScriptedReader([chg("ds", 45, True)])
+        s = self.make(r)
+        self.assertTrue(wait_until(lambda: s.reads >= 4, 1.0))       # 60 s de intervalo: só chegaria aqui carregando
+        r.devices = [chg("ds", 45, False)]                           # tirou o cabo
+        self.assertTrue(wait_until(lambda: not s.last_devices[0].charging, 1.0))
+        time.sleep(0.1)
+        n = s.reads
+        time.sleep(0.25)
+        self.assertEqual(s.reads, n)
+
+    def test_cable_seen_in_a_burst_read_brings_the_next_poll_forward(self):
+        r = ScriptedReader([chg("ds", 45, False)])
+        s = self.make(r)
+        time.sleep(0.1)
+        n = s.reads
+        self.assertEqual(n, 1)
+        r.devices = [chg("ds", 45, True)]
+        s.notify_change("device")                                    # plugou o cabo
+        self.assertTrue(wait_until(lambda: s.reads >= n + 3, 1.0))   # rajada + leituras de carga, sem esperar 60 s
+
+    def test_percent_climbs_on_screen_while_charging(self):
+        r = ScriptedReader([chg("ds", 45, True)])
+        s = self.make(r)
+        r.devices = [chg("ds", 55, True)]
+        self.assertTrue(wait_until(lambda: s.last_devices[0].percent == 55, 1.0))
+        r.devices = [chg("ds", 100, False)]                          # cheio
+        self.assertTrue(wait_until(lambda: (s.last_devices[0].percent, s.last_devices[0].charging) == (100, False),
+                                   1.0))
+
+
 class ParallelReadTests(unittest.TestCase):
     def test_sources_run_in_parallel_and_order_is_fixed(self):
         def slow(name):
