@@ -28,9 +28,6 @@ FACE_SPRING = (520.0, 30.0)
 CHARGE_SPRING = (280.0, 34.0)   # CLOSE (amortecimento crítico): a bolinha entra/sai sem passar do ponto, discreta
 RISE = 12.0                 # o anel novo sobe estes px enquanto aparece
 ATTACH_PX = 0.5             # arrastando o canto: o cartão já no alvo segue o ponteiro sem mola
-HOP_SLIDE = 0.5             # na troca de grade, deslizar mais que meio anel vira "sai e entra" (não cruza vizinhos)
-GHOST_SPRING = (900.0, 60.0)    # a cópia que sai: rápida e sem passar do ponto (amortecimento crítico)
-GHOST_GONE = 0.15               # o anel no lugar novo começa a aparecer quando a cópia antiga cai abaixo disto
 
 FACE_HOVER = "hover"        # ícone; passar o mouse no cartão mostra a porcentagem
 FACE_ICON = "icon"
@@ -113,8 +110,6 @@ class Cell:
     fill: Spring
     leaving: bool = False
     charge: Optional[Spring] = None     # 0..1: bolinha de carregando (cresce/aparece e abre espaço; o nome desliza)
-    row: int = -1                       # linha no layout atual (-1: ainda sem lugar)
-    ghost: Optional["Cell"] = None      # cópia que ainda esmaece no lugar antigo (troca de linha)
 
     def __post_init__(self):
         if self.charge is None:
@@ -135,7 +130,6 @@ class BatteryState:
     order: list = field(default_factory=list)      # ids na ordem do cartão
     cells: dict = field(default_factory=dict)      # id -> Cell (inclui as que estão saindo)
     layout: Optional[lay.Layout] = None
-    hops: int = 0                      # contador para as chaves das cópias que esmaecem ao mudar de linha
 
     def __post_init__(self):
         self.W = Spring(self.base_w, SIZE_SPRING, tol=0.2)
@@ -240,9 +234,9 @@ class BatteryState:
             self.face_both.snap()
 
     def relayout(self, entering=(), snap: bool = False, direct_size: bool = False):
-        """`direct_size` (arrastando o canto): o cartão segue o ponteiro e, enquanto a grade não muda, anéis e nomes
-        andam junto com ele, sem mola (nada fica para trás nem sai pela borda). Quando a grade muda, quem troca de
-        linha esmaece onde está e entra no lugar novo (`_hop`), em vez de cruzar o cartão por cima dos vizinhos."""
+        """`direct_size` (arrastando o canto): o cartão segue o ponteiro; os anéis vão de mola (MORPH) até o lugar
+        novo, como um líquido. Podem passar da borda por alguns quadros quando a grade muda: escolhido no protótipo
+        `mockups/battery-resize-liquid.html` (preferido a sumir e reaparecer)."""
         o = self.options
         prev = self.layout
         n = len(self.order)
@@ -256,7 +250,6 @@ class BatteryState:
         # ponteiro, ou o mínimo que os anéis pedem), então o cartão anda junto e mantém o que ainda faltava da mola;
         # na troca de grade o alvo pula e o cartão vai com mola
         shifts = [(s, t - s.t, abs(s.x - s.t) < ATTACH_PX) for s, t in ((self.W, L.W), (self.H, L.H))]
-        d_shift = L.d - self.D.t
         self.W.t, self.H.t, self.D.t = L.W, L.H, L.d
         for spring, delta, attached in shifts:
             if instant or (follow and same_grid and attached):
@@ -265,45 +258,18 @@ class BatteryState:
                 spring.x += delta       # ainda assentando: anda junto e a mola termina o que faltava
         if instant:
             self.D.snap()
-        elif follow and same_grid:
-            self.D.x += d_shift
         for i, dev_id in enumerate(self.order):
             cell = self.cells[dev_id]
             x, y = L.cells[i]
-            row = i // L.cols if L.cols else 0
-            old_row, cell.row = cell.row, row
-            dx, dy = x - cell.x.t, y - cell.y.t
             cell.x.t, cell.y.t = x, y
             if dev_id in entering or instant:
                 cell.x.snap()
                 cell.y.snap()
                 if dev_id in entering and not instant:
                     cell.y.x = y + RISE
-            elif follow and same_grid:
-                cell.x.x += dx          # anda junto com o cartão (mantém o que ainda estiver animando)
-                cell.y.x += dy
-            elif prefer is not None and not same_grid and (0 <= old_row != row or abs(cell.x.x - x) > HOP_SLIDE * L.d):
-                self._hop(dev_id, cell)     # trocou de linha, ou deslizaria por cima do lugar de outro
             if instant:
                 for s in (cell.alpha, cell.scale, cell.fill, cell.charge):
                     s.snap()
-
-    def _hop(self, dev_id: str, cell: Cell):
-        """Mudou de linha: uma cópia esmaece parada onde ele estava e ele entra no lugar novo como um dispositivo novo
-        (sobe e aparece). Mesmo movimento de entrar/sair, sem atravessar os vizinhos nem passar da borda."""
-        self.hops += 1
-        ghost = Cell(cell.device, Spring(cell.x.x, CELL_SPRING), Spring(cell.y.x, CELL_SPRING),
-                     Spring(cell.alpha.x, GHOST_SPRING, 0.004), Spring(cell.scale.x, GHOST_SPRING, 0.002),
-                     Spring(cell.fill.x, FILL_SPRING, 0.05), leaving=True,
-                     charge=Spring(cell.charge.x, CHARGE_SPRING, tol=0.004))
-        ghost.alpha.t, ghost.scale.t = 0.0, 0.88
-        self.cells[f"{dev_id}\x00hop{self.hops}"] = ghost
-        cell.ghost = ghost
-        cell.x.snap()
-        cell.y.snap()
-        cell.y.x = cell.y.t + RISE
-        cell.alpha.x, cell.alpha.v, cell.alpha.t = 0.0, 0.0, 1.0
-        cell.scale.x, cell.scale.v, cell.scale.t = 0.9, 0.0, 1.0
 
     # --- Relógio ---
 
@@ -318,13 +284,9 @@ class BatteryState:
             s.step(dt)
             busy = busy or not s.settled()
         for dev_id, cell in list(self.cells.items()):
-            # Quem está aparecendo espera o cartão abrir espaço para ele (cartão crescendo: não surge fora da borda) e,
-            # depois de trocar de linha, a cópia antiga quase sumir (lê como "sai, depois entra", não anel em dobro)
-            if cell.ghost is not None and cell.ghost.alpha.x < GHOST_GONE:
-                cell.ghost = None
+            # Quem está aparecendo espera o cartão abrir espaço para ele (cartão crescendo): não surge fora da borda
             waiting = (not cell.leaving and cell.alpha.t > 0.5 and cell.alpha.x < 0.5
-                       and (cell.ghost is not None
-                            or cell.x.t + self.D.x > self.W.x + 1.0 or cell.y.t + self.D.x > self.H.x + 1.0))
+                       and (cell.x.t + self.D.x > self.W.x + 1.0 or cell.y.t + self.D.x > self.H.x + 1.0))
             for s in cell.springs():
                 if waiting and s in (cell.alpha, cell.scale):
                     busy = True
@@ -356,6 +318,5 @@ class BatteryState:
             if cell.leaving:
                 del self.cells[dev_id]
                 continue
-            cell.ghost = None
             for s in cell.springs():
                 s.snap()

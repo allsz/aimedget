@@ -583,76 +583,78 @@ class MotionTests(unittest.TestCase):
 
     @staticmethod
     def _drag(n, path, animated=True):
-        """Arrasta o canto pelo caminho (um quadro de 120 Hz por movimento); devolve o estado e o pior de cada quadro:
-        quanto o cartão andou num quadro, quanto um anel visível saiu do cartão e quanto dois anéis se sobrepuseram."""
+        """Arrasta o canto pelo caminho (um quadro de 120 Hz por movimento); devolve o estado e, por quadro, quanto o
+        cartão andou, quanto o anel que mais andou se moveu e a menor opacidade de um anel."""
         st = BatteryState(animated=animated, base_w=path[0][0], base_h=path[0][1])
         st.set_devices(devs(n))
         run(st)
-        worst = {"step_w": 0.0, "step_h": 0.0, "out": 0.0, "overlap": 0.0}
+        worst = {"step_w": 0.0, "step_h": 0.0, "ring_step": 0.0, "min_alpha": 1.0, "leaving": 0}
         pw, ph = st.W.x, st.H.x
+        prev = {k: (c.x.x, c.y.x) for k, c in st.cells.items()}
         for w, h in path:
             st.set_base_size(w, h, direct=True)
             st.step(1 / 120)
             worst["step_w"] = max(worst["step_w"], abs(st.W.x - pw))
             worst["step_h"] = max(worst["step_h"], abs(st.H.x - ph))
             pw, ph = st.W.x, st.H.x
-            d = st.D.x
-            shown = [c for c in st.cells.values() if not c.leaving and c.alpha.x > 0.5]
-            for c in shown:
-                worst["out"] = max(worst["out"], -c.x.x, c.x.x + d - st.W.x, c.y.x + d - st.H.x)
-            for i, a in enumerate(shown):
-                for b in shown[i + 1:]:
-                    gap = ((a.x.x - b.x.x) ** 2 + (a.y.x - b.y.x) ** 2) ** 0.5
-                    worst["overlap"] = max(worst["overlap"], d - gap)
+            for k, c in st.cells.items():
+                px, py = prev.get(k, (c.x.x, c.y.x))
+                worst["ring_step"] = max(worst["ring_step"], ((c.x.x - px) ** 2 + (c.y.x - py) ** 2) ** 0.5)
+                worst["min_alpha"] = min(worst["min_alpha"], c.alpha.x)
+                prev[k] = (c.x.x, c.y.x)
+            worst["leaving"] = max(worst["leaving"], sum(1 for c in st.cells.values() if c.leaving))
         return st, worst
 
-    def test_corner_drag_keeps_card_on_pointer_and_rings_inside(self):
-        """O vídeo do bug: arrastando o canto, o cartão pulava de altura e um anel cruzava o cartão por cima do
-        vizinho e saía pela borda. Agora: o cartão anda só o que o ponteiro andou, nenhum anel sai, nenhum cruza."""
+    def _settled_inside(self, st):
+        run(st)
+        self.assertFalse(st.busy())
+        d = st.D.x
+        for i, dev_id in enumerate(st.order):
+            c = st.cells[dev_id]
+            self.assertEqual((c.x.x, c.y.x), st.layout.cells[i])
+            self.assertTrue(-0.01 <= c.x.x and c.x.x + d <= st.W.x + 0.01 and c.y.x + d <= st.H.x + 0.01)
+
+    def test_corner_drag_card_follows_pointer_without_jumps(self):
+        """O vídeo do bug: arrastando o canto, o cartão pulava de altura. Agora ele anda só o que o ponteiro andou."""
         widths = list(range(480, 170, -3)) + list(range(170, 481, 3))
         for n, H in ((2, 262), (3, 240), (3, 262), (4, 262), (5, 240)):
             st, worst = self._drag(n, [(w, H) for w in widths])
             msg = f"n={n} H={H} {worst}"
             self.assertLessEqual(worst["step_w"], 3.0 + 0.5, msg)              # sem pulo de largura
             self.assertEqual(worst["step_h"], 0.0, msg)                        # arrasto horizontal: altura parada
-            self.assertLessEqual(worst["out"], 0.5, msg)
-            self.assertLessEqual(worst["overlap"], 0.5, msg)
-            self.assertGreater(st.hops, 0, msg)                                # passou pela troca de grade
+            self._settled_inside(st)
         diagonal = [(300 - i * 1.5, 262 - i) for i in range(80)] + [(180 + i * 2, 182 + i * 0.3) for i in range(120)]
         st, worst = self._drag(3, diagonal)
         self.assertLessEqual(max(worst["step_w"], worst["step_h"]), 3.0, worst)
-        self.assertLessEqual(worst["out"], 0.5, worst)
-        many = [(w, 262) for w in widths]                                      # cartão empurrado (anéis no mínimo)
-        st, worst = self._drag(8, many)
-        self.assertLessEqual(worst["out"], 0.5, worst)
-        self.assertLessEqual(worst["overlap"], 0.5, worst)
+        self._settled_inside(st)
 
-    def test_row_change_fades_out_and_rises_in_then_ends_clean(self):
+    def test_rings_slide_like_liquid_when_the_grid_changes(self):
+        """Escolhido no protótipo (mockups/battery-resize-liquid.html): na troca de grade os anéis deslizam de mola até
+        o lugar novo, sem sumir nem pular, e assentam exatamente nele."""
         st = BatteryState(animated=True, base_w=360, base_h=262)
         st.set_devices(devs(3))
         run(st)
-        self.assertEqual(st.layout.rows, 1)
         for w in range(360, 230, -3):                                          # estreita até virar 2 linhas
             st.set_base_size(w, 262, direct=True)
             st.step(1 / 120)
             if st.layout.rows == 2:
                 break
         self.assertEqual(st.layout.rows, 2)
-        hopped = sorted(k.split("\x00")[0] for k, c in st.cells.items() if c.leaving)
-        self.assertIn("d2", hopped)                     # trocou de linha: uma cópia esmaece onde ele estava
-        self.assertNotIn("d0", hopped)                  # quem quase não anda só desliza
         moved = st.cells["d2"]
-        self.assertLess(moved.alpha.x, 0.5)                                    # e ele reaparece no lugar novo
-        self.assertGreater(moved.y.x, moved.y.t)                               # subindo, não cruzando
-        run(st)
-        self.assertFalse(st.busy())
-        self.assertEqual(sorted(st.cells), ["d0", "d1", "d2"])                 # cópias removidas
-        self.assertEqual((moved.alpha.x, moved.x.x, moved.y.x), (1.0, moved.x.t, moved.y.t))
+        self.assertGreater(abs(moved.y.x - moved.y.t), 10)                      # ainda indo para a linha de baixo
+        path = []
+        for _ in range(240):
+            st.step(1 / 120)
+            path.append((moved.x.x, moved.y.x))
+        steps = [((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(path, path[1:])]
+        self.assertLess(max(steps), 12.0)                                      # desliza, não pula
+        self.assertEqual(moved.alpha.x, 1.0)                                   # nunca some
+        self.assertTrue(all(not c.leaving for c in st.cells.values()))         # sem cópias
+        self._settled_inside(st)
 
     def test_corner_drag_without_animations_is_immediate(self):
         st, worst = self._drag(3, [(w, 262) for w in range(360, 200, -5)], animated=False)
-        self.assertEqual(st.hops, 0)
-        self.assertEqual(sorted(st.cells), ["d0", "d1", "d2"])
+        self.assertEqual(worst["leaving"], 0)
         for i, dev_id in enumerate(st.order):
             self.assertEqual((st.cells[dev_id].x.x, st.cells[dev_id].y.x), st.layout.cells[i])
 
