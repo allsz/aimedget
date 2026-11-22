@@ -754,7 +754,7 @@ class HubServiceBridge(QObject):
     def _leave_anchor_group(skin):
         """
         Escolher um quadrante no Hub dá ao widget um lugar próprio: ele sai do grupo de ancoragem (os outros ficam
-        juntos, onde estão). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
+        juntos; se ele estava no meio, o vão fecha deslizando). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
         """
         mgr = anchor_manager()
         if mgr.is_grouped(skin):

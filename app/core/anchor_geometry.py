@@ -302,6 +302,23 @@ def prune(tree: Tree, key: str, rects: Dict[str, Rect]) -> Optional[Tree]:
     return join_from_rects(a, b, tree.ax, rects)
 
 
+MAX_JOIN_GAP = 32.0 + SNAP   # maior folga que uma junção de verdade tem: a do alinhador (até 32) + o ímã
+
+
+def cut_loose(tree: Tree, limit: float = MAX_JOIN_GAP) -> list:
+    """
+    Conserta uma árvore salva com um vão no meio (de quando quem saía do meio deixava os lados presos num grupo só):
+    junções com folga acima de `limit` não se encostam, então a árvore é cortada ali. Se um lado foi cortado, a junção
+    de cima também cai (sem a geometria não dá para saber em qual pedaço o outro lado encostava).
+    """
+    if isinstance(tree, str):
+        return [tree]
+    a, b = cut_loose(tree.A, limit), cut_loose(tree.B, limit)
+    if tree.gap <= limit and a == [tree.A] and b == [tree.B]:
+        return [tree]
+    return a + b
+
+
 def to_json(tree: Tree):
     if isinstance(tree, str):
         return tree

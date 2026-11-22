@@ -568,6 +568,25 @@ def test_saved_groups_are_loaded_and_bad_entries_ignored(qapp, monkeypatch):
     assert mgr._sizes["music"] == (260.0, 96.0)
 
 
+def test_saved_group_with_a_hole_is_split_on_load(qapp, monkeypatch):
+    """O estado que o bug deixou salvo: Clima+Desempenho presos ao Armazenamento por um vão de 262 px (onde a
+    Bateria estava). Ao carregar, o par continua um grupo e o Armazenamento fica solto; o conserto é gravado."""
+    saved = {"A": {"A": "weather", "B": "performance", "ax": "x", "ai": 0, "off": 0.0, "gap": 5.25},
+             "B": "storage", "ax": "x", "ai": 0, "off": 0.0, "gap": 262.25}
+    store = {"groups": [saved]}
+    monkeypatch.setattr(config_manager, "get_anchor", lambda k, d=None: store.get(k, d))
+    monkeypatch.setattr(config_manager, "set_anchor", lambda k, v: store.__setitem__(k, v))
+    mgr = am.AnchorManager()
+    assert sorted(mgr.group_of("weather").keys()) == ["performance", "weather"]
+    assert mgr.group_of("storage").keys() == ["storage"]
+    assert store["groups"] == [saved["A"]]
+
+
+def test_cut_loose_keeps_real_joins_at_the_largest_align_gap():
+    tree = geo.Join(geo.Join("a", "b", "x", 0, 0.0, 32.0), "c", "y", 0, 0.0, 32.0)
+    assert geo.cut_loose(tree) == [tree]
+
+
 def test_style_settings_fall_back_to_defaults(monkeypatch):
     store = {"net_style": "squiggles", "boom": "ring"}
     monkeypatch.setattr(config_manager, "get_anchor", lambda k, d=None: store.get(k, d))
@@ -760,6 +779,67 @@ def test_picking_a_quadrant_in_the_hub_takes_the_widget_out_of_its_group(env, mo
     env.mgr.drag_end(a)
     assert _rect(b).l - keep_b.l == pytest.approx(25, abs=1)
     assert ["battery" not in str(g) for g in env.store["groups"]] == [True] * len(env.store["groups"])
+
+
+def _row_of_three(env, mid="battery"):
+    a = env.make("weather", 200, 200)
+    b = env.make(mid, 700, 260)
+    c = env.make("storage", 1200, 300)
+    env.mgr.set_anchored(a, True)
+    _join_right(env, a, b)
+    env.mgr.set_anchored(b, True)
+    _join_right(env, b, c)
+    assert env.mgr.group_of("weather") is env.mgr.group_of("storage")
+    return a, b, c
+
+
+def test_leaving_from_the_middle_closes_the_gap_without_animations(env):
+    """Clima | Bateria | Armazenamento, a Bateria sai: os dois que ficam se juntam (sem vão preso no grupo) e a
+    Bateria consegue encaixar de volta."""
+    a, b, c = _row_of_three(env)
+    keep_a, keep_b, keep_c = _rect(a), _rect(b), _rect(c)
+    env.mgr.detach(b)
+    assert env.mgr._slide is None                                   # sem animações: na hora
+    assert not env.mgr.is_grouped(b) and env.mgr.group_of("weather") is env.mgr.group_of("storage")
+    assert _rect(b) == keep_b                                       # quem saiu não é empurrado
+    ra, rc = _rect(a), _rect(c)
+    assert rc.l == pytest.approx(ra.r + GAP, abs=1) and rc.t == pytest.approx(ra.t, abs=1)
+    assert ra == keep_a or rc == keep_c                             # um lado (o da borda mais perto) fica parado
+    assert len(env.store["groups"]) == 1
+
+    _drag(env.mgr, b, 0, 400)                                       # a Bateria vai para longe
+    env.mgr.drag_end(b)
+    env.mgr.set_anchored(c, True)
+    _join_right(env, c, b)                                          # e volta, na ponta do par
+    assert env.mgr.group_of("battery") is env.mgr.group_of("weather")
+
+
+def test_leaving_from_the_middle_slides_the_rest_together_then_ends_clean(env):
+    a, b, c = _row_of_three(env)
+    env.state["anim"] = True
+    env.mgr.detach(b)
+    assert env.mgr._slide is not None                               # anima, não pula
+    widths, t0 = [], time.perf_counter()
+    while env.mgr._slide is not None and time.perf_counter() - t0 < 3.0:
+        QTest.qWait(8)
+        ra, rc = _rect(a), _rect(c)
+        widths.append(max(ra.r, rc.r) - min(ra.l, rc.l))
+    assert env.mgr._slide is None                                   # termina limpo
+    assert len(widths) > 3
+    assert all(w2 <= w1 + 0.5 for w1, w2 in zip(widths, widths[1:]))   # o contorno só encolhe (sem dente)
+    ra, rc = _rect(a), _rect(c)
+    assert rc.l == pytest.approx(ra.r + GAP, abs=1)
+    assert len(env.store["groups"]) == 1
+
+
+def test_leaving_from_the_end_moves_nobody(env):
+    a, c, b = _row_of_three(env, mid="performance")                 # Clima | Desempenho | Armazenamento
+    keep_a, keep_c = _rect(a), _rect(c)
+    env.state["anim"] = True
+    env.mgr.detach(b)
+    QTest.qWait(50)
+    assert env.mgr.group_of("weather") is env.mgr.group_of("performance")
+    assert _rect(a) == keep_a and _rect(c) == keep_c
 
 
 def test_picking_a_quadrant_for_a_widget_that_is_not_grouped_is_harmless(env):
