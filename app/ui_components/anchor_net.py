@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 from typing import Callable, Optional, Tuple
 
+import shiboken6
 from PySide6.QtCore import QEvent, QLineF, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QRegion
 from PySide6.QtWidgets import QWidget
@@ -52,8 +53,17 @@ def _q(v: float, levels: int) -> int:
 
 
 def paint_lattice(p: QPainter, U: Rect, B: Rect, cell: float, style: str, alpha_fn: AlphaFn,
-                  disp_fn: Optional[DispFn] = None) -> int:
-    """Desenha a rede em `B` com a fase de `U`. Devolve quantos elementos foram desenhados (para os testes)."""
+                  disp_fn: Optional[DispFn] = None, active: Optional[Rect] = None) -> int:
+    """Desenha a rede em `B` com a fase de `U`. Devolve quantos elementos foram desenhados (para os testes).
+
+    `active`: onde `alpha_fn` pode ser maior que zero (a parte acesa). Fora dela nada seria visível, então nem é
+    calculado: as linhas pedem uma chamada em Python por trecho, e percorrer a rede inteira a cada quadro custava
+    ~17 ms (quadros perdidos com "linhas" e "os dois")."""
+    if active is not None:
+        B = Rect(max(B.l, active.l - cell), max(B.t, active.t - cell), min(B.r, active.r + cell),
+                 min(B.b, active.b + cell))
+        if B.l >= B.r or B.t >= B.b:
+            return 0
     xs = lattice(U.l, B.l, B.r, cell)
     ys = lattice(U.t, B.t, B.b, cell)
     if not xs or not ys:
@@ -96,11 +106,36 @@ def paint_lattice(p: QPainter, U: Rect, B: Rect, cell: float, style: str, alpha_
                             glow.setdefault((_q(al * 0.18, ALPHA_LEVELS * 4), _q(hot, HOT_LEVELS), wq), []).append(line)
                 prev = cur
 
+        def straight(segments):
+            """Sem onda (arraste, aproximação): os mesmos valores de `run`, sem o custo por ponto da onda."""
+            for x1, y1, x2, y2 in segments:
+                a, hot, wx = alpha_fn((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                if a < MIN_ALPHA:
+                    continue
+                al = a if a < 1.0 else 1.0
+                hot = 0.0 if hot < 0.0 else (hot if hot < 1.0 else 1.0)
+                wv = wx * 0.25
+                wq = _q(wv if wv < 1.0 else 1.0, WIDTH_LEVELS)
+                hq = _q(hot, HOT_LEVELS)
+                line = QLineF(x1, y1, x2, y2)
+                key = (_q(al, ALPHA_LEVELS), hq, wq)
+                lines = buckets.get(key)
+                if lines is None:
+                    buckets[key] = [line]
+                else:
+                    lines.append(line)
+                if al > 0.45:
+                    glow.setdefault((_q(al * 0.18, ALPHA_LEVELS * 4), hq, wq), []).append(line)
+
         ys_s, xs_s = samples(ys), samples(xs)
-        for x in xs:
-            run([(x, y) for y in ys_s])
-        for y in ys:
-            run([(x, y) for x in xs_s])
+        if disp_fn is None:
+            straight((x, ys_s[i], x, ys_s[i + 1]) for x in xs for i in range(len(ys_s) - 1))
+            straight((xs_s[i], y, xs_s[i + 1], y) for y in ys for i in range(len(xs_s) - 1))
+        else:
+            for x in xs:
+                run([(x, y) for y in ys_s])
+            for y in ys:
+                run([(x, y) for x in xs_s])
 
         p.setBrush(Qt.BrushStyle.NoBrush)
         for (aq, hq, wq), lines in glow.items():
@@ -181,8 +216,12 @@ class GlowLayer(QWidget):
         self.raise_()
 
     def eventFilter(self, obj, event):
-        if obj is self._host and event.type() == QEvent.Type.Resize:
-            self.setGeometry(0, 0, self._host.width(), self._host.height())
+        # Pode chegar evento depois de a janela dona ser destruída (o objeto Python já sem atributos): ignora
+        host = getattr(self, "_host", None)
+        if host is None or not shiboken6.isValid(self) or not shiboken6.isValid(host):
+            return False
+        if obj is host and event.type() == QEvent.Type.Resize:
+            self.setGeometry(0, 0, host.width(), host.height())
         return False
 
     def level(self) -> float:

@@ -108,6 +108,38 @@ def test_paint_lattice_draws_only_where_visible(qapp, style):
     assert img.pixelColor(380, 200).alpha() == 0 or style == "lines"   # longe da grade (entre linhas) nada
 
 
+@pytest.mark.parametrize("style", ["dots", "lines", "both"])
+def test_net_only_computes_the_lit_area_and_looks_the_same(qapp, style):
+    """"Linhas" e "os dois" perdiam quadros: a rede inteira era calculada em Python a cada quadro, mesmo onde a luz
+    não chega. Com a área acesa (`active`) o desenho é idêntico e só ela é calculada."""
+    U = Rect.of(300, 200, 620, 262)
+    B = U.grown(am.NET_MARGIN)
+    focus = (U.r, U.t, U.r, U.b)
+    rf = 18 * 7.0
+
+    calls = {"n": 0}
+
+    def alpha(x, y):
+        calls["n"] += 1
+        d = geo.dist_to_seg(x, y, focus)
+        return (max(0.0, 1.0 - d / rf), 0.35, 0.0)
+
+    active = Rect(U.r - rf, U.t - rf, U.r + rf, U.b + rf)
+    images, counts = [], []
+    for act in (None, active):
+        img = QImage(int(B.w) + 20, int(B.h) + 20, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        p.translate(-B.l + 10, -B.t + 10)
+        calls["n"] = 0
+        paint_lattice(p, U, B, 18, style, alpha, active=act)
+        p.end()
+        images.append(img)
+        counts.append(calls["n"])
+    assert images[0] == images[1]
+    assert counts[1] < counts[0] / 2
+
+
 def test_lattice_cells_are_square_and_phase_locked():
     from app.ui_components.anchor_net import lattice
     xs = lattice(100.0, 0.0, 400.0, 18.0)
