@@ -29,6 +29,7 @@ if _weather_service is not None:
         raise OSError("rede desligada nos testes")
 
     _weather_service._http_get_json = _no_network
+    _weather_service._metar_get_json = _no_network
 
 # A ancoragem (grupos de widgets salvos) nunca lê nem grava a configuração do usuário nos testes: com grupos salvos
 # no PC, um cartão mostrado num teste qualquer seria puxado para a pilha dele e as posições conferidas mudariam.

@@ -17,7 +17,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
   de "Substituir".
 - Cronômetro mostra MM:SS:cc e passa a HH:MM:SS em 1 h, com transição animada.
 
+- Clima: o "Agora" usa a observação real da estação meteorológica (METAR) mais próxima, com a temperatura corrigida
+  pela altitude, quando há uma a até 85 km e com leitura recente; sem ela, segue a previsão como antes. A busca de
+  cidades e o local automático ganham uma segunda fonte caso a primeira falhe.
+
 ### Alterado
+- Clima: o menu de contexto não tem mais "Pré-visualizar condição" (era uma ferramenta de desenvolvimento).
 - Bateria: dispositivos ligados ou desligados aparecem e somem em poucos segundos (antes até 1 minuto). O ponto de
   carregando cresce e some com movimento, e o nome desliza junto.
 - Bateria: um mouse VXE dormindo sai do cartão, como os da Logitech, em vez de ficar cinza.

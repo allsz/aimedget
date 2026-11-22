@@ -12,6 +12,7 @@ WeatherService - previsão do tempo para o Weather Widget (zero código de UI).
 
 import json
 import logging
+import math
 import threading
 import time
 import urllib.parse
@@ -30,10 +31,18 @@ FORECAST_DAYS = 5
 REFRESH_S = 30 * 60            # previsão "velha" depois de 30 min
 AUTO_PLACE_TTL_S = 12 * 60 * 60   # o local pelo IP é refeito no máximo a cada 12 h
 HTTP_TIMEOUT_S = 15   # uma requisição pode trazer até 5 cidades (houve resposta lenta com 8 s)
+METAR_TIMEOUT_S = 4   # observação real (METAR) nunca pode atrasar a previsão principal
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 IP_LOCATION_URL = "https://ipapi.co/json/"
+IP_FALLBACK_URL = "https://ipwho.is/"
+METAR_URL = "https://aviationweather.gov/api/data/metar"
+
+METAR_MAX_DIST_KM = 85.0
+METAR_MAX_AGE_S = 90 * 60
+LAPSE_RATE_C_PER_M = 0.0065    # gradiente térmico padrão (-6,5 °C a cada 1.000 m de altitude)
 
 # Motivos de falha (o widget mostra um texto para cada)
 FAIL_OFFLINE = "offline"
@@ -291,6 +300,118 @@ def geocode_url(query: str, language: str = "pt") -> str:
     return f"{GEOCODE_URL}?{q}"
 
 
+def nominatim_url(query: str, language: str = "pt") -> str:
+    q = urllib.parse.urlencode({
+        "q": query.strip(),
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "limit": 6,
+        "accept-language": language,
+    })
+    return f"{NOMINATIM_URL}?{q}"
+
+
+def metar_url(lat: float, lon: float, radius_deg: float = 0.85) -> str:
+    bbox = f"{lat - radius_deg:.3f},{lon - radius_deg:.3f},{lat + radius_deg:.3f},{lon + radius_deg:.3f}"
+    return f"{METAR_URL}?{urllib.parse.urlencode({'bbox': bbox, 'format': 'json'})}"
+
+
+def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2.0) ** 2
+    return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
+def metar_to_wmo_code(wx_string: Optional[str], cover: Optional[str], fallback: int) -> int:
+    """Converte tempo presente (wxString) e cobertura de nuvens (cover) de um METAR para código WMO."""
+    wx = (wx_string or "").upper().strip()
+    if wx:
+        if "TS" in wx:
+            return 96 if ("GR" in wx or "GS" in wx) else 95
+        if "SN" in wx or "SG" in wx:
+            return 75 if "+" in wx else 73
+        if "DZ" in wx:
+            return 51 if "-" in wx else (55 if "+" in wx else 53)
+        if "SHRA" in wx:
+            return 80 if "-" in wx else (82 if "+" in wx else 81)
+        if "RA" in wx:
+            return 61 if "-" in wx else (65 if "+" in wx else 63)
+        if "FG" in wx:
+            return 45
+        if "BR" in wx or "HZ" in wx:
+            return 2
+
+    cov = (cover or "").upper().strip()
+    if cov in ("CLR", "SKC", "CAVOK", "NSC", "NCD"):
+        return 0
+    if cov == "FEW":
+        return 1
+    if cov == "SCT":
+        return 2
+    if cov in ("BKN", "OVC"):
+        return 3
+    return fallback
+
+
+def pick_nearest_metar(stations, lat: float, lon: float, now: float) -> Optional[dict]:
+    """Escolhe a estação METAR mais próxima (até METAR_MAX_DIST_KM) com leitura recente e temperatura válida."""
+    if not isinstance(stations, list):
+        return None
+    best = None
+    best_dist = METAR_MAX_DIST_KM + 1.0
+    for st in stations:
+        if not isinstance(st, dict):
+            continue
+        if st.get("temp") is None or st.get("lat") is None or st.get("lon") is None:
+            continue
+        obs_time = st.get("obsTime")
+        if obs_time is not None:
+            try:
+                age = now - float(obs_time)
+                if age < -600 or age > METAR_MAX_AGE_S:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        try:
+            dist = _distance_km(lat, lon, float(st["lat"]), float(st["lon"]))
+        except (TypeError, ValueError):
+            continue
+        if dist <= METAR_MAX_DIST_KM and dist < best_dist:
+            best = st
+            best_dist = dist
+    return best
+
+
+def apply_metar_observation(
+    report: WeatherReport,
+    station: dict,
+    city_elev: Optional[float] = None,
+) -> WeatherReport:
+    """Ajusta o 'Agora' do WeatherReport com a observação real da estação METAR (com correção de altitude)."""
+    try:
+        temp = float(station["temp"])
+    except (KeyError, TypeError, ValueError):
+        return report
+
+    if city_elev is not None and station.get("elev") is not None:
+        try:
+            delta_m = float(city_elev) - float(station["elev"])
+            lapse = max(-6.0, min(6.0, -delta_m * LAPSE_RATE_C_PER_M))
+            temp += lapse
+        except (TypeError, ValueError):
+            pass
+
+    report.current_temp = round(temp, 1)
+    report.current_code = metar_to_wmo_code(station.get("wxString"), station.get("cover"), report.current_code)
+    if report.days:
+        report.days[0].t_max = max(report.days[0].t_max, report.current_temp)
+        report.days[0].t_min = min(report.days[0].t_min, report.current_temp)
+    return report
+
+
 def parse_forecast(data: dict, place_name: str, now: float) -> WeatherReport:
     current = data["current"]
     daily = data["daily"]
@@ -328,6 +449,39 @@ def parse_geocode(data: dict) -> list:
     return places
 
 
+def parse_nominatim(data) -> list:
+    if not isinstance(data, list):
+        return []
+    places = []
+    seen = set()
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        try:
+            addr = r.get("address") or {}
+            name = (
+                addr.get("city")
+                or addr.get("town")
+                or addr.get("municipality")
+                or addr.get("village")
+                or addr.get("suburb")
+                or r.get("name")
+                or str(r.get("display_name", "")).split(",")[0].strip()
+            )
+            if not name:
+                continue
+            lat, lon = float(r["lat"]), float(r["lon"])
+            key = (name.lower(), round(lat, 2), round(lon, 2))
+            if key in seen:
+                continue
+            seen.add(key)
+            detail = ", ".join(x for x in (addr.get("state"), addr.get("country")) if x)
+            places.append(Place(str(name), lat, lon, detail))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return places
+
+
 def parse_ip_location(data: dict) -> Optional[Place]:
     try:
         if data.get("error"):
@@ -338,10 +492,30 @@ def parse_ip_location(data: dict) -> Optional[Place]:
         return None
 
 
+def parse_ipwho_location(data: dict) -> Optional[Place]:
+    try:
+        if not isinstance(data, dict) or data.get("success") is False:
+            return None
+        city = data.get("city")
+        if not city:
+            return None
+        detail = ", ".join(x for x in (data.get("region"), data.get("country")) if x)
+        return Place(str(city), float(data["latitude"]), float(data["longitude"]), detail)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _http_get_json(url: str) -> dict:
     """GET que devolve JSON. Os testes trocam esta função para nunca tocar a rede."""
     req = urllib.request.Request(url, headers={"User-Agent": f"Aimedget-App/{__version__}"})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _metar_get_json(url: str):
+    """GET auxiliar com timeout curto para observação METAR / fallbacks (desligado nos testes via conftest)."""
+    req = urllib.request.Request(url, headers={"User-Agent": f"Aimedget-App/{__version__}"})
+    with urllib.request.urlopen(req, timeout=METAR_TIMEOUT_S) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -543,8 +717,13 @@ class WeatherService(QObject):
             if need_ip:
                 try:
                     new_auto = parse_ip_location(_http_get_json(IP_LOCATION_URL))
-                except Exception as e:   # sem rede ou serviço fora: tenta com o local que já tinha
-                    logger.info("Local pelo IP indisponível: %s", e)
+                except Exception as e:   # sem rede ou serviço fora: tenta fallback gratuito
+                    logger.info("Local pelo IP (ipapi) indisponível: %s", e)
+                if new_auto is None:
+                    try:
+                        new_auto = parse_ipwho_location(_metar_get_json(IP_FALLBACK_URL))
+                    except Exception as e:
+                        logger.info("Local pelo IP (fallback) indisponível: %s", e)
             auto_now = new_auto or auto
             targets = []   # (chave, Place)
             for c in cities:
@@ -556,11 +735,25 @@ class WeatherService(QObject):
             if not targets:   # só o automático, e o IP não respondeu: quase sempre sem rede
                 return ("fail", FAIL_OFFLINE, new_auto)
             try:
+                now_ts = time.time()
                 data = _http_get_json(forecast_url_multi([pl for _k, pl in targets], model=model))
-                reports = parse_forecast_multi(data, [pl.name for _k, pl in targets], time.time())
+                reports = parse_forecast_multi(data, [pl.name for _k, pl in targets], now_ts)
             except Exception as e:
                 logger.info("Previsão indisponível: %s", e)
                 return ("fail", FAIL_OFFLINE, new_auto)
+
+            if model == FORECAST_MODEL_AUTO:
+                raw_items = data if isinstance(data, list) else [data]
+                for (_k, pl), rep, raw_item in zip(targets, reports, raw_items):
+                    try:
+                        stations = _metar_get_json(metar_url(pl.lat, pl.lon))
+                        nearest = pick_nearest_metar(stations, pl.lat, pl.lon, now_ts)
+                        if nearest is not None:
+                            city_elev = raw_item.get("elevation") if isinstance(raw_item, dict) else None
+                            apply_metar_observation(rep, nearest, city_elev=city_elev)
+                    except Exception as e:
+                        logger.debug("METAR indisponível para %s: %s", pl.name, e)
+
             return ("ok", {k: r for (k, _pl), r in zip(targets, reports)}, new_auto)
 
         self._set_busy(True)
@@ -576,11 +769,25 @@ class WeatherService(QObject):
             return
 
         def work():
+            places = []
             try:
-                return parse_geocode(_http_get_json(geocode_url(query, language)))
+                places = parse_geocode(_http_get_json(geocode_url(query, language)))
             except Exception as e:
                 logger.info("Busca de cidade falhou: %s", e)
-                return []
+            if len(places) < 3:
+                try:
+                    extra = parse_nominatim(_metar_get_json(nominatim_url(query, language)))
+                    seen = {(p.name.lower(), round(p.lat, 1), round(p.lon, 1)) for p in places}
+                    for p in extra:
+                        k = (p.name.lower(), round(p.lat, 1), round(p.lon, 1))
+                        if k not in seen:
+                            places.append(p)
+                            seen.add(k)
+                        if len(places) >= 6:
+                            break
+                except Exception as e:
+                    logger.debug("Fallback Nominatim indisponível: %s", e)
+            return places
 
         def done(places):
             if seq == self._search_seq:
