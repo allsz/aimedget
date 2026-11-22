@@ -6,12 +6,15 @@ from PySide6.QtWidgets import QApplication
 
 from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
+from app.core.frame_clock import FrameTimer
+from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import AnimatedVisibilityMixin, swap_skin_windows
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
 from app.widgets.timer.skins import timer_skin_classes
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
+from app.widgets.timer.time_layout import is_compact
 
 
 class TimerWidgetController(AnimatedVisibilityMixin, QObject):
@@ -25,8 +28,10 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     """
 
     MODES = ("timer", "stopwatch", "alarm")
+    TICK_MS = 100   # segundos inteiros na tela (Temporizador, Alarme e Cronômetro a partir de 1 h)
 
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     skin_changed = Signal(str)
     time_updated = Signal(float, bool, str)  # current_seconds, is_running, mode
     desktop_mode_changed = Signal(bool)      # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
@@ -55,8 +60,8 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self._last_tick_time: float = 0.0
 
         # Ticker periódico preciso
-        self._ticker = QTimer(self)
-        self._ticker.setInterval(100)
+        self._ticker = FrameTimer(self)   # no compasso da tela: os centésimos do Cronômetro andam sem tropeço
+        self._ticker.setInterval(self.TICK_MS)
         self._ticker.timeout.connect(self._on_tick)
 
         # Pulso visual de alarme
@@ -96,6 +101,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
                 old_skin.alarm_time_changed.disconnect(self.set_alarm_time)
                 old_skin.mode_changed.disconnect(self.set_mode)
                 old_skin.close_requested.disconnect(self.on_skin_closed)
+                old_skin.configure_requested.disconnect(self.configure_requested.emit)
                 old_skin.skin_switch_requested.disconnect(self.set_skin)
                 old_skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
                 old_skin.remember_position_changed.disconnect(self.remember_position_changed.emit)
@@ -110,6 +116,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.alarm_time_changed.connect(self.set_alarm_time)
         self.skin.mode_changed.connect(self.set_mode)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.skin_switch_requested.connect(self.set_skin)
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
         self.skin.remember_position_changed.connect(self.remember_position_changed.emit)
@@ -202,6 +209,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
 
         self.is_running = True
         self._last_tick_time = time.perf_counter()
+        self._ticker.setInterval(self._tick_interval())
         self._ticker.start()
         self._stop_alarm_pulse()
         self._sync_skin()
@@ -291,6 +299,10 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
 
     # --- Motor de Contagem Monotônica ---
 
+    def _tick_interval(self) -> int:
+        """Um tique por quadro enquanto o Cronômetro mostra centésimos; 100 ms quando só há segundos inteiros."""
+        return refresh_interval_ms() if is_compact(self.mode, self.current_seconds) else self.TICK_MS
+
     def _on_tick(self):
         if not self.is_running:
             return
@@ -301,6 +313,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
 
         if self.mode == "stopwatch":
             self.current_seconds += dt
+            self._ticker.setInterval(self._tick_interval())   # passou de 1 h: os centésimos saem, volta a 100 ms
         elif self.mode == "alarm":
             # Pelo relógio do sistema, não por acumulação: certo mesmo depois de o PC dormir
             remaining = (self._alarm_deadline or 0.0) - time.time()

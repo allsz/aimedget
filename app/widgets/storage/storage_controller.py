@@ -28,11 +28,11 @@ from app.widgets.storage.storage_card import StorageCard
 
 class StorageWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     scale_changed = Signal(float)
     desktop_mode_changed = Signal(bool)
     remember_position_changed = Signal(bool)
     always_expanded_changed = Signal(bool)
-    manage_folders_requested = Signal()
 
     def __init__(self, service: Optional[StorageService] = None):
         super().__init__()
@@ -53,10 +53,10 @@ class StorageWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.scale_changed.connect(self.set_scale)
         self.skin.refresh_requested.connect(lambda: self.service.refresh(force=True))
         self.skin.always_expanded_changed.connect(self.set_always_expanded)
-        self.skin.manage_folders_requested.connect(self.manage_folders_requested.emit)
 
         cached = self.service.cached_snapshot()
         if cached is not None:

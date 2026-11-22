@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
@@ -11,10 +12,12 @@ from app.core.widget_animator import AnimatedSkinMixin
 from app.core.desktop_pin import DesktopPinMixin
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font, init_app_font
+from app.hub.components.tab_pill import Blend
 from app.hub.theme import HubTheme, resolve_theme
 from app.ui_components.fluent_menu import get_fluent_menu_stylesheet
 from app.ui_components.menu_action_bar import ActionBarItem, attach_action_bar
 from app.widgets.timer import theme as timer_theme
+from app.widgets.timer.time_layout import MORPH_SPRING, morph_target
 from app.core.frame_clock import FrameTimer
 
 
@@ -105,6 +108,7 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     alarm_time_changed = Signal(int)   # horário do modo Alarme (segundos desde a meia-noite)
     mode_changed = Signal(str)
     close_requested = Signal()
+    configure_requested = Signal()
     skin_switch_requested = Signal(str)
     desktop_mode_changed = Signal(bool)   # "Fixar na área de trabalho" no menu (o controller aplica e grava)
     remember_position_changed = Signal(bool)
@@ -152,6 +156,10 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.alarm_time: int = 0            # horário do Alarme (o controller mantém atualizado)
         self.alarm_finished: bool = False   # o alarme tocou: rótulo "CONCLUÍDO" até a próxima ação
         i18n.language_changed.connect(self.update)   # o rótulo do topo é desenhado no idioma do app
+
+        # Formato do tempo (HH:MM:SS <-> MM:SS:cc): a mola abre/fecha os campos que entram/saem, sem corte
+        self._morph_target = morph_target(self.mode, self.current_seconds)
+        self._morph = Blend(self._morph_target, self.update, self, spring=MORPH_SPRING)
 
         # Interações de mouse
         self._drag_pos = QPoint()
@@ -203,7 +211,28 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         """Margem extra da janela: a do tema e, com o brilho de ancorado aceso, o que falta da folga para ele."""
         # A folga do brilho é fixa, como no widget de música: mudar o tamanho da janela translúcida ao ancorar
         # mostrava um quadro com o quadrado fora do lugar.
-        return max(self._wanted_art_margin(side), int(round(self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD)))
+        room = self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD + self._shape_overhang(side)
+        return max(self._wanted_art_margin(side), int(round(room)))
+
+    def _shape_overhang(self, side: int) -> int:
+        """Quanto o contorno (`card_path_for`, skins de pacote) passa do cartão num quadrado de `side` px. Calculado
+        só pelo lado: é chamado no __init__, antes de a janela ter tamanho ou margem."""
+        fn = getattr(self, "card_path_for", None)
+        if fn is None:
+            return 0
+        n = side - 2 * self.ART_FREE_PAD
+        card = QRectF(0, 0, n, n)
+        path = fn(card)
+        if path is None or path.isEmpty():
+            return 0
+        box = path.boundingRect()
+        over = max(-box.left(), -box.top(), box.right() - n, box.bottom() - n, 0.0)
+        return int(math.ceil(over))
+
+    def anchor_card_radius(self) -> float:
+        """Raio dos cantos como o cartão é pintado (fixo em px, não acompanha a escala): contrato do brilho/rede."""
+        from app.widgets.timer.skins.skin import CORNER_RADIUS
+        return CORNER_RADIUS
 
     def anchor_glow_room(self, on: bool):
         """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o quadrado fica onde está."""
@@ -277,7 +306,16 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.mode = mode
         if not is_running and mode == "timer":
             self.target_duration = current_seconds
+        target = morph_target(mode, current_seconds)
+        if target != self._morph_target:
+            self._morph_target = target
+            self._morph.set(target, animated=self.isVisible())   # escondido: já fica no formato certo
         self.update()
+
+    @property
+    def time_morph(self) -> float:
+        """0 = MM:SS:cc, 1 = HH:MM:SS; no meio da troca de formato, o valor intermediário da mola."""
+        return max(0.0, min(1.0, self._morph.value))
 
     @staticmethod
     def format_time_digits(seconds: float) -> str:
@@ -410,6 +448,9 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         menu.addSeparator()
 
         # Fechar Widget
+        act_configure = QAction(t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

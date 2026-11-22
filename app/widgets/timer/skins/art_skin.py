@@ -29,13 +29,15 @@ import unicodedata
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap, QTransform,
+    QBitmap, QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap, QRegion,
+    QTransform,
 )
 
 from app.core.config_manager import config_manager
 from app.core.skin_packs import SkinPack
 from app.core.theme_art import presample
 from app.widgets.timer.skins.skin import TimerState, _paint_select_sweep, mode_label
+from app.widgets.timer.time_layout import SLOT_KEYS, cell_advance, layout_slots, morph_target, slot_texts, slot_visibility
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
 
 SIDE = 148.0   # lado do cartão no tamanho padrão, em px
@@ -138,6 +140,27 @@ class ArtLook:
             q.end()
             self._silhouettes[pm.cacheKey()] = out
         return out
+
+    OUTLINE_RES = 256   # px do lado maior da máscara de onde sai o contorno (degraus somem sob o halo)
+
+    def outline(self) -> QPainterPath | None:
+        """
+        Contorno da arte (onde o PNG não é transparente), em coordenadas 0..1 do retângulo da arte. É a borda
+        real do cartão de um pacote: pontas, cantos retos ou qualquer forma. None sem arte.
+        """
+        if not hasattr(self, "_outline"):
+            self._outline = None
+            pm = self.pixmap(self.art_file)
+            if pm is not None:
+                img = pm.toImage().scaled(self.OUTLINE_RES, self.OUTLINE_RES, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+                mask = QBitmap.fromImage(img.createAlphaMask(Qt.ImageConversionFlag.ThresholdAlphaDither))
+                path = QPainterPath()
+                path.addRegion(QRegion(mask))
+                path = path.simplified()
+                if not path.isEmpty():
+                    self._outline = QTransform.fromScale(1.0 / img.width(), 1.0 / img.height()).map(path)
+        return self._outline
 
     def art_for(self, w: float, h: float) -> QPixmap | None:
         pm = self.pixmap(self.art_file)
@@ -294,31 +317,23 @@ def digits_font(scale: float, look: ArtLook) -> QFont:
     return font
 
 
-def digits_layout(card: QRectF, scale: float, seconds: float, look: ArtLook):
+def digits_layout(card: QRectF, scale: float, seconds: float, look: ArtLook, mode: str = "timer",
+                  morph: float | None = None):
     """
-    Geometria dos segmentos (horas, dois-pontos, minutos, segundos) centrada no centro da arte, nos dois eixos.
-    Cada dígito ocupa uma célula de largura fixa, então o texto não balança quando os números mudam.
+    Geometria dos segmentos (horas, minutos, segundos, centésimos e os dois-pontos) centrada no centro da arte, nos
+    dois eixos. Cada dígito ocupa uma célula de largura fixa, então o texto não balança quando os números mudam.
+    `morph` (0 = MM:SS:cc, 1 = HH:MM:SS; None: o formato do modo) abre/fecha os campos que entram/saem.
     Devolve (rects, textos, fonte, linha-de-base-y, largura-da-célula).
     """
     font = digits_font(scale, look)
     fm = QFontMetricsF(font)
     cell = max(fm.horizontalAdvance(str(d)) for d in range(10))
-    colon_w = fm.horizontalAdvance(":")
-    total = max(0, int(round(seconds)))
-    texts = {
-        "hours": f"{total // 3600:02d}", "colon1": ":",
-        "minutes": f"{(total % 3600) // 60:02d}", "colon2": ":",
-        "seconds": f"{total % 60:02d}",
-    }
-    widths = {"hours": 2 * cell, "colon1": colon_w, "minutes": 2 * cell, "colon2": colon_w, "seconds": 2 * cell}
-    total_w = sum(widths.values())
+    texts = slot_texts(mode, seconds)
+    vis = slot_visibility(morph_target(mode, seconds) if morph is None else morph)
     cy = card.top() + look.digits_cy * scale
     height = fm.height()
-    x = card.center().x() - total_w / 2.0
-    rects = {}
-    for key in ("hours", "colon1", "minutes", "colon2", "seconds"):
-        rects[key] = QRectF(x, cy - height / 2.0, widths[key], height)
-        x += widths[key]
+    rects = layout_slots(card.center().x(), cy - height / 2.0, height, cell_advance(cell), fm.horizontalAdvance(":"),
+                         texts, vis)
     baseline = cy + fm.capHeight() / 2.0
     return rects, texts, font, baseline, cell
 
@@ -338,11 +353,21 @@ class _SweepTheme:
 
 
 def paint_digits(p: QPainter, card: QRectF, scale: float, state: TimerState, look: ArtLook):
-    rects, texts, font, baseline, cell = digits_layout(card, scale, state.current_seconds, look)
+    morph = state.time_morph if state.time_morph is not None else morph_target(state.mode, state.current_seconds)
+    rects, texts, font, baseline, cell = digits_layout(card, scale, state.current_seconds, look, state.mode, morph)
+    vis = slot_visibility(morph)
     fm = QFontMetricsF(font)
-    for key in ("hours", "colon1", "minutes", "colon2", "seconds"):
+    for key in SLOT_KEYS:
         r = rects[key]
-        hovered = (state.is_smart_hover_enabled and not state.is_running and state.hovered_time_segment == key)
+        key_vis = vis[key]
+        if key_vis <= 0.004:
+            continue   # campo recolhido (horas ou milissegundos que não estão no formato de agora)
+        hovered = (state.is_smart_hover_enabled and not state.is_running and state.mode != "stopwatch"
+                   and state.hovered_time_segment == key)
+        p.save()
+        if key_vis < 0.999:   # entrando/saindo: aparece junto com a largura, sem vazar para o vizinho
+            p.setClipRect(r.adjusted(-4.0 * scale, -r.height(), 4.0 * scale, r.height()))
+            p.setOpacity(p.opacity() * key_vis)
         fill = look.digits
         if hovered:
             pill = QColor(look.highlight)
@@ -359,13 +384,15 @@ def paint_digits(p: QPainter, card: QRectF, scale: float, state: TimerState, loo
             path.addText(r.left() + (r.width() - fm.horizontalAdvance(":")) / 2.0, baseline, font, ":")
             _paint_text_path(p, path, fill, scale, look)
         else:
+            x0 = r.left() + (r.width() - len(text) * cell) / 2.0
             for i, ch in enumerate(text):
                 path = QPainterPath()
-                path.addText(r.left() + i * cell + (cell - fm.horizontalAdvance(ch)) / 2.0, baseline, font, ch)
+                path.addText(x0 + i * cell + (cell - fm.horizontalAdvance(ch)) / 2.0, baseline, font, ch)
                 _paint_text_path(p, path, fill, scale, look)
         if state.select_segment == key and 0.0 < state.select_progress < 1.0:
             _paint_select_sweep(p, r.adjusted(-3.0 * scale, 2.0 * scale, 3.0 * scale, -2.0 * scale), 4.0 * scale,
                                 scale, state, _SweepTheme)
+        p.restore()
 
 
 # --- Botões ---------------------------------------------------------------------------------------------------------------
@@ -498,6 +525,29 @@ class ArtTimerSkin(WindowsTimerSkin):
         scale = max(0.8, (side - 2 * self.ART_FREE_PAD) / (self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD))
         return max(0, int(math.ceil(self.look.tip_overshoot * scale + 1.0 - self.ART_FREE_PAD)))
 
+    def anchor_card_radius(self) -> float:
+        return 0.0   # sem arte, o cartão é um quadrado liso (fillRect em paint_art_timer)
+
+    def anchor_card_path(self) -> QPainterPath | None:
+        """A borda é a própria arte (com as pontas que passam do cartão): o brilho de ancorado segue o PNG."""
+        return self.card_path_for(self.get_card_rect())
+
+    def card_path_for(self, card: QRectF) -> QPainterPath | None:
+        """Contorno da arte para um cartão em `card` (usado também antes da janela ter tamanho, para a margem)."""
+        look = self.look
+        outline = look.outline()
+        if outline is None:
+            return None       # sem arte: o retângulo do cartão, com cantos retos
+        scale = max(0.8, min(card.width(), card.height()) / SIDE)   # a mesma conta de paint_art_timer
+        target = QRectF(card.left() + look.art_origin.x() * scale, card.top() + look.art_origin.y() * scale,
+                        look.art_size.width() * scale, look.art_size.height() * scale)
+        key = (id(outline), target.x(), target.y(), target.width(), target.height())
+        cached = getattr(self, "_outline_cache", None)
+        if cached is None or cached[0] != key:
+            t = QTransform.fromTranslate(target.x(), target.y()).scale(target.width(), target.height())
+            cached = self._outline_cache = (key, t.map(outline))
+        return cached[1]
+
     def reload_skin_theme(self):
         """Os temas do Timer valem só para a skin Padrão; esta tem arte própria."""
 
@@ -508,10 +558,12 @@ class ArtTimerSkin(WindowsTimerSkin):
 
     def get_digits_geometry(self):
         rects, texts, font, _baseline, _cell = digits_layout(
-            self.get_card_rect(), self.get_scale(), self.current_seconds, self.look)
+            self.get_card_rect(), self.get_scale(), self.current_seconds, self.look, self.mode, self.time_morph)
         return rects, texts, font
 
     def get_time_segment_at(self, pos: QPointF) -> str | None:
+        if self.mode == "stopwatch":
+            return None   # o Cronômetro não tem número para editar
         rects, _, _ = self.get_digits_geometry()
         scale = self.get_scale()
         top, bottom = rects["hours"].top() - 2 * scale, rects["hours"].bottom() + 2 * scale
@@ -547,6 +599,7 @@ class ArtTimerSkin(WindowsTimerSkin):
             select_color=QColor("#ffffff"),
             alarm_time=self.alarm_time,
             alarm_finished=self.alarm_finished,
+            time_morph=self.time_morph,
         )
         m = float(self.art_margin)
         paint_art_timer(p, QRectF(m, m, self.width() - 2 * m, self.height() - 2 * m), state, pack=self.pack)

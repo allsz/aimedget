@@ -52,6 +52,73 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(pack.texts("es"), ("Fake", "Test art"))
 
 
+def _star_art(path: str, side: int = 400):
+    """Como o Shinra: um quadrado (o cartão) e outro girado 45° cujas pontas passam da borda (`tip_overshoot`)."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    k = side / 1932.0                           # px do PNG por unidade da arte (pack_data: size 1932, origem -154)
+    img = QImage(side, side, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    p.setPen(QColor(0, 0, 0, 0))
+    p.setBrush(QColor("#aa1122"))
+    p.drawRect(QRectF(154 * k, 154 * k, 1624 * k, 1624 * k))
+    c = side / 2.0
+    p.drawPolygon(QPolygonF([QPointF(c, 0), QPointF(side, c), QPointF(c, side), QPointF(0, c)]))
+    p.end()
+    img.save(path)
+
+
+class ArtSkinGlowTests(unittest.TestCase):
+    """O brilho de ancorado de uma skin de pacote segue a arte (pontas incluídas), não um retângulo arredondado."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication(sys.argv)
+
+    def setUp(self):
+        self._path, self._data = config_manager.config_path, config_manager._data
+        config_manager.config_path = os.path.join(tempfile.mkdtemp(), "cfg.json")
+        config_manager._data = config_manager._default_config()
+        ctx = fake_skin_pack("star")
+        self.pack = ctx.__enter__()
+        self.addCleanup(ctx.__exit__, None, None, None)
+        _star_art(self.pack.path("arte.png"))
+        sk._looks.pop(self.pack.folder, None)
+        self.skin = sk.make_art_skin_class(self.pack)()
+        self.addCleanup(self.skin.deleteLater)
+        self.skin.set_square_side(self.skin.square_side())   # margem recalculada com o contorno da arte
+
+    def tearDown(self):
+        config_manager.config_path, config_manager._data = self._path, self._data
+
+    def test_outline_is_the_art_with_its_tips(self):
+        from app.core import anchor_manager as am
+        card = self.skin.get_card_rect()
+        box = am.card_shape(self.skin).boundingRect()
+        tip = sk.look_for(self.pack).tip_overshoot * max(0.8, card.width() / sk.SIDE)
+        self.assertAlmostEqual(card.top() - box.top(), tip, delta=2.0)
+        self.assertAlmostEqual(am.shape_overhang(self.skin), tip, delta=2.0)
+
+    def test_glow_lights_beyond_the_tip_and_never_inside_the_art(self):
+        from app.core import anchor_manager as am
+        from app.ui_components.anchor_net import GlowLayer
+        self.skin.resize(self.skin.size())
+        layer = GlowLayer(self.skin, lambda: am.card_shape(self.skin))
+        layer.set_level(1.0, 1.0, None)
+        self.assertGreater(layer.extent(), 3.0)           # a janela tem folga em volta das pontas
+        img = QImage(layer.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        layer.render(img)
+        box = am.card_shape(self.skin).boundingRect()
+        cx = int(box.center().x())
+        lit = lambda x, y: img.pixelColor(int(x), int(y)).alpha() > 8   # noqa: E731
+        self.assertTrue(lit(cx, box.top() - 2))           # além da ponta de cima
+        self.assertFalse(lit(cx, box.top() + 6))          # dentro da ponta: nunca pinta na arte
+        card = self.skin.get_card_rect()
+        self.assertFalse(lit(card.left() + 3, card.center().y() - card.height() * 0.3))   # dentro do cartão
+
+
 class ArtSkinTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

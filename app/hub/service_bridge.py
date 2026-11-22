@@ -46,7 +46,7 @@ class HubServiceBridge(QObject):
     weather_skin_changed = Signal(str)  # id da skin (fonte)
     performance_skin_changed = Signal(str)
     manage_weather_cities_requested = Signal()
-    manage_storage_folders_requested = Signal()
+    configure_widget_requested = Signal(str)  # id da página do Hub ("music", "weather"...)
     osd_anchor_changed = Signal(str, str)  # (flyout 'keylock'/'mixer', âncora)
 
     def __init__(self, parent=None):
@@ -129,11 +129,11 @@ class HubServiceBridge(QObject):
         # 5c. Módulo de Armazenamento (varredura em background só roda com o cartão na tela)
         self.storage_controller = StorageWidgetController()
         self.storage_controller.status_changed.connect(self._on_storage_status_changed)
-        self.storage_controller.manage_folders_requested.connect(self.manage_storage_folders_requested.emit)
 
         # 5d. Módulo de Baterias (leitura dos periféricos só roda com o cartão na tela)
         self.battery_controller = BatteryWidgetController()
         self.battery_controller.status_changed.connect(self._on_battery_status_changed)
+        self._wire_configure_requests()
 
         # 6. Serviço Global de Atalhos (Hotkeys)
         self.hotkey_service = get_hotkey_service()
@@ -150,6 +150,13 @@ class HubServiceBridge(QObject):
             "storage": bool(config_manager.get_storage("show_on_startup", False)),
             "battery": bool(config_manager.get_battery("show_on_startup", False)),
         }
+
+    def _wire_configure_requests(self):
+        """"Configurar" no menu de cada widget abre o Hub na página dele."""
+        for page_id, controller in (("music", self.music_controller), ("timer", self.timer_controller),
+                                    ("weather", self.weather_controller), ("performance", self.performance_controller),
+                                    ("storage", self.storage_controller), ("battery", self.battery_controller)):
+            controller.configure_requested.connect(lambda _p=page_id: self.configure_widget_requested.emit(_p))
 
     def start_all(self):
         """Inicializa os widgets no desktop de acordo com as preferências salvas."""
@@ -197,8 +204,8 @@ class HubServiceBridge(QObject):
         storage_hk = config_manager.get_storage("hotkey", "Win+Alt+S")
         self.hotkey_service.register("storage_toggle", storage_hk, self.toggle_storage_widget)
 
-        # Battery Widget (padrão Win+Alt+B)
-        battery_hk = config_manager.get_battery("hotkey", "Win+Alt+B")
+        # Battery Widget (padrão Win+Alt+E; Win+Alt+B é do HDR do Windows)
+        battery_hk = config_manager.get_battery("hotkey", "Win+Alt+E")
         self.hotkey_service.register("battery_toggle", battery_hk, self.toggle_battery_widget)
 
         # Volume Mixer (padrão Win+Alt+V)
@@ -747,7 +754,7 @@ class HubServiceBridge(QObject):
     def _leave_anchor_group(skin):
         """
         Escolher um quadrante no Hub dá ao widget um lugar próprio: ele sai do grupo de ancoragem (os outros ficam
-        juntos, onde estão). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
+        juntos; se ele estava no meio, o vão fecha deslizando). Sem isso o deslize o levava sozinho, mas o próximo arraste puxava o grupo inteiro.
         """
         mgr = anchor_manager()
         if mgr.is_grouped(skin):

@@ -133,5 +133,44 @@ class DefaultDeviceChangeTests(unittest.TestCase):
             init.assert_not_called()
 
 
+class OsdAfterDeviceSwitchTests(unittest.TestCase):
+    """
+    Fone Bluetooth novo vira o padrão e ajusta o volume ~2 s depois (medido: 35 -> 37 aos 2,08 s): o OSD de
+    volume não pode abrir junto com o aviso do Windows. Mexer no volume de verdade continua mostrando o OSD.
+    """
+
+    def _svc(self, volumes):
+        svc = make_service()
+        svc._master_vol = 70
+        self.shown = []
+        svc.osd_requested.connect(lambda v, m: self.shown.append(v))
+        it = iter(volumes)
+        patches = [
+            mock.patch.object(svc, "get_master_volume", side_effect=lambda: next(it)),
+            mock.patch.object(svc, "get_master_mute", return_value=False),
+            mock.patch.object(svc, "_current_default_device_id", return_value=FONE),
+            mock.patch.object(svc, "_init_com_interfaces", side_effect=lambda: setattr(svc, "_default_dev_id", FONE)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return svc
+
+    def test_bluetooth_settling_volume_after_switch_shows_no_osd(self):
+        svc = self._svc([35, 37])
+        svc._poll_master_and_keys()     # troca detectada: 70 -> 35 (já era quieto)
+        with mock.patch("time.perf_counter", return_value=svc._default_changed_at + 2.08):
+            svc._poll_master_and_keys()  # 35 -> 37, 2 s depois
+        self.assertEqual(self.shown, [])
+        self.assertEqual(svc._master_vol, 37)   # o valor mostrado na interface acompanha
+
+    def test_real_volume_change_long_after_switch_still_shows_osd(self):
+        svc = self._svc([35, 50])
+        svc._poll_master_and_keys()
+        with mock.patch("time.perf_counter", return_value=svc._default_changed_at + 30.0):
+            svc._poll_master_and_keys()
+        self.assertEqual(self.shown, [50])
+
+
 if __name__ == "__main__":
     unittest.main()

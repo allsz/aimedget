@@ -3,8 +3,8 @@ Página do Weather Widget no Hub: posição, tamanho, estilo (fonte), cidades (a
 atalho. Separada de pages.py, que já passa do tamanho de um arquivo legível.
 """
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from app.core.config_manager import config_manager
 from app.core.i18n import i18n, t
@@ -33,6 +33,121 @@ SEARCH_DEBOUNCE_MS = 450
 MAX_RESULTS = 6
 CITY_GAP = 10   # espaço entre os itens do cartão de cidades
 
+_SOURCE_OPTIONS = (
+    ("auto", "weather_model_auto", "weather_model_auto_origin"),
+    ("icon", None, "weather_model_icon_origin"),
+    ("ecmwf", None, "weather_model_ecmwf_origin"),
+    ("gfs", None, "weather_model_gfs_origin"),
+)
+
+
+class _SourceOptionButton(QPushButton):
+    """Botão de 2 linhas (nome do modelo + origem) dentro da bandeja segmentada."""
+
+    def __init__(self, key: str, title_key: str | None, origin_key: str, theme: HubTheme, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self._title_key = title_key
+        self._origin_key = origin_key
+        self._theme = theme
+        self._selected = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(48)
+
+        col = QVBoxLayout(self)
+        col.setContentsMargins(8, 7, 8, 7)
+        col.setSpacing(2)
+        self._lbl_name = QLabel(t(title_key) if title_key else key.upper(), self)
+        self._lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._lbl_origin = QLabel(t(origin_key), self)
+        self._lbl_origin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_origin.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        col.addWidget(self._lbl_name)
+        col.addWidget(self._lbl_origin)
+        self._apply_style()
+
+    def sizeHint(self) -> QSize:
+        lay = self.layout()
+        sh = lay.sizeHint() if lay is not None else super().sizeHint()
+        return QSize(max(80, sh.width()), max(48, sh.height()))
+
+    def set_selected(self, selected: bool):
+        if self._selected != bool(selected):
+            self._selected = bool(selected)
+            self._apply_style()
+
+    def set_theme(self, theme: HubTheme):
+        self._theme = theme
+        self._apply_style()
+
+    def retranslate_ui(self):
+        if self._title_key:
+            self._lbl_name.setText(t(self._title_key))
+        self._lbl_origin.setText(t(self._origin_key))
+
+    def _apply_style(self):
+        t_ = self._theme
+        if self._selected:
+            bg = t_.panel2 if t_.is_dark else t_.panel
+            border = t_.line
+            name_col = t_.text
+            origin_col = t_.accent
+        else:
+            bg = "transparent"
+            border = "transparent"
+            name_col = t_.body
+            origin_col = t_.mute
+        hover_bg = t_.hover if not self._selected else bg
+        self.setStyleSheet(
+            f"QPushButton {{ background: {bg}; border: 1px solid {border}; border-radius: 6px; padding: 0px; }}"
+            f"QPushButton:hover {{ background: {hover_bg}; }}"
+        )
+        self._lbl_name.setStyleSheet(f"font-size: 12.5px; font-weight: 600; color: {name_col}; background: transparent; border: none;")
+        self._lbl_origin.setStyleSheet(f"font-size: 10.5px; font-weight: 500; color: {origin_col}; background: transparent; border: none;")
+
+
+class _ForecastSourceTray(QFrame):
+    """Bandeja segmentada de 4 colunas com nome do modelo e origem (Automático, ICON, ECMWF, GFS)."""
+
+    def __init__(self, on_pick, theme: HubTheme, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SourceTray")
+        self._theme = theme
+        self._buttons: dict[str, _SourceOptionButton] = {}
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(3, 3, 3, 3)
+        row.setSpacing(4)
+        for key, title_key, origin_key in _SOURCE_OPTIONS:
+            btn = _SourceOptionButton(key, title_key, origin_key, theme, self)
+            btn.clicked.connect(lambda _c=False, k=key: on_pick(k))
+            self._buttons[key] = btn
+            row.addWidget(btn, stretch=1)
+        self._apply_style()
+
+    def set_selected(self, key: str):
+        for k, btn in self._buttons.items():
+            btn.set_selected(k == key)
+
+    def set_theme(self, theme: HubTheme):
+        self._theme = theme
+        self._apply_style()
+        for btn in self._buttons.values():
+            btn.set_theme(theme)
+
+    def retranslate_ui(self):
+        for btn in self._buttons.values():
+            btn.retranslate_ui()
+
+    def _apply_style(self):
+        t_ = self._theme
+        self.setStyleSheet(
+            f"QFrame#SourceTray {{ background-color: {t_.bg}; border: 1px solid {t_.line}; border-radius: 9px; }}"
+        )
+
 
 class WeatherPage(BaseHubPage):
     def __init__(self, theme: HubTheme = THEME_LIGHT, parent=None):
@@ -43,6 +158,8 @@ class WeatherPage(BaseHubPage):
         self._texts: list = []      # (QLabel, chave i18n)
         self._subs: list = []       # legendas cinzas (a cor muda com o tema)
         self._help_badges: list = []
+        self._bento_cells: list[QFrame] = []
+        self._bento_titles: list[tuple[QLabel, str]] = []
         self._result_buttons: list = []
         self._build_ui()
 
@@ -215,48 +332,12 @@ class WeatherPage(BaseHubPage):
         self._last_query_places: list = []
         self._refresh_cities()
 
-        # 3b. Modo de previsão (5 dias / Por hora — funciona em todas as skins)
-        card, row = self._card()
-        mode_info = self._info("weather_mode_title", "weather_mode_sub", 14)
-        row.addLayout(mode_info, stretch=1)
-        row.setAlignment(mode_info, Qt.AlignmentFlag.AlignVCenter)
-        self._forecast_group = ChipGroup(
-            [("daily", t("weather_mode_daily")), ("hourly", t("weather_mode_hourly"))],
-            self._on_forecast_mode,
-            self._theme,
-            selected=self.controller.forecast_mode(),
-            parent=card,
-            segmented=True,
-        )
-        row.addWidget(self._forecast_group, alignment=Qt.AlignmentFlag.AlignVCenter)
+        # 3b. Previsão (Bento 2+1: Exibição, Temperatura, Fonte dos dados)
+        self.content_layout.addWidget(self._build_forecast_bento())
         self.controller.forecast_mode_changed.connect(lambda _m: self._sync_forecast_mode())
-        self.content_layout.addWidget(card)
-
-        # 4. Unidade
-        card, row = self._card()
-        unit_info = self._info("weather_units_title", "weather_units_sub", 14)
-        row.addLayout(unit_info, stretch=1)
-        row.setAlignment(unit_info, Qt.AlignmentFlag.AlignVCenter)
-        self._unit_group = ChipGroup([("c", "°C"), ("f", "°F")], self._on_unit, self._theme, parent=card)
-        row.addWidget(self._unit_group, alignment=Qt.AlignmentFlag.AlignVCenter)
-        self._sync_units(animated=False)
         self.controller.units_changed.connect(lambda _u: self._sync_units())
-        self.content_layout.addWidget(card)
-
-        # 4b. Fonte da previsão (Open-Meteo: Automático, ICON, ECMWF, GFS)
-        card, row = self._card()
-        model_info = self._info("weather_model_title", "weather_model_sub", 14, help_key="weather_model_help")
-        row.addLayout(model_info, stretch=1)
-        row.setAlignment(model_info, Qt.AlignmentFlag.AlignVCenter)
-        self._model_group = ChipGroup(
-            [("auto", t("weather_model_auto")), ("icon", "ICON"), ("ecmwf", "ECMWF"), ("gfs", "GFS")],
-            self._on_model,
-            self._theme,
-            parent=card,
-        )
-        row.addWidget(self._model_group, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._sync_units(animated=False)
         self._sync_model(animated=False)
-        self.content_layout.addWidget(card)
 
         # 5. Comportamento
         card, col = self._card(vertical=True)
@@ -414,6 +495,82 @@ class WeatherPage(BaseHubPage):
 
     # --- Unidade, skin, comportamento ---
 
+    def _bento_cell(self, title_key: str, help_key: str = "") -> tuple[QFrame, QVBoxLayout]:
+        cell = QFrame()
+        cell.setObjectName("BentoCell")
+        col = QVBoxLayout(cell)
+        col.setContentsMargins(14, 12, 14, 12)
+        col.setSpacing(10)
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        lbl = QLabel(t(title_key))
+        head.addWidget(lbl)
+        if help_key:
+            badge = HelpBadge(t(help_key), self._theme, cell)
+            self._help_badges.append((badge, help_key))
+            head.addWidget(badge)
+        head.addStretch()
+        col.addLayout(head)
+        self._bento_cells.append(cell)
+        self._bento_titles.append((lbl, title_key))
+        return cell, col
+
+    def _build_forecast_bento(self) -> QFrame:
+        card, outer = self._card(vertical=True)
+        outer.setSpacing(12)
+        header = QLabel(t("weather_mode_title"))
+        header.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self._texts.append((header, "weather_mode_title"))
+        outer.addWidget(header)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(10)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
+        c_mode, l_mode = self._bento_cell("weather_display_title")
+        self._forecast_group = ChipGroup(
+            [("daily", t("weather_mode_daily")), ("hourly", t("weather_mode_hourly"))],
+            self._on_forecast_mode,
+            self._theme,
+            selected=self.controller.forecast_mode(),
+            parent=c_mode,
+            segmented=True,
+        )
+        l_mode.addWidget(self._forecast_group)
+        grid.addWidget(c_mode, 0, 0)
+
+        c_unit, l_unit = self._bento_cell("weather_units_title")
+        self._unit_group = ChipGroup(
+            [("c", "°C"), ("f", "°F")],
+            self._on_unit,
+            self._theme,
+            parent=c_unit,
+            segmented=True,
+        )
+        l_unit.addWidget(self._unit_group)
+        grid.addWidget(c_unit, 0, 1)
+
+        c_src, l_src = self._bento_cell("weather_model_title", help_key="weather_model_help")
+        self._model_tray = _ForecastSourceTray(self._on_model, self._theme, parent=c_src)
+        l_src.addWidget(self._model_tray)
+        grid.addWidget(c_src, 1, 0, 1, 2)
+
+        outer.addLayout(grid)
+        self._style_bento(self._theme)
+        return card
+
+    def _style_bento(self, theme: HubTheme):
+        cell_css = (
+            f"QFrame#BentoCell {{ background-color: {theme.panel2}; "
+            f"border: 1px solid {theme.line}; border-radius: 12px; }}"
+        )
+        for c in self._bento_cells:
+            c.setStyleSheet(cell_css)
+        for lbl, _k in self._bento_titles:
+            lbl.setStyleSheet(f"font-size: 12.5px; font-weight: 600; color: {theme.body}; background: transparent;")
+
     def _on_forecast_mode(self, mode: str):
         self.controller.set_forecast_mode(mode)
 
@@ -432,7 +589,7 @@ class WeatherPage(BaseHubPage):
         self._sync_model()
 
     def _sync_model(self, animated: bool = True):
-        self._model_group.set_selected(self.service.forecast_model(), animated=animated)
+        self._model_tray.set_selected(self.service.forecast_model())
 
     def _sync_size(self):
         """Chip Automático e polegar seguem o cartão (inclusive enquanto ele anima até o tamanho novo)."""
@@ -491,7 +648,9 @@ class WeatherPage(BaseHubPage):
             self.theme_picker.retranslate_ui()
         self._forecast_group.button("daily").setText(t("weather_mode_daily"))
         self._forecast_group.button("hourly").setText(t("weather_mode_hourly"))
-        self._model_group.button("auto").setText(t("weather_model_auto"))
+        for lbl, key in self._bento_titles:
+            lbl.setText(t(key))
+        self._model_tray.retranslate_ui()
         self.btn_add_auto.setText(t("weather_add_my_location"))
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.lbl_empty.setText(t("weather_cities_empty"))
@@ -507,7 +666,8 @@ class WeatherPage(BaseHubPage):
             card.set_theme(theme)
         self.city_list.set_theme(theme)
         self.lbl_count.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px; font-weight: 600;")
-        for w in (self.scale_card, self.theme_picker, self._forecast_group, self._unit_group, self._model_group, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
+        self._style_bento(theme)
+        for w in (self.scale_card, self.theme_picker, self._forecast_group, self._unit_group, self._model_tray, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)
 

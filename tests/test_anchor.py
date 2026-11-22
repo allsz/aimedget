@@ -1,10 +1,11 @@
 """Ancoragem de widgets: geometria do ímã, árvore de junção, gerenciador (arraste, grupo, onda) e desenho da rede."""
 
+import math
 import time
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPainter
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPainterPath
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -316,11 +317,118 @@ def test_glow_layer_always_reaches_zero_from_a_tiny_level(env):
     """A dedup de variações < 0.002 não pode engolir o apagar: um resto ínfimo ficaria aceso para sempre."""
     from app.ui_components.anchor_net import GlowLayer
     a = env.make("weather", 200, 200)
-    layer = GlowLayer(a, lambda: (am.card_rect(a), am.card_radius(a)))
+    layer = GlowLayer(a, lambda: am.card_shape(a))
     layer.set_level(0.0015, 1.0, None)
     assert layer.level() == pytest.approx(0.0015)
     layer.set_level(0.0, 1.0, None)
     assert layer.level() == 0.0
+
+
+# --- O brilho segue o contorno do cartão (qualquer forma) ---
+
+class _SquareCard(_Card):
+    def anchor_card_radius(self) -> float:
+        return 0.0
+
+
+STAR_TIP = 6.0   # px que as pontas do quadrado girado passam da borda (como o skin Shinra)
+
+
+class _StarCard(_Card):
+    """Dois quadrados sobrepostos, um girado 45°: triângulos saindo do meio de cada lado do cartão."""
+
+    def anchor_card_path(self):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPolygonF
+        r = self.card_rect()
+        c, half = r.center(), r.width() / 2.0 + STAR_TIP
+        path = QPainterPath()
+        path.addRect(r)
+        path.addPolygon(QPolygonF([QPointF(c.x(), c.y() - half), QPointF(c.x() + half, c.y()),
+                                   QPointF(c.x(), c.y() + half), QPointF(c.x() - half, c.y())]))
+        path.closeSubpath()
+        return path.simplified()
+
+
+def _glow_image(card):
+    from PySide6.QtGui import QImage
+    from app.ui_components.anchor_net import GlowLayer
+    layer = GlowLayer(card, lambda: am.card_shape(card))
+    layer.set_level(1.0, 1.0, None)
+    img = QImage(layer.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    layer.render(img)
+    return layer, img
+
+
+def _lit(img, x, y) -> bool:
+    return img.pixelColor(int(x), int(y)).alpha() > 8
+
+
+def _square_card(qapp):
+    """Cartão quadrado (largura = altura) para a estrela ficar simétrica."""
+    c = _StarCard("weather")
+    c._card_h = c._card_w
+    c.set_scale(1.0)
+    return c
+
+
+def test_glow_hugs_square_corners(env):
+    rounded, square = _Card("weather"), _SquareCard("timer")
+    for c in (rounded, square):
+        c.show()
+    _, img_r = _glow_image(rounded)
+    _, img_s = _glow_image(square)
+    r = square.card_rect()
+    corner = (r.right() + 2, r.top() - 2)               # logo fora da quina, na diagonal
+    assert _lit(img_s, *corner)                         # cantos retos: o halo contorna a quina
+    assert not _lit(img_r, *corner)                     # arredondado: a quina fica longe da curva
+    mid = (r.center().x(), r.top() - 2)                 # no meio de um lado os dois brilham
+    assert _lit(img_s, *mid) and _lit(img_r, *mid)
+
+
+def test_glow_follows_a_star_shaped_card(env, qapp):
+    star = _square_card(qapp)
+    star.show()
+    layer, img = _glow_image(star)
+    r = star.card_rect()
+    assert am.shape_overhang(star) == math.ceil(STAR_TIP)
+    tip_y = r.top() - STAR_TIP
+    assert _lit(img, r.center().x(), tip_y - 2)          # brilha além da ponta do triângulo
+    assert not _lit(img, r.center().x(), r.top() - 2)    # dentro do triângulo: nunca pinta no cartão
+    assert not _lit(img, r.center().x(), r.center().y())
+
+
+def test_glow_never_touches_the_window_edge(env):
+    from app.ui_components.anchor_net import GLOW_EDGE_GAP
+    for c in (_Card("weather"), _SquareCard("timer")):
+        c.show()
+        _, img = _glow_image(c)
+        gap = int(GLOW_EDGE_GAP) - 1
+        for x in range(img.width()):
+            for y in list(range(gap)) + list(range(img.height() - gap, img.height())):
+                assert not _lit(img, x, y)
+        for y in range(img.height()):
+            for x in list(range(gap)) + list(range(img.width() - gap, img.width())):
+                assert not _lit(img, x, y)
+
+
+def test_card_without_shape_contract_gets_square_corners(env):
+    """Sem `anchor_card_radius`, nada de raio adivinhado: cantos retos (erro visível)."""
+    class _Bare:
+        def card_rect(self):
+            return QRectF(0, 0, 100, 60)
+
+    assert am.card_radius(_Bare()) == 0.0
+    assert am.card_shape(_Bare()).boundingRect() == QRectF(0, 0, 100, 60)
+
+
+def test_every_widget_base_declares_its_corner_radius():
+    from app.ui_components.floating_card import FloatingCard
+    from app.widgets.music.skins.base_skin import BaseMusicSkin
+    from app.widgets.timer.skins.base_skin import BaseTimerSkin
+    for cls in (FloatingCard, BaseMusicSkin, BaseTimerSkin):
+        assert hasattr(cls, "anchor_card_radius"), cls.__name__
 
 
 def test_glow_lives_in_the_widget_window_and_follows_it(env):
@@ -458,6 +566,25 @@ def test_saved_groups_are_loaded_and_bad_entries_ignored(qapp, monkeypatch):
     assert sorted(mgr.group_of("music").keys()) == ["music", "weather"]
     assert mgr.group_of("timer").keys() == ["timer"]
     assert mgr._sizes["music"] == (260.0, 96.0)
+
+
+def test_saved_group_with_a_hole_is_split_on_load(qapp, monkeypatch):
+    """O estado que o bug deixou salvo: Clima+Desempenho presos ao Armazenamento por um vão de 262 px (onde a
+    Bateria estava). Ao carregar, o par continua um grupo e o Armazenamento fica solto; o conserto é gravado."""
+    saved = {"A": {"A": "weather", "B": "performance", "ax": "x", "ai": 0, "off": 0.0, "gap": 5.25},
+             "B": "storage", "ax": "x", "ai": 0, "off": 0.0, "gap": 262.25}
+    store = {"groups": [saved]}
+    monkeypatch.setattr(config_manager, "get_anchor", lambda k, d=None: store.get(k, d))
+    monkeypatch.setattr(config_manager, "set_anchor", lambda k, v: store.__setitem__(k, v))
+    mgr = am.AnchorManager()
+    assert sorted(mgr.group_of("weather").keys()) == ["performance", "weather"]
+    assert mgr.group_of("storage").keys() == ["storage"]
+    assert store["groups"] == [saved["A"]]
+
+
+def test_cut_loose_keeps_real_joins_at_the_largest_align_gap():
+    tree = geo.Join(geo.Join("a", "b", "x", 0, 0.0, 32.0), "c", "y", 0, 0.0, 32.0)
+    assert geo.cut_loose(tree) == [tree]
 
 
 def test_style_settings_fall_back_to_defaults(monkeypatch):
@@ -652,6 +779,67 @@ def test_picking_a_quadrant_in_the_hub_takes_the_widget_out_of_its_group(env, mo
     env.mgr.drag_end(a)
     assert _rect(b).l - keep_b.l == pytest.approx(25, abs=1)
     assert ["battery" not in str(g) for g in env.store["groups"]] == [True] * len(env.store["groups"])
+
+
+def _row_of_three(env, mid="battery"):
+    a = env.make("weather", 200, 200)
+    b = env.make(mid, 700, 260)
+    c = env.make("storage", 1200, 300)
+    env.mgr.set_anchored(a, True)
+    _join_right(env, a, b)
+    env.mgr.set_anchored(b, True)
+    _join_right(env, b, c)
+    assert env.mgr.group_of("weather") is env.mgr.group_of("storage")
+    return a, b, c
+
+
+def test_leaving_from_the_middle_closes_the_gap_without_animations(env):
+    """Clima | Bateria | Armazenamento, a Bateria sai: os dois que ficam se juntam (sem vão preso no grupo) e a
+    Bateria consegue encaixar de volta."""
+    a, b, c = _row_of_three(env)
+    keep_a, keep_b, keep_c = _rect(a), _rect(b), _rect(c)
+    env.mgr.detach(b)
+    assert env.mgr._slide is None                                   # sem animações: na hora
+    assert not env.mgr.is_grouped(b) and env.mgr.group_of("weather") is env.mgr.group_of("storage")
+    assert _rect(b) == keep_b                                       # quem saiu não é empurrado
+    ra, rc = _rect(a), _rect(c)
+    assert rc.l == pytest.approx(ra.r + GAP, abs=1) and rc.t == pytest.approx(ra.t, abs=1)
+    assert ra == keep_a or rc == keep_c                             # um lado (o da borda mais perto) fica parado
+    assert len(env.store["groups"]) == 1
+
+    _drag(env.mgr, b, 0, 400)                                       # a Bateria vai para longe
+    env.mgr.drag_end(b)
+    env.mgr.set_anchored(c, True)
+    _join_right(env, c, b)                                          # e volta, na ponta do par
+    assert env.mgr.group_of("battery") is env.mgr.group_of("weather")
+
+
+def test_leaving_from_the_middle_slides_the_rest_together_then_ends_clean(env):
+    a, b, c = _row_of_three(env)
+    env.state["anim"] = True
+    env.mgr.detach(b)
+    assert env.mgr._slide is not None                               # anima, não pula
+    widths, t0 = [], time.perf_counter()
+    while env.mgr._slide is not None and time.perf_counter() - t0 < 3.0:
+        QTest.qWait(8)
+        ra, rc = _rect(a), _rect(c)
+        widths.append(max(ra.r, rc.r) - min(ra.l, rc.l))
+    assert env.mgr._slide is None                                   # termina limpo
+    assert len(widths) > 3
+    assert all(w2 <= w1 + 0.5 for w1, w2 in zip(widths, widths[1:]))   # o contorno só encolhe (sem dente)
+    ra, rc = _rect(a), _rect(c)
+    assert rc.l == pytest.approx(ra.r + GAP, abs=1)
+    assert len(env.store["groups"]) == 1
+
+
+def test_leaving_from_the_end_moves_nobody(env):
+    a, c, b = _row_of_three(env, mid="performance")                 # Clima | Desempenho | Armazenamento
+    keep_a, keep_c = _rect(a), _rect(c)
+    env.state["anim"] = True
+    env.mgr.detach(b)
+    QTest.qWait(50)
+    assert env.mgr.group_of("weather") is env.mgr.group_of("performance")
+    assert _rect(a) == keep_a and _rect(c) == keep_c
 
 
 def test_picking_a_quadrant_for_a_widget_that_is_not_grouped_is_harmless(env):

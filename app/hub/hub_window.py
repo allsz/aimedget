@@ -260,11 +260,10 @@ class AimedgetHubWindow(QMainWindow):
         self.show_and_activate()
         self.page_weather.focus_cities()
 
-    def show_storage_folders(self):
-        """Abre o Hub direto na seção de pastas da página de Armazenamento (pelo menu do cartão)."""
-        self.sidebar.select_page("storage")
+    def show_widget_page(self, page_id: str):
+        """Abre o Hub na página de configuração de um widget ("Configurar" no menu do widget)."""
+        self.sidebar.select_page(page_id)
         self.show_and_activate()
-        self.page_storage.focus_folders()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -398,7 +397,6 @@ class AimedgetHubWindow(QMainWindow):
 
         bridge = get_service_bridge()
         bridge.active_skins_changed.connect(self._on_active_skins_changed)
-        bridge.manage_storage_folders_requested.connect(self.show_storage_folders)
 
     def _on_active_skins_changed(self, active_skins: list):
         """Atualiza imediatamente o badge numérico da aba Widget quando skins são marcadas/desmarcadas."""

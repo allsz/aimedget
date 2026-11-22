@@ -25,7 +25,7 @@ from app.core.paths import APP_ICON_SVG
 from app.core.theme_art import paint_background, paint_stickers
 from app.core.widget_theme import art_margin_px
 from app.core.typography import get_ui_font
-from app.services.media_worker import fetch_stack_extras
+from app.services.media_worker import cover_confirmed_for, fetch_stack_extras
 from app.widgets.music.skins.base_skin import BaseMusicSkin
 from app.widgets.music.skins.stack_palette import PastelStackTheme, get_default_pastel_theme
 from app.widgets.music.skins import stack_theme
@@ -621,15 +621,18 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
     def _update_and_cache_cover(self, thumb_bytes: bytes) -> bool:
         now = time.perf_counter()
+        # Capa igual à da faixa anterior pode ser legítima (mesmo álbum): vale se o worker a confirmou para esta faixa
+        confirmed = cover_confirmed_for(self.title_text, self.artist_text, thumb_bytes)
         # Enquanto aguardamos o player confirmar a nova faixa após um swipe do usuário,
         # ignoramos o thumbnail antigo da faixa anterior para evitar que a capa antiga reapareça!
         if self._awaiting_swipe_track_change and (now - self._last_user_swipe_time < 4.5):
-            if not thumb_bytes or thumb_bytes == self._stale_track_thumb_bytes:
+            if not thumb_bytes or (thumb_bytes == self._stale_track_thumb_bytes and not confirmed):
                 return False
 
         # Mesmo após o título mudar, ignoramos por até 1.4s se o navegador ainda estiver enviando os bytes da capa anterior
         if (
-            not self._cover_updated_for_current_track
+            not confirmed
+            and not self._cover_updated_for_current_track
             and self._stale_track_thumb_bytes
             and thumb_bytes == self._stale_track_thumb_bytes
             and (now - self._last_user_swipe_time < 2.2)

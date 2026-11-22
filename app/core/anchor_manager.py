@@ -27,6 +27,7 @@ mostrar, `member_resized` ao mudar de escala e `add_anchor_actions` no menu de c
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from dataclasses import dataclass, field
@@ -110,13 +111,66 @@ def card_rect(w) -> Rect:
     return Rect.of(p.x() + r.x(), p.y() + r.y(), r.width(), r.height())
 
 
+_SHAPE_WARNED: set = set()
+
+
+def _warn_shape(w, what: str):
+    name = type(w).__name__
+    if name not in _SHAPE_WARNED:
+        _SHAPE_WARNED.add(name)
+        logging.getLogger(__name__).warning(
+            "%s não define %s: usando cantos retos (defina para o brilho seguir a borda)", name, what)
+
+
 def card_radius(w) -> float:
-    if hasattr(w, "_card_radius") and isinstance(getattr(w, "_scale", None), (int, float)):
-        return float(w._card_radius) * float(w._scale)
-    if hasattr(w, "CARD_RADIUS") and isinstance(getattr(w, "scale", None), (int, float)):
-        return float(w.CARD_RADIUS) * float(w.scale)
+    """
+    Raio dos cantos do cartão em px de tela, dito pelo próprio widget (`anchor_card_radius()`). Sem ele, 0: um
+    cartão sem contrato aparece com cantos retos (erro visível), não com um raio "parecido" adivinhado.
+    """
+    fn = getattr(w, "anchor_card_radius", None)
+    if fn is None:
+        _warn_shape(w, "anchor_card_radius()")
+        return 0.0
+    return max(0.0, float(fn()))
+
+
+def card_shape(w) -> QPainterPath:
+    """
+    Contorno exato do cartão em coordenadas da JANELA do widget. Um skin com borda que não é um retângulo
+    arredondado (estrela, cantos diferentes, pontas para fora) sobrescreve `anchor_card_path()`; os demais
+    ganham o retângulo de `card_rect()` com o raio de `anchor_card_radius()`.
+    """
+    fn = getattr(w, "anchor_card_path", None)
+    if fn is not None:
+        path = fn()
+        if path is not None and not path.isEmpty():
+            return QPainterPath(path)
     r = _local_card(w)
-    return min(r.width(), r.height()) * 0.12
+    rad = card_radius(w)
+    path = QPainterPath()
+    path.addRoundedRect(r, rad, rad)
+    return path
+
+
+def shape_overhang(w) -> int:
+    """Quantos px o contorno de `anchor_card_path()` passa do `card_rect()` (pontas para fora); 0 sem contorno próprio.
+    A folga do brilho cresce isso para o halo caber em volta das pontas também."""
+    fn = getattr(w, "anchor_card_path", None)
+    if fn is None:
+        return 0
+    path = fn()
+    if path is None or path.isEmpty():
+        return 0
+    box, card = path.boundingRect(), _local_card(w)
+    over = max(card.left() - box.left(), card.top() - box.top(),
+               box.right() - card.right(), box.bottom() - card.bottom(), 0.0)
+    return int(math.ceil(over))
+
+
+def card_shape_on_screen(w) -> QPainterPath:
+    """`card_shape` na tela (posição de repouso, sem o deslocamento da animação de surgir)."""
+    p = w.rest_pos()
+    return card_shape(w).translated(p.x(), p.y())
 
 
 def move_card(w, x: float, y: float):
@@ -252,6 +306,7 @@ class AnchorManager(QObject):
             for k, v in sizes.items():
                 if k in KNOWN_KEYS and isinstance(v, (list, tuple)) and len(v) == 2:
                     self._sizes[k] = (float(v[0]), float(v[1]))
+        repaired = False
         for data in config_manager.get_anchor("groups", []) or []:
             tree = geo.from_json(data)
             if tree is None:
@@ -259,9 +314,14 @@ class AnchorManager(QObject):
             keys = geo.members(tree)
             if len(keys) < 2 or any(k not in KNOWN_KEYS or k in self._groups for k in keys):
                 continue
-            g = Group(tree)
-            for k in keys:
-                self._groups[k] = g
+            parts = geo.cut_loose(tree)          # grupo salvo com um vão no meio: os lados viram grupos próprios
+            repaired = repaired or len(parts) > 1
+            for part in parts:
+                g = Group(part)
+                for k in geo.members(part):
+                    self._groups[k] = g
+        if repaired:
+            self._save()
 
     def _save(self):
         seen, out = set(), []
@@ -851,7 +911,10 @@ class AnchorManager(QObject):
         self._save()
 
     def detach(self, w):
-        """Tira o widget do grupo; os outros continuam juntos, exatamente onde estão."""
+        """
+        Tira o widget do grupo. Os outros continuam juntos: se ele saiu do MEIO, o vão fecha como quando um membro é
+        escondido (CLOSE_SPRING; o lado mais perto da borda da tela fica parado). Saindo de uma ponta, ninguém se mexe.
+        """
         key = self._key(w)
         if key is None:
             return
@@ -859,17 +922,37 @@ class AnchorManager(QObject):
         if len(g.keys()) < 2:
             return
         self._finish_slide()
-        rects = self._virtual_rects(g) if self._absent_in(g) else self._rects_of(g)
+        rects = self._closed_rects(g, key)
         if rects is None:
             return
+        before = self._visible_box(g, skip=key)     # o contorno dos que ficam, com o vão: dele sai o lado parado
         rest = geo.prune(g.tree, key, rects)
-        single = self._groups[key] = Group(key, glow=g.glow)    # o brilho (se havia) apaga suavemente
+        self._groups[key] = Group(key, glow=g.glow)             # o brilho (se havia) apaga suavemente
+        ng = None
         if rest is not None:
             ng = Group(rest, glow=g.glow)
             for k in geo.members(rest):
                 self._groups[k] = ng
         self._save()
+        if ng is not None and len(ng.keys()) > 1 and before is not None:
+            self._place(ng, entering=None, animate=animations_enabled(), before=before)
         self._wake()
+
+    def _closed_rects(self, g: Group, key: str) -> Optional[Dict[str, Rect]]:
+        """O grupo como fica sem `key`: as fileiras fechadas, cada junção com a folga dela (para reler as relações)."""
+        sizes = {}
+        for k in g.keys():
+            w = self.window(k)
+            if w is not None and self._present(k):
+                r = card_rect(w)
+                sizes[k] = (r.w, r.h)
+            elif k in self._sizes:
+                sizes[k] = self._sizes[k]
+            else:
+                sizes[k] = (0.0, 0.0)
+        root = next(k for k in g.keys() if k != key)
+        pos = geo.layout(g.tree, sizes, root, (0.0, 0.0), {key})
+        return {k: Rect.of(pos[k][0], pos[k][1], *sizes[k]) for k in g.keys() if k != key}
 
     # --- Arraste ---
 
@@ -1253,10 +1336,7 @@ class AnchorManager(QObject):
         for key in KNOWN_KEYS:     # a rede passa POR TRÁS dos cartões (a janela fica por cima deles)
             w = self.window(key)
             if w is not None and w.isVisible():
-                r, rad = card_rect(w), card_radius(w)
-                hole = QPainterPath()
-                hole.addRoundedRect(QRectF(r.l, r.t, r.w, r.h), rad, rad)
-                clip = clip.subtracted(hole)
+                clip = clip.subtracted(card_shape_on_screen(w))
         p.setClipPath(clip)
 
         for g in self.groups():
@@ -1320,7 +1400,7 @@ class AnchorManager(QObject):
             if layer is None or not _alive(layer):
                 if g.glow <= 0.0:
                     continue
-                layer = w._anchor_glow_layer = GlowLayer(w, lambda host=w: (card_rect(host), card_radius(host)))
+                layer = w._anchor_glow_layer = GlowLayer(w, lambda host=w: card_shape(host))
             if g.glow > 0.0 and not layer.has_room:
                 room = getattr(w, "anchor_glow_room", None)
                 if room is not None:

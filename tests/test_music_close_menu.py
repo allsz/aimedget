@@ -45,13 +45,22 @@ class CloseMenuItemTests(unittest.TestCase):
                 last = actions[-1]
                 self.assertEqual(last.text(), t("menu_close_widget"))
                 self.assertFalse(last.icon().isNull())
-                self.assertTrue(actions[-2].isSeparator())      # separado das preferências, como no Timer
+                self.assertEqual(actions[-2].text(), t("menu_configure_widget"))   # "Configurar" logo acima
+                self.assertFalse(actions[-2].icon().isNull())
+                self.assertTrue(actions[-3].isSeparator())      # separado das preferências, como no Timer
 
     def test_clicking_it_emits_close_requested(self):
         skin = _make(VinylMusicSkin)
         got = []
         skin.close_requested.connect(lambda: got.append(1))
         _open_menu(skin)[-1].trigger()
+        self.assertEqual(got, [1])
+
+    def test_configure_emits_configure_requested(self):
+        skin = _make(VinylMusicSkin)
+        got = []
+        skin.configure_requested.connect(lambda: got.append(1))
+        _open_menu(skin)[-2].trigger()
         self.assertEqual(got, [1])
 
     def test_label_in_both_languages(self):
@@ -119,7 +128,7 @@ class MenuTranslationTests(unittest.TestCase):
                     actions, bar = _open_menu_with_bar(_make(cls))
                     texts = [a.text() for a in actions]
                     tooltips = [b.toolTip() for b in bar.buttons.values()] if bar else []
-                    self.assertIn("Size", texts)
+                    self.assertNotIn("Size", texts)
                     self.assertIn("Remember position", tooltips)
                     self.assertNotIn("Tamanho", texts)
                     self.assertNotIn("Lembrar posição", tooltips)

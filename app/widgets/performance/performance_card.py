@@ -430,15 +430,10 @@ class PerformanceCard(FloatingCard):
             skins_menu.addAction(act)
         menu.addMenu(skins_menu)
 
-        size_menu = FluentMusicMenu(t("weather_menu_size"), menu, theme=theme)
-        for value in SCALES:
-            act = QAction(f"{int(round(value * 100))}%", self)
-            size_menu.set_trailing_check(act, abs(self._scale - value) < 0.01)
-            act.triggered.connect(lambda checked=False, v=value: self.scale_changed.emit(v))
-            size_menu.addAction(act)
-        menu.addMenu(size_menu)
-
         menu.addSeparator()
+        act_configure = QAction(t("menu_configure_widget"), self)
+        act_configure.triggered.connect(self.configure_requested.emit)
+        menu.addAction(act_configure)
         act_close = QAction(t("menu_close_widget"), self)
         act_close.triggered.connect(self.close_requested.emit)
         menu.addAction(act_close)

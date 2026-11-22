@@ -164,6 +164,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     """Base de janela flutuante sem moldura com sombra, escala, arraste e fixação no desktop."""
 
     close_requested = Signal()
+    configure_requested = Signal()   # "Configurar" no menu: abre o Hub na página do widget
     scale_changed = Signal(float)   # pedido de um tamanho novo (menu, roda, soltar a alça): quem decide é o controlador
     scale_applied = Signal(float)   # o tamanho de fato aplicado, a cada quadro (o Hub acompanha a animação)
     desktop_mode_changed = Signal(bool)
@@ -228,6 +229,10 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     def card_rect(self) -> QRectF:
         m = self.margin()
         return QRectF(m, m, self._card_w * self._scale, self._card_h * self._scale)
+
+    def anchor_card_radius(self) -> float:
+        """Raio dos cantos na tela: o mesmo de `card_path`, que pinta o cartão (contrato do brilho/rede)."""
+        return self._card_radius * self._scale
 
     def card_size(self) -> tuple[int, int]:
         return int(round(self._card_w * self._scale)), int(round(self._card_h * self._scale))

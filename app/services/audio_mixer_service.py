@@ -148,6 +148,7 @@ class AudioMixerService(QObject):
         self._master_vol = self.get_master_volume()
         self._master_muted = self.get_master_mute()
         self._last_internal_set_time = 0.0
+        self._default_changed_at = -1e9   # quando o dispositivo padrão trocou pela última vez (perf_counter)
         self._last_key_trigger_time = 0.0
         self._pending_vk_actions: list[int] = []
 
@@ -309,6 +310,10 @@ class AudioMixerService(QObject):
         finally:
             _com_release(dev_ptr)
 
+    # Fone Bluetooth novo ajusta o volume ~2 s DEPOIS de virar o padrão (medido: 35 -> 37 aos 2,08 s). Esse ajuste não
+    # é o usuário mexendo no volume, então o OSD fica quieto por esse tempo após a troca.
+    DEVICE_SWITCH_QUIET_S = 4.0
+
     def _check_default_device(self, now: float):
         """O usuário trocou o dispositivo padrão do Windows? Então o volume geral passa a ser o do novo (1x por segundo)."""
         if now - self._default_check_at < 1.0:
@@ -316,6 +321,7 @@ class AudioMixerService(QObject):
         self._default_check_at = now
         current = self._current_default_device_id()
         if current and current != self._default_dev_id:
+            self._default_changed_at = now
             self._init_com_interfaces()
             # Trocar de dispositivo muda o volume lido, mas não é o usuário mexendo no volume: o OSD não deve aparecer
             # (o passo 3 de _poll_master_and_keys, logo em seguida, só atualiza o valor mostrado)
@@ -547,7 +553,8 @@ class AudioMixerService(QObject):
             self._master_vol = cur_vol
             self._master_muted = cur_mute
             self.master_volume_changed.emit(cur_vol, cur_mute)
-            if (now - getattr(self, "_last_internal_set_time", 0.0)) > 0.15:
+            settling = (now - self._default_changed_at) < self.DEVICE_SWITCH_QUIET_S
+            if not settling and (now - getattr(self, "_last_internal_set_time", 0.0)) > 0.15:
                 self.osd_requested.emit(cur_vol, cur_mute)
                 self._last_key_trigger_time = now
 

@@ -19,6 +19,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
     - Suporta memorização da posição favorita na tela persistida via ConfigManager.
     """
     skin_changed = Signal(str)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     scale_changed = Signal(object)
 
     manage_skins_requested = Signal()
@@ -106,6 +107,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
                 old_skin.skin_switch_requested.disconnect(self.set_skin)
                 old_skin.manage_skins_requested.disconnect(self.manage_skins_requested.emit)
                 old_skin.close_requested.disconnect(self._on_skin_close_requested)
+                old_skin.configure_requested.disconnect(self.configure_requested.emit)
                 old_skin.volume_wheel_requested.disconnect(self.volume_wheel_requested.emit)
                 repeat_signal = getattr(self.media_worker, "repeat_state_changed", None)
                 if repeat_signal is not None:
@@ -121,6 +123,7 @@ class MusicWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.skin_switch_requested.connect(self.set_skin)
         self.skin.manage_skins_requested.connect(self.manage_skins_requested.emit)
         self.skin.close_requested.connect(self._on_skin_close_requested)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.volume_wheel_requested.connect(self.volume_wheel_requested.emit)
         repeat_signal = getattr(self.media_worker, "repeat_state_changed", None)
         if repeat_signal is not None:

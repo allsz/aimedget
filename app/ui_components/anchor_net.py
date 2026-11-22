@@ -160,7 +160,9 @@ class GlowLayer(QWidget):
     """
     Brilho do modo ancorado desenhado DENTRO da janela do widget (um filho transparente que cobre a janela toda e
     só pinta fora do cartão). Por estar na janela dele, fica na mesma camada (área de trabalho ou por cima) e anda
-    junto no arraste, no mesmo quadro. `geometry()` devolve (cartão na tela, raio).
+    junto no arraste, no mesmo quadro. `geometry()` devolve o contorno do cartão (QPainterPath em coordenadas da
+    janela, ver anchor_manager.card_shape): o halo é um traço desse contorno, então segue qualquer forma
+    (retângulo arredondado, cantos retos, estrela com pontas para fora).
     """
 
     def __init__(self, host: QWidget, geometry):
@@ -196,42 +198,48 @@ class GlowLayer(QWidget):
         self._level, self._breathe = level, breathe
         self.update(self._band())
 
-    def _card_local(self):
-        card, radius = self._geometry()
-        origin = self._host.rest_pos()
-        return QRectF(card.l - origin.x(), card.t - origin.y(), card.w, card.h), radius
+    def shape(self) -> QPainterPath:
+        return QPainterPath(self._geometry())
+
+    def extent(self, shape: Optional[QPainterPath] = None) -> float:
+        """Alcance do halo fora do cartão: GLOW_EXTENT, ou menos se a janela não tem folga (nunca encosta nela)."""
+        box = (shape or self.shape()).boundingRect()     # inclui pontas que saem do retângulo do cartão
+        room = min(box.left(), box.top(), self.width() - box.right(), self.height() - box.bottom())
+        return max(0.0, min(GLOW_EXTENT, room - GLOW_EDGE_GAP))
 
     def _band(self) -> QRegion:
-        """Só a faixa em volta do cartão precisa ser redesenhada (o miolo do widget fica como está)."""
-        card, radius = self._card_local()
-        inner = card.adjusted(radius, radius, -radius, -radius).toAlignedRect()
-        band = QRegion(self.rect())
-        return band.subtracted(QRegion(inner)) if inner.isValid() else band
+        """Só a faixa em volta do cartão precisa ser redesenhada: o halo nunca pinta dentro do contorno."""
+        inner = QRegion(self.shape().toFillPolygon().toPolygon())
+        # Encolhe 2 px (interseção com cópias deslocadas) para a borda suavizada também ser redesenhada.
+        for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
+            inner = inner.intersected(inner.translated(dx, dy))
+        return QRegion(self.rect()).subtracted(inner)
 
     def paintEvent(self, event):
         if self._level <= 0.0:
             return
-        card, radius = self._card_local()
-        room = min(card.left(), card.top(), self.width() - card.right(), self.height() - card.bottom())
-        extent = max(0.0, min(GLOW_EXTENT, room - GLOW_EDGE_GAP))
+        shape = self.shape()
+        if shape.isEmpty():
+            return
+        extent = self.extent(shape)
         if extent <= 0.5:
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         outside = QPainterPath()
         outside.addRect(QRectF(self.rect()))
-        hole = QPainterPath()
-        hole.addRoundedRect(card, radius, radius)
-        p.setClipPath(outside.subtracted(hole))      # só por fora do cartão
+        p.setClipPath(outside.subtracted(shape))     # só por fora do cartão
         p.setBrush(Qt.BrushStyle.NoBrush)
         for frac, alpha in GLOW_LAYERS:
-            wd = 2.0 * extent * frac * (self._breathe if frac > 0.2 else 1.0)
-            wd = min(wd, 2.0 * extent)
+            reach = min(2.0 * extent * frac * (self._breathe if frac > 0.2 else 1.0), 2.0 * extent)
             c = QColor(self._color)
             c.setAlpha(round(255 * max(0.0, min(1.0, alpha * self._level * 1.25))))
-            p.setPen(QPen(c, wd))
-            r = card.adjusted(-(wd / 2.0 - 0.5), -(wd / 2.0 - 0.5), wd / 2.0 - 0.5, wd / 2.0 - 0.5)
-            p.drawRoundedRect(r, radius + wd / 2.0, radius + wd / 2.0)
+            # Traço centrado no contorno: metade cai dentro (cortada pelo clip), metade sai `reach - 0.5` px.
+            # Junta redonda: nas pontas (estrela, cantos retos) o halo contorna em vez de virar um espinho.
+            pen = QPen(c, max(0.0, 2.0 * (reach - 0.5)))
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.drawPath(shape)
         p.end()
 
 

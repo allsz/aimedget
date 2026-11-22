@@ -28,6 +28,7 @@ from app.widgets.performance.performance_card import PerformanceCard
 
 class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
     status_changed = Signal(bool)
+    configure_requested = Signal()   # "Configurar" no menu do widget
     skin_changed = Signal(str)
     scale_changed = Signal(float)
     desktop_mode_changed = Signal(bool)
@@ -66,6 +67,7 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
+        self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.scale_changed.connect(self.set_scale)
         self.skin.metric_selected.connect(self.select_metric)
         self.skin.metric_order_changed.connect(self.set_metric_order)
