@@ -162,7 +162,6 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.units_changed.connect(self.set_units)
         self.skin.scale_changed.connect(self.set_scale)
         self.skin.day_selected.connect(self.select_day)
-        self.skin.preview_condition_requested.connect(self.preview_condition)
         self.skin.city_step.connect(self.step_city)
         self.skin.city_selected.connect(self.select_city)
         self.skin.manage_cities_requested.connect(self.manage_cities_requested.emit)
@@ -269,11 +268,6 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         now = self.skin.now() if state.animated else PAST
         if state.select(index, condition_names(), now):
             self.skin.kick()
-
-    def preview_condition(self, condition: str):
-        state = self.skin.state
-        state.preview_condition(condition, condition_names(), self.skin.now() if state.animated else PAST)
-        self.skin.kick()
 
     def set_units(self, unit: str):
         u = "f" if unit == "f" else "c"
