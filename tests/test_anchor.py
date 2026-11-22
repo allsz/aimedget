@@ -1,10 +1,11 @@
 """Ancoragem de widgets: geometria do ímã, árvore de junção, gerenciador (arraste, grupo, onda) e desenho da rede."""
 
+import math
 import time
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPainter
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtGui import QImage, QMouseEvent, QPainter, QPainterPath
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -316,11 +317,118 @@ def test_glow_layer_always_reaches_zero_from_a_tiny_level(env):
     """A dedup de variações < 0.002 não pode engolir o apagar: um resto ínfimo ficaria aceso para sempre."""
     from app.ui_components.anchor_net import GlowLayer
     a = env.make("weather", 200, 200)
-    layer = GlowLayer(a, lambda: (am.card_rect(a), am.card_radius(a)))
+    layer = GlowLayer(a, lambda: am.card_shape(a))
     layer.set_level(0.0015, 1.0, None)
     assert layer.level() == pytest.approx(0.0015)
     layer.set_level(0.0, 1.0, None)
     assert layer.level() == 0.0
+
+
+# --- O brilho segue o contorno do cartão (qualquer forma) ---
+
+class _SquareCard(_Card):
+    def anchor_card_radius(self) -> float:
+        return 0.0
+
+
+STAR_TIP = 6.0   # px que as pontas do quadrado girado passam da borda (como o skin Shinra)
+
+
+class _StarCard(_Card):
+    """Dois quadrados sobrepostos, um girado 45°: triângulos saindo do meio de cada lado do cartão."""
+
+    def anchor_card_path(self):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPolygonF
+        r = self.card_rect()
+        c, half = r.center(), r.width() / 2.0 + STAR_TIP
+        path = QPainterPath()
+        path.addRect(r)
+        path.addPolygon(QPolygonF([QPointF(c.x(), c.y() - half), QPointF(c.x() + half, c.y()),
+                                   QPointF(c.x(), c.y() + half), QPointF(c.x() - half, c.y())]))
+        path.closeSubpath()
+        return path.simplified()
+
+
+def _glow_image(card):
+    from PySide6.QtGui import QImage
+    from app.ui_components.anchor_net import GlowLayer
+    layer = GlowLayer(card, lambda: am.card_shape(card))
+    layer.set_level(1.0, 1.0, None)
+    img = QImage(layer.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    layer.render(img)
+    return layer, img
+
+
+def _lit(img, x, y) -> bool:
+    return img.pixelColor(int(x), int(y)).alpha() > 8
+
+
+def _square_card(qapp):
+    """Cartão quadrado (largura = altura) para a estrela ficar simétrica."""
+    c = _StarCard("weather")
+    c._card_h = c._card_w
+    c.set_scale(1.0)
+    return c
+
+
+def test_glow_hugs_square_corners(env):
+    rounded, square = _Card("weather"), _SquareCard("timer")
+    for c in (rounded, square):
+        c.show()
+    _, img_r = _glow_image(rounded)
+    _, img_s = _glow_image(square)
+    r = square.card_rect()
+    corner = (r.right() + 2, r.top() - 2)               # logo fora da quina, na diagonal
+    assert _lit(img_s, *corner)                         # cantos retos: o halo contorna a quina
+    assert not _lit(img_r, *corner)                     # arredondado: a quina fica longe da curva
+    mid = (r.center().x(), r.top() - 2)                 # no meio de um lado os dois brilham
+    assert _lit(img_s, *mid) and _lit(img_r, *mid)
+
+
+def test_glow_follows_a_star_shaped_card(env, qapp):
+    star = _square_card(qapp)
+    star.show()
+    layer, img = _glow_image(star)
+    r = star.card_rect()
+    assert am.shape_overhang(star) == math.ceil(STAR_TIP)
+    tip_y = r.top() - STAR_TIP
+    assert _lit(img, r.center().x(), tip_y - 2)          # brilha além da ponta do triângulo
+    assert not _lit(img, r.center().x(), r.top() - 2)    # dentro do triângulo: nunca pinta no cartão
+    assert not _lit(img, r.center().x(), r.center().y())
+
+
+def test_glow_never_touches_the_window_edge(env):
+    from app.ui_components.anchor_net import GLOW_EDGE_GAP
+    for c in (_Card("weather"), _SquareCard("timer")):
+        c.show()
+        _, img = _glow_image(c)
+        gap = int(GLOW_EDGE_GAP) - 1
+        for x in range(img.width()):
+            for y in list(range(gap)) + list(range(img.height() - gap, img.height())):
+                assert not _lit(img, x, y)
+        for y in range(img.height()):
+            for x in list(range(gap)) + list(range(img.width() - gap, img.width())):
+                assert not _lit(img, x, y)
+
+
+def test_card_without_shape_contract_gets_square_corners(env):
+    """Sem `anchor_card_radius`, nada de raio adivinhado: cantos retos (erro visível)."""
+    class _Bare:
+        def card_rect(self):
+            return QRectF(0, 0, 100, 60)
+
+    assert am.card_radius(_Bare()) == 0.0
+    assert am.card_shape(_Bare()).boundingRect() == QRectF(0, 0, 100, 60)
+
+
+def test_every_widget_base_declares_its_corner_radius():
+    from app.ui_components.floating_card import FloatingCard
+    from app.widgets.music.skins.base_skin import BaseMusicSkin
+    from app.widgets.timer.skins.base_skin import BaseTimerSkin
+    for cls in (FloatingCard, BaseMusicSkin, BaseTimerSkin):
+        assert hasattr(cls, "anchor_card_radius"), cls.__name__
 
 
 def test_glow_lives_in_the_widget_window_and_follows_it(env):

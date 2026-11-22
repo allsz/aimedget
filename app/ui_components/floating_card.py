@@ -230,6 +230,10 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         m = self.margin()
         return QRectF(m, m, self._card_w * self._scale, self._card_h * self._scale)
 
+    def anchor_card_radius(self) -> float:
+        """Raio dos cantos na tela: o mesmo de `card_path`, que pinta o cartão (contrato do brilho/rede)."""
+        return self._card_radius * self._scale
+
     def card_size(self) -> tuple[int, int]:
         return int(round(self._card_w * self._scale)), int(round(self._card_h * self._scale))
 

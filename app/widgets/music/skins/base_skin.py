@@ -362,6 +362,11 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         w, h = self._card_size()
         return QRectF(self.art_margin, self.art_margin, w, h)
 
+    def anchor_card_radius(self) -> float:
+        """Raio dos cantos na tela. Um skin cuja borda não é um retângulo arredondado sobrescreve
+        `anchor_card_path()` (contorno em coordenadas da janela) e o brilho de ancorado segue esse contorno."""
+        return float(self.CARD_RADIUS) * float(self.scale)
+
     def card_pos(self, event) -> QPointF:
         """Posição do mouse em coordenadas do CARTÃO (a janela tem uma margem transparente em volta dele)."""
         m = float(self.art_margin)
@@ -394,7 +399,8 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         """
         if not self._glow_room:
             return self._wanted_art_margin()
-        return max(self._wanted_art_margin(), self.ANCHOR_GLOW_ROOM)
+        from app.core.anchor_manager import shape_overhang
+        return max(self._wanted_art_margin(), self.ANCHOR_GLOW_ROOM + shape_overhang(self))
 
     _glow_room = True
 

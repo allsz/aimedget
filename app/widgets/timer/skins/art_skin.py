@@ -29,7 +29,8 @@ import unicodedata
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap, QTransform,
+    QBitmap, QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPaintEvent, QPen, QPixmap, QRegion,
+    QTransform,
 )
 
 from app.core.config_manager import config_manager
@@ -138,6 +139,27 @@ class ArtLook:
             q.end()
             self._silhouettes[pm.cacheKey()] = out
         return out
+
+    OUTLINE_RES = 256   # px do lado maior da máscara de onde sai o contorno (degraus somem sob o halo)
+
+    def outline(self) -> QPainterPath | None:
+        """
+        Contorno da arte (onde o PNG não é transparente), em coordenadas 0..1 do retângulo da arte. É a borda
+        real do cartão de um pacote: pontas, cantos retos ou qualquer forma. None sem arte.
+        """
+        if not hasattr(self, "_outline"):
+            self._outline = None
+            pm = self.pixmap(self.art_file)
+            if pm is not None:
+                img = pm.toImage().scaled(self.OUTLINE_RES, self.OUTLINE_RES, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+                mask = QBitmap.fromImage(img.createAlphaMask(Qt.ImageConversionFlag.ThresholdAlphaDither))
+                path = QPainterPath()
+                path.addRegion(QRegion(mask))
+                path = path.simplified()
+                if not path.isEmpty():
+                    self._outline = QTransform.fromScale(1.0 / img.width(), 1.0 / img.height()).map(path)
+        return self._outline
 
     def art_for(self, w: float, h: float) -> QPixmap | None:
         pm = self.pixmap(self.art_file)
@@ -497,6 +519,29 @@ class ArtTimerSkin(WindowsTimerSkin):
         """As pontas da arte podem passar do cartão: a janela ganha essa margem."""
         scale = max(0.8, (side - 2 * self.ART_FREE_PAD) / (self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD))
         return max(0, int(math.ceil(self.look.tip_overshoot * scale + 1.0 - self.ART_FREE_PAD)))
+
+    def anchor_card_radius(self) -> float:
+        return 0.0   # sem arte, o cartão é um quadrado liso (fillRect em paint_art_timer)
+
+    def anchor_card_path(self) -> QPainterPath | None:
+        """A borda é a própria arte (com as pontas que passam do cartão): o brilho de ancorado segue o PNG."""
+        return self.card_path_for(self.get_card_rect())
+
+    def card_path_for(self, card: QRectF) -> QPainterPath | None:
+        """Contorno da arte para um cartão em `card` (usado também antes da janela ter tamanho, para a margem)."""
+        look = self.look
+        outline = look.outline()
+        if outline is None:
+            return None       # sem arte: o retângulo do cartão, com cantos retos
+        scale = max(0.8, min(card.width(), card.height()) / SIDE)   # a mesma conta de paint_art_timer
+        target = QRectF(card.left() + look.art_origin.x() * scale, card.top() + look.art_origin.y() * scale,
+                        look.art_size.width() * scale, look.art_size.height() * scale)
+        key = (id(outline), target.x(), target.y(), target.width(), target.height())
+        cached = getattr(self, "_outline_cache", None)
+        if cached is None or cached[0] != key:
+            t = QTransform.fromTranslate(target.x(), target.y()).scale(target.width(), target.height())
+            cached = self._outline_cache = (key, t.map(outline))
+        return cached[1]
 
     def reload_skin_theme(self):
         """Os temas do Timer valem só para a skin Padrão; esta tem arte própria."""

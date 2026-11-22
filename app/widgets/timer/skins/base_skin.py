@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 from PySide6.QtCore import QPoint, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPainter, QPainterPath, QPen
@@ -204,7 +205,28 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         """Margem extra da janela: a do tema e, com o brilho de ancorado aceso, o que falta da folga para ele."""
         # A folga do brilho é fixa, como no widget de música: mudar o tamanho da janela translúcida ao ancorar
         # mostrava um quadro com o quadrado fora do lugar.
-        return max(self._wanted_art_margin(side), int(round(self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD)))
+        room = self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD + self._shape_overhang(side)
+        return max(self._wanted_art_margin(side), int(round(room)))
+
+    def _shape_overhang(self, side: int) -> int:
+        """Quanto o contorno (`card_path_for`, skins de pacote) passa do cartão num quadrado de `side` px. Calculado
+        só pelo lado: é chamado no __init__, antes de a janela ter tamanho ou margem."""
+        fn = getattr(self, "card_path_for", None)
+        if fn is None:
+            return 0
+        n = side - 2 * self.ART_FREE_PAD
+        card = QRectF(0, 0, n, n)
+        path = fn(card)
+        if path is None or path.isEmpty():
+            return 0
+        box = path.boundingRect()
+        over = max(-box.left(), -box.top(), box.right() - n, box.bottom() - n, 0.0)
+        return int(math.ceil(over))
+
+    def anchor_card_radius(self) -> float:
+        """Raio dos cantos como o cartão é pintado (fixo em px, não acompanha a escala): contrato do brilho/rede."""
+        from app.widgets.timer.skins.skin import CORNER_RADIUS
+        return CORNER_RADIUS
 
     def anchor_glow_room(self, on: bool):
         """O gerenciador de ancoragem pede (ou devolve) a folga para o brilho; o quadrado fica onde está."""
