@@ -262,11 +262,14 @@ class PerformanceState:
             return r.app_name or ""
         return ""
 
-    def chart_ceiling(self, metric: str) -> float:
+    def chart_ceiling(self, metric: str, window: Optional[int] = None) -> float:
+        """Teto do gráfico; `window` limita o pico às últimas N amostras (as que estão na tela)."""
         if metric != "fps":
             return 100.0
-        samples = self.history.get("fps") or self.fps_clear_samples
-        peak = max(samples, default=0.0) if samples else 0.0
+        samples = list(self.history.get("fps") or self.fps_clear_samples)
+        if window is not None:
+            samples = samples[-window:]
+        peak = max(samples, default=0.0)
         for cap in _FPS_CEILINGS:
             if peak <= cap:
                 return cap

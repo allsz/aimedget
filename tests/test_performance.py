@@ -303,3 +303,36 @@ def test_performance_state_and_paint_with_fps_and_lossless_scaling(qapp):
     state.set_fps_enabled(False)
     assert len(state.visible_metrics()) == 4
     assert state.selected == "cpu"
+
+
+def test_dot_matrix_columns_scroll_without_rewriting_the_past():
+    """Matriz de pontos: 1 amostra por coluna; a cada tique tudo desliza uma coluna e o passado não muda."""
+    from app.widgets.performance.card_painter import ND_COLS, _sampled_columns
+
+    state = PerformanceState(animated=False)
+    prev = None
+    for i in range(HISTORY_LEN + 10):
+        # Pico isolado de 1 s no meio de um sinal irregular
+        val = 100.0 if i == 40 else float((i * 37) % 50)
+        state.history["cpu"].append(val)
+        cols = _sampled_columns(state, "cpu", ND_COLS, now=0.0)
+        assert len(cols) == ND_COLS
+        assert cols[-1] == pytest.approx(val / 100.0)
+        if prev is not None:
+            assert cols[:-1] == pytest.approx(prev[1:])
+        prev = cols
+    # O pico só sai pela esquerda depois de ND_COLS tiques
+    state.history["cpu"].clear()
+    for i in range(ND_COLS):
+        state.history["cpu"].append(100.0 if i == 0 else 10.0)
+    assert _sampled_columns(state, "cpu", ND_COLS, now=0.0)[0] == pytest.approx(1.0)
+
+
+def test_fps_ceiling_follows_visible_window():
+    state = PerformanceState(fps_enabled=True, animated=False)
+    state.push_fps(FpsReading(fps=240.0))
+    for _ in range(40):
+        state.push_fps(FpsReading(fps=55.0))
+    assert state.chart_ceiling("fps") >= 240.0
+    assert state.chart_ceiling("fps", window=32) == state.chart_ceiling("fps", window=1)
+    assert state.chart_ceiling("fps", window=32) < 240.0
