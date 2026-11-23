@@ -24,10 +24,10 @@ from app.services.battery import (
     bluetooth,
     hid_win,
     logitech,
+    mouse_1k,
     sony,
     switch_pro,
     system_events,
-    vxe,
     xinput,
 )
 from app.services.battery.models import BatteryDevice, sort_devices
@@ -62,7 +62,7 @@ DEDICATED_SOURCES = {
     sony.SONY_VID: {"sony"},
     switch_pro.NINTENDO_VID: {"switch"},
     logitech.LOGI_VID: {"logitech"},
-    vxe.VXE_VID: {"vxe"},
+    **{f.vid: {f.source} for f in mouse_1k.FAMILIES},
     MICROSOFT_VID: {"xinput"},
 }
 
@@ -104,13 +104,14 @@ def read_all_sources() -> list[BatteryDevice]:
     pool = _executor()
     xin = pool.submit(_timed, "xinput", xinput.read_devices, times)
     hids = _timed("enumerate", lambda: hid_win.enumerate_hid(
-        {sony.SONY_VID, logitech.LOGI_VID, switch_pro.NINTENDO_VID, vxe.VXE_VID, MICROSOFT_VID}), times)
+        {sony.SONY_VID, logitech.LOGI_VID, switch_pro.NINTENDO_VID, MICROSOFT_VID} | mouse_1k.vendor_ids()), times)
     hid_jobs = [pool.submit(_timed, name, (lambda fn=fn: fn(hids)), times)
                 for name, fn in (("sony", sony.read_devices), ("switch", switch_pro.read_devices),
-                                 ("logitech", logitech.read_devices), ("vxe", vxe.read_devices))]
+                                 ("logitech", logitech.read_devices), ("mouse_1k", mouse_1k.read_devices))]
     devices: list[BatteryDevice] = list(xin.result())
     for job in hid_jobs:                    # ordem fixa: a saída não depende de quem terminou antes
         devices += job.result()
+    pool.submit(mouse_1k.log_candidates)    # uma vez por execução, fora do caminho da leitura
     skip = bluetooth_skip(hids, devices)
     devices += _timed("bluetooth", lambda: bluetooth.read_devices(skip), times)
     log.debug("battery: read %.2fs (%s)", time.monotonic() - t0,

@@ -367,14 +367,15 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.sony, "read_devices", slow("sony")), \
                 mock.patch.object(svc.switch_pro, "read_devices", slow("switch")), \
                 mock.patch.object(svc.logitech, "read_devices", slow("logitech")), \
-                mock.patch.object(svc.vxe, "read_devices", slow("vxe")), \
+                mock.patch.object(svc.mouse_1k, "read_devices", slow("mouse_1k")), \
+                mock.patch.object(svc.mouse_1k, "log_candidates", lambda: None), \
                 mock.patch.object(svc.bluetooth, "read_devices", lambda skip: [dev("bluetooth")]), \
                 mock.patch.object(svc, "bluetooth_skip", skip):
             t0 = time.monotonic()
             out = REAL_READ()
             elapsed = time.monotonic() - t0
         self.assertEqual([d.id for d in out],
-                         ["xinput", "sony", "switch", "logitech", "vxe", "bluetooth"])
+                         ["xinput", "sony", "switch", "logitech", "mouse_1k", "bluetooth"])
         self.assertLess(elapsed, 0.6)           # em série seriam 1.0 s
         self.assertEqual(seen, {"n": 5})        # o Bluetooth genérico vê tudo das outras
 
@@ -386,7 +387,8 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.sony, "read_devices", lambda h: [dev("sony")]), \
                 mock.patch.object(svc.switch_pro, "read_devices", boom), \
                 mock.patch.object(svc.logitech, "read_devices", lambda h: []), \
-                mock.patch.object(svc.vxe, "read_devices", lambda h: []), \
+                mock.patch.object(svc.mouse_1k, "read_devices", lambda h: []), \
+                mock.patch.object(svc.mouse_1k, "log_candidates", lambda: None), \
                 mock.patch.object(svc.bluetooth, "read_devices", boom), \
                 self.assertLogs("app.services.battery.service", "ERROR"):
             out = REAL_READ()
