@@ -208,24 +208,20 @@ def paint_performance_card(
 
 
 def _sampled_columns(state: PerformanceState, metric: str, cols: int, now: float) -> list[float]:
-    """Amostra o histórico de `metric` em `cols` colunas normalizadas (0..1)."""
-    samples = state.samples(metric, now=now)
-    ceiling = max(1.0, state.chart_ceiling(metric))
+    """Últimas `cols` amostras de `metric`, uma por coluna (1 s cada), normalizadas (0..1).
+
+    Uma amostra por coluna, alinhada à direita: o passado só desliza para a esquerda e nunca muda,
+    como no Gerenciador de Tarefas. (Reamostrar 60 amostras em 32 colunas fazia colunas antigas
+    trocarem de valor a cada tique.)
+    """
+    samples = state.samples(metric, now=now)[-cols:]
+    ceiling = max(1.0, state.chart_ceiling(metric, window=cols))
     if not samples:
         cur = state.current_pct(metric)
         norm = max(0.0, min(1.0, (cur or 0.0) / ceiling))
         return [0.0] * (cols - 1) + [norm] if norm > 0.0 else [0.0] * cols
-    # Alinha as amostras mais recentes à direita da matriz
-    n = len(samples)
-    out = [0.0] * cols
-    if n <= cols:
-        offset = cols - n
-        for i, v in enumerate(samples):
-            out[offset + i] = max(0.0, min(1.0, float(v) / ceiling))
-    else:
-        for c in range(cols):
-            idx = int(round(c * (n - 1) / max(1, cols - 1)))
-            out[c] = max(0.0, min(1.0, float(samples[idx]) / ceiling))
+    out = [0.0] * (cols - len(samples))
+    out.extend(max(0.0, min(1.0, float(v) / ceiling)) for v in samples)
     return out
 
 
@@ -303,7 +299,7 @@ def _paint_nothing_dot_performance(p: QPainter, state: PerformanceState, pinned:
     else:
         draw_dot_text(p, state.pct_text(metric), val_rect, dot_r=1.25, gap=2.8, color=theme.dot_on, align="right")
 
-    cap_txt = f"{int(round(state.chart_ceiling(metric)))}{' FPS' if metric == 'fps' else '%'}"
+    cap_txt = f"{int(round(state.chart_ceiling(metric, window=ND_COLS)))}{' FPS' if metric == 'fps' else '%'}"
     p.setFont(f_sub)
     p.setPen(_tone(theme.muted_text, 0.80))
     cw_cap = fm_sub.horizontalAdvance(cap_txt)
@@ -336,13 +332,13 @@ def _paint_nothing_dot_performance(p: QPainter, state: PerformanceState, pinned:
                 p.setBrush(theme.dot_off)
             p.drawEllipse(QPointF(cx, cy), dot_r, dot_r)
 
-    # 4. Rodapé: "60s", pontos de paginação clicáveis
+    # 4. Rodapé: janela visível (1 s por coluna), pontos de paginação clicáveis
     f_foot = _font(10.5, QFont.Weight.Normal, tabular=True)
     fm_foot = QFontMetricsF(f_foot)
     p.setFont(f_foot)
     p.setPen(_tone(theme.muted_text, 0.75))
     foot_base = _baseline(229.0, 16.0, fm_foot)
-    p.drawText(QPointF(18.0, foot_base), "60s")
+    p.drawText(QPointF(18.0, foot_base), f"{ND_COLS}s")
 
     visible = state.visible_metrics()
     sel_idx = state.selected_index()
