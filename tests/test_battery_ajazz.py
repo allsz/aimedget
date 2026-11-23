@@ -3,7 +3,7 @@
 import unittest
 from unittest import mock
 
-from app.services.battery import ajazz, hid_win
+from app.services.battery import ajazz, hid_win, mouse_1k
 from app.services.battery.models import KIND_MOUSE
 
 REAL_REQUEST = bytes.fromhex("0804000000000000000000000000000049")
@@ -123,6 +123,26 @@ class AjazzTests(unittest.TestCase):
             out = ajazz.read_devices(dongle() + wired)
         self.assertEqual([(d.name, d.percent, d.charging) for d in out], [("AJAZZ Mouse", 95.0, True)])
         self.assertEqual(out[0].id, "ajazz:" + ajazz.device_key(dongle()[0].path))
+
+    def test_plugging_the_dongle_back_while_charging_leaves_one_card(self):
+        """Mouse no cabo sozinho (cartão próprio) e então o dongle volta: a leitura passa para o cartão do dongle e o
+        cartão do cabo sai na mesma leitura, sem esperar a carência (o cabo continua espetado)."""
+        from app.services.battery.service import DeviceTracker
+        dongle_zero = bytes.fromhex("09040000000200000000000000000000" "46")
+        wired = [info(0xFF01, 5, "7&cabo&0", 4, pid=0xFA7B, inp=17),
+                 info(0xFF02, 7, "7&cabo&0", 6, pid=0xFA7B, feature=17)]
+        tracker = DeviceTracker()
+        with fake({ajazz.device_key(wired[0].path): [WIRED_REPLY]}):
+            first = ajazz.read_devices(wired)
+            shown = tracker.update(first, present=mouse_1k.present_ids(wired))
+        self.assertEqual(len(shown), 1)
+        both = dongle() + wired
+        with fake({ajazz.device_key(dongle()[0].path): [dongle_zero],
+                   ajazz.device_key(wired[0].path): [WIRED_REPLY]}):
+            second = ajazz.read_devices(both)
+            shown = tracker.update(second, count_misses=False, present=mouse_1k.present_ids(both))
+        self.assertEqual([(d.id, d.percent, d.charging) for d in shown],
+                         [("ajazz:" + ajazz.device_key(dongle()[0].path), 95.0, True)])
 
     def test_dongle_zero_alone_hides_the_mouse(self):
         dongle_zero = bytes.fromhex("09040000000200000000000000000000" "46")

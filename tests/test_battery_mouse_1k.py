@@ -79,6 +79,13 @@ class Mouse1KTests(unittest.TestCase):
             self.assertEqual(mouse_1k.read_devices(lookalike), [])
         self.assertEqual(Recorder.opened, [])
 
+    def test_present_ids_cover_silent_devices_with_the_card_id(self):
+        with recording():
+            out = mouse_1k.read_devices([VXE_DONGLE] + ajazz_dongle())
+        present = mouse_1k.present_ids([VXE_DONGLE] + ajazz_dongle())
+        self.assertEqual(present, {d.id for d in out})
+        self.assertEqual(mouse_1k.present_ids([VXE_DONGLE]), {"vxe:" + VXE_DONGLE.path.lower()})
+
     def test_candidates_list_lookalikes_only(self):
         lookalike = hid(0x1234, 0x0001, 0xFF02, "p1", feat=17, product="Some Receiver")
         other = hid(0x1234, 0x0002, 0xFF00, "p2", inp=64)               # outra página, outro tamanho

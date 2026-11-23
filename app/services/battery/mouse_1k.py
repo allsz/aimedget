@@ -193,12 +193,18 @@ def read_family(fam: Family, hids: list[hid_win.HidInfo]) -> list[BatteryDevice]
     # No cabo o dongle fica mudo e o mouse aparece sozinho: cada mouse no cabo com leitura assume o lugar de um
     # dongle sem resposta (mesmo id, o cartão não duplica nem pisca). O que sobrar entra como dispositivo próprio.
     silent = sorted((i for i, f in enumerate(found) if f[2] is None), key=lambda i: found[i][1])
+    absorbed: set[str] = set()
     for entry in sorted(wired, key=lambda w: w[1]):
         if entry[2] is not None and silent:
             i = silent.pop(0)
             found[i] = (found[i][0], found[i][1], entry[2])
+            absorbed.add(f"{fam.source}:{entry[1]}")
         else:
             found.append(entry)
+
+    # O cartão próprio do mouse no cabo (de uma leitura em que o dongle estava fora) não está mais "espetado": a
+    # leitura dele agora vive no cartão do dongle, então o antigo sai na hora em vez de esperar a carência.
+    _absorbed[fam.source] = absorbed
 
     # Mouse dormindo não responde: some da lista (o DeviceTracker segura o último valor um tempo)
     found = [f for f in found if f[2] is not None]
@@ -216,6 +222,16 @@ def read_family(fam: Family, hids: list[hid_win.HidInfo]) -> list[BatteryDevice]
         out.append(BatteryDevice(id=f"{fam.source}:{key}", name=name, kind=KIND_MOUSE, percent=pct,
                                  charging=charging, source=fam.source))
     return out
+
+
+_absorbed: dict[str, set[str]] = {}   # fonte -> ids de mouses no cabo cuja leitura foi para o cartão do dongle
+
+
+def present_ids(hids: list[hid_win.HidInfo]) -> set[str]:
+    """Ids dos cartões cujo aparelho (dongle ou mouse no cabo) ainda está espetado, responda ou não. Chamar depois
+    de `read_devices` com a mesma lista: um mouse no cabo cuja leitura foi para o cartão do dongle não conta."""
+    ids = {f"{fam.source}:{_card_key(fam, req)}" for fam in FAMILIES for req, _rep in _endpoints(fam, hids)}
+    return ids - set().union(*_absorbed.values())
 
 
 def vendor_ids() -> set[int]:
