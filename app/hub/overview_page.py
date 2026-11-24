@@ -19,6 +19,7 @@ from app.widgets.storage import init_storage_spec
 from app.widgets.battery import init_battery_spec
 from app.widgets.weather import init_weather_skin_specs
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import CARD_MARGINS, CHIP_GAP, ROWS_GAP
 
 
 class OverviewPage(BaseHubPage):
@@ -53,8 +54,8 @@ class OverviewPage(BaseHubPage):
         card.setProperty("class", "HubCard")
         self.anchor_card = card
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(16, 14, 16, 14)
-        lay.setSpacing(12)
+        lay.setContentsMargins(*CARD_MARGINS)
+        lay.setSpacing(ROWS_GAP)
 
         self.t_anchor = QLabel(t("anchor_card_title"))
         self.t_anchor.setStyleSheet("font-size: 14px; font-weight: 600;")
@@ -140,7 +141,7 @@ class OverviewPage(BaseHubPage):
 
     def _build_tools(self):
         tools_layout = QHBoxLayout()
-        tools_layout.setSpacing(8)
+        tools_layout.setSpacing(CHIP_GAP)
 
         # Campo de busca em tempo real
         self.search_box = QLineEdit()

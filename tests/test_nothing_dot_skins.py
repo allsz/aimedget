@@ -108,7 +108,9 @@ class TestNothingDotSkins(unittest.TestCase):
             img.fill(0)
             p = QPainter(img)
             card.state.dropdown_progress = 1.0
-            paint_performance_card(p, QRectF(0, 0, 300, 262), card.state, now=card.now())
+            from app.core.nothing_theme import DEFAULT_NOTHING_THEME   # independe do tema salvo na máquina
+            paint_performance_card(p, QRectF(0, 0, 300, 262), card.state, now=card.now(),
+                                   nothing_theme=DEFAULT_NOTHING_THEME)
             p.end()
             self.assertEqual(img.pixelColor(280, 20), NOTHING_BG)
         finally:
@@ -179,6 +181,136 @@ class TestNothingDotSkins(unittest.TestCase):
         self.assertEqual(st.samples("fps", now=20.0 + FPS_CLEAR_DUR + 0.05), [])
         self.assertFalse(st.transitions_busy(20.0 + FPS_CLEAR_DUR + 0.05))
 
+    def test_nothing_dot_timer_skin_and_app_accent_theme(self):
+        from app.core.theme_loader import APP_ID
+        from app.hub.theme import THEME_DARK, with_accent
+        from app.ui_components.dot_matrix import NOTHING_RED
+        from app.widgets.timer import theme as timer_theme
+        from app.widgets.timer.skins import timer_skin_classes
+        from app.widgets.timer.skins.nothing_dot_skin import (
+            NothingDotTimerSkin,
+            _resolve_nothing_colors,
+            paint_nothing_dot_timer,
+        )
+        from app.widgets.timer.skins.skin import TimerState
+        from app.widgets.timer.skins.specs import init_timer_skin_specs
+
+        # Skin registrada nas classes e nas specs do Hub
+        self.assertIn("nothing_dot", timer_skin_classes())
+        self.assertIn("nothing_dot", [s.id for s in init_timer_skin_specs()])
+
+        # Tema embutido "Aimedget" disponível exclusivamente no loader da skin Nothing Dot (não vaza pro Windows Timer)
+        ids = [info.id for info in timer_theme.nothing_loader.list_themes()]
+        self.assertIn(APP_ID, ids)
+        self.assertNotIn(APP_ID, [info.id for info in timer_theme.loader.list_themes()])
+
+        # Padrão usa Nothing Red; tema embutido "Aimedget" acompanha a cor de destaque do app
+        custom_hub = with_accent(THEME_DARK, "#33AAFF")
+        c_default = _resolve_nothing_colors(custom_hub, timer_theme.DEFAULT_THEME)
+        c_app = _resolve_nothing_colors(custom_hub, timer_theme.app_timer_theme())
+        self.assertEqual(c_default["accent"].name().lower(), NOTHING_RED.name().lower())
+        self.assertEqual(c_app["accent"].name().lower(), custom_hub.accent.lower())
+
+        # Pintura direta (normal, durante pulo 360° ponto-a-ponto e durante pulso do alarme)
+        img = QImage(164, 164, QImage.Format.Format_ARGB32)
+        for orbit, alarming in ((-1.0, False), (0.45, False), (-1.0, True)):
+            img.fill(0)
+            p = QPainter(img)
+            paint_nothing_dot_timer(
+                p,
+                QRectF(0, 0, 164, 164),
+                TimerState(current_seconds=300.0, is_running=True, is_alarm_pulsing=alarming),
+                THEME_DARK,
+                art=timer_theme.DEFAULT_THEME,
+                orbit_progress=orbit,
+                alarm_phase=0.5,
+            )
+            p.end()
+
+        # Instância da janela NothingDotTimerSkin cria, pinta e dispara órbita de reset sem erro
+        skin = NothingDotTimerSkin()
+        try:
+            skin.set_time_state(180.0, False, "timer")
+            skin._start_reset_orbit()
+            out = QImage(skin.size(), QImage.Format.Format_ARGB32)
+            skin.render(out)
+        finally:
+            skin.close()
+
+
+    def test_performance_app_theme_follows_app_background_and_accent(self):
+        from app.core.nothing_theme import APP_NOTHING_THEME, DEFAULT_NOTHING_THEME, resolve_nothing_theme
+        from app.core.theme_loader import APP_ID, DEFAULT_ID
+        from app.hub.theme import THEME_DARK, THEME_LIGHT, with_accent
+        from app.widgets.performance import theme as perf_theme
+        from app.widgets.performance.specs import mock_state
+
+        # "Aimedget" aparece na galeria, mas o padrão continua o Nothing escuro com vermelho
+        ids = [info.id for info in perf_theme.loader.list_themes()]
+        self.assertEqual(ids[:2], [DEFAULT_ID, APP_ID])   # Nothing Red (clássico) primeiro, Aimedget depois
+        self.assertFalse(perf_theme.loader.app_is_default)
+        self.assertEqual(perf_theme.loader.fallback_id(), DEFAULT_ID)
+        self.assertIs(perf_theme.loader.theme_for(APP_ID), APP_NOTHING_THEME)
+
+        # O padrão não muda com o app; o "Aimedget" pega fundo de cartão, texto e destaque do app
+        for hub in (with_accent(THEME_DARK, "#33AAFF"), with_accent(THEME_LIGHT, "#22BB66")):
+            self.assertIs(resolve_nothing_theme(DEFAULT_NOTHING_THEME, hub), DEFAULT_NOTHING_THEME)
+            nt = resolve_nothing_theme(APP_NOTHING_THEME, hub)
+            self.assertEqual(nt.card_bg.name().lower(), hub.bg.lower())   # off-white do app no modo claro
+            self.assertEqual(nt.accent.name().lower(), hub.accent.lower())
+            self.assertEqual(nt.dot_on.name().lower(), hub.text.lower())
+
+            # A miniatura pinta com o fundo do app passado pelo Hub
+            img = QImage(300, 262, QImage.Format.Format_ARGB32)
+            img.fill(0)
+            p = QPainter(img)
+            paint_performance_card(p, QRectF(0, 0, 300, 262), mock_state(skin_id=SKIN_NOTHING_DOT),
+                                   nothing_theme=APP_NOTHING_THEME, hub_theme=hub)
+            p.end()
+            self.assertEqual(img.pixelColor(150, 200).name().lower(), hub.bg.lower())
+
+        # O widget vivo guarda a aparência do app e relê depois de invalidar
+        perf_theme.invalidate_live_hub_theme()
+        first = perf_theme.live_hub_theme()
+        self.assertIs(perf_theme.live_hub_theme(), first)
+        perf_theme.invalidate_live_hub_theme()
+        self.assertIsNotNone(perf_theme.live_hub_theme())
+
+    def test_nothing_dot_timer_app_theme_uses_app_background(self):
+        from app.core.theme_loader import DEFAULT_ID
+        from app.hub.theme import THEME_DARK, THEME_LIGHT, with_accent
+        from app.widgets.timer import theme as timer_theme
+        from app.widgets.timer.skins.nothing_dot_skin import (
+            _card_layout,
+            _resolve_nothing_colors,
+            paint_nothing_dot_timer,
+        )
+        from app.widgets.timer.skins.skin import SHADOW_PAD, TimerState
+
+        self.assertEqual(timer_theme.nothing_loader.fallback_id(), DEFAULT_ID)   # Nothing Red segue padrão
+
+        for hub in (with_accent(THEME_DARK, "#33AAFF"), with_accent(THEME_LIGHT, "#22BB66")):
+            c_app = _resolve_nothing_colors(hub, timer_theme.app_timer_theme())
+            c_def = _resolve_nothing_colors(hub, timer_theme.DEFAULT_THEME)
+            self.assertEqual(c_app["card_bg"].name().lower(), hub.bg.lower())
+            self.assertEqual(c_app["screen_top"].name().lower(), hub.panel.lower())   # tela branca no claro
+            self.assertEqual(c_app["digit_on"].name().lower(), hub.text.lower())
+            self.assertEqual(c_app["home_dot"].name().lower(), hub.text.lower())   # visível também no chassi claro
+            self.assertEqual(c_def["card_bg"].name().lower(), "#141414")
+
+            img = QImage(164, 164, QImage.Format.Format_ARGB32)
+            img.fill(0)
+            p = QPainter(img)
+            paint_nothing_dot_timer(p, QRectF(0, 0, 164, 164), TimerState(current_seconds=300.0), hub,
+                                    art=timer_theme.app_timer_theme())
+            p.end()
+            # Chassi: o vão entre a tela e os botões, no meio da largura
+            card = QRectF(SHADOW_PAD, SHADOW_PAD, 164 - 2 * SHADOW_PAD, 164 - 2 * SHADOW_PAD)
+            screen, play, _grille = _card_layout(card)
+            y = int((screen.bottom() + play.top()) / 2)
+            self.assertEqual(img.pixelColor(82, y).name().lower(), hub.bg.lower())
+            self.assertEqual(img.pixelColor(int(screen.left() + 6), int(screen.bottom() - 6)).name().lower(),
+                             hub.panel.lower())
 
 if __name__ == "__main__":
     unittest.main()

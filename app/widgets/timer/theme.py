@@ -30,6 +30,7 @@ Exemplo (todas as chaves são opcionais):
 """
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 from PySide6.QtGui import QColor
 
@@ -65,6 +66,7 @@ class TimerTheme:
     background: Background | None = None
     stickers: tuple[Sticker, ...] = ()
     select_border: QColor | None = None
+    is_app_accent: bool = False                   # tema embutido "Aimedget" da Nothing Dot: fundo e destaque do app
 
     def apply_to(self, hub: HubTheme) -> HubTheme:
         """As cores do app com as do tema por cima."""
@@ -74,6 +76,17 @@ class TimerTheme:
 
 
 DEFAULT_THEME = TimerTheme()
+
+
+@lru_cache(maxsize=16)
+def _app_timer_theme_for_hub(hub: HubTheme) -> TimerTheme:
+    """Tema embutido 'Aimedget' da skin Nothing Dot: acompanha o fundo do cartão e a cor de destaque do app."""
+    return TimerTheme(is_app_accent=True)
+
+
+def app_timer_theme() -> TimerTheme:
+    from app.core.app_theme import current_hub_theme
+    return _app_timer_theme_for_hub(current_hub_theme())
 
 
 def theme_from_dict(data: dict, base_dir: str | None = None) -> TimerTheme:
@@ -89,6 +102,8 @@ def theme_from_dict(data: dict, base_dir: str | None = None) -> TimerTheme:
 
 
 _loader = ThemeLoader("timer", DEFAULT_THEME, theme_from_dict, LABEL)
+nothing_loader = ThemeLoader("timer_nothing", DEFAULT_THEME, theme_from_dict, "timer_nothing",
+                             app_theme=app_timer_theme, app_is_default=False)   # Nothing Red continua o padrão
 
 theme_path = _loader.path
 load_user_theme = _loader.load

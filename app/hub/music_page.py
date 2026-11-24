@@ -20,6 +20,7 @@ from app.widgets.music.skins import init_music_skin_specs
 from app.widgets.music.skins.stack_theme import loader as music_theme_loader
 from app.widgets.music.skins.stack_theme_specs import make_theme_spec as make_music_theme_spec
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import BADGE_GAP, CARD_MARGINS, ROWS_GAP
 
 
 _SCALE_UNSET = object()
@@ -45,7 +46,7 @@ class MusicPage(BaseHubPage):
         idx = self.content_layout.indexOf(self.lbl_title)
         self.content_layout.removeWidget(self.lbl_title)
         title_row = QHBoxLayout()
-        title_row.setSpacing(8)
+        title_row.setSpacing(BADGE_GAP)
         title_row.addWidget(self.lbl_title)
         self.web_help = HelpBadge(t("music_web_compat_help"), theme=self._theme)
         title_row.addWidget(self.web_help, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -56,7 +57,7 @@ class MusicPage(BaseHubPage):
         pos_card = QFrame()
         pos_card.setProperty("class", "HubCard")
         pos_layout = QHBoxLayout(pos_card)
-        pos_layout.setContentsMargins(18, 14, 18, 14)
+        pos_layout.setContentsMargins(*CARD_MARGINS)
 
         pos_info = QVBoxLayout()
         pos_info.setSpacing(3)
@@ -153,8 +154,8 @@ class MusicPage(BaseHubPage):
         behav_card = QFrame()
         behav_card.setProperty("class", "HubCard")
         b_layout = QVBoxLayout(behav_card)
-        b_layout.setContentsMargins(18, 14, 18, 14)
-        b_layout.setSpacing(12)
+        b_layout.setContentsMargins(*CARD_MARGINS)
+        b_layout.setSpacing(ROWS_GAP)
 
         row1 = QHBoxLayout()
         info1 = QVBoxLayout()
@@ -251,7 +252,7 @@ class MusicPage(BaseHubPage):
         hk_card = QFrame()
         hk_card.setProperty("class", "HubCard")
         hk_layout = QHBoxLayout(hk_card)
-        hk_layout.setContentsMargins(18, 14, 18, 14)
+        hk_layout.setContentsMargins(*CARD_MARGINS)
 
         hk_info = QVBoxLayout()
         hk_info.setSpacing(3)

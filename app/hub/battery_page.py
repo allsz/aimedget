@@ -10,20 +10,22 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.core.config_manager import config_manager
+from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.core.i18n import t
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
+from app.hub.components.scale_card import ScaleCard
 from app.hub.components.shortcut_picker import ShortcutPicker
 from app.hub.components.tab_pill import Blend, ChipGroup
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.hub.ui_tokens import ROWS_GAP
 from app.widgets.battery import layout as lay
 from app.widgets.battery.card_state import (
     FACE_BOTH,
@@ -70,58 +72,11 @@ class BatteryPage(BaseHubPage):
         super().__init__(title=t("battery_title"), subtitle=t("battery_subtitle"), theme=theme, parent=parent)
         self.bridge = get_service_bridge()
         self.controller = self.bridge.battery_controller
-        self._texts: list[tuple[QLabel, str]] = []
-        self._subs: list[QLabel] = []
         self._groups: dict[str, ChipGroup] = {}
         self._bento_cells: list[QFrame] = []
         self._bento_titles: list[tuple[QLabel, str]] = []
         self._build_ui()
         self.controller.options_changed.connect(lambda _o: self._sync_options())
-
-    def _card(self, vertical: bool = False):
-        card = QFrame()
-        card.setProperty("class", "HubCard")
-        layout = QVBoxLayout(card) if vertical else QHBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        return card, layout
-
-    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5) -> QVBoxLayout:
-        box = QVBoxLayout()
-        box.setSpacing(2)
-        title = QLabel(t(title_key))
-        title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
-        sub = QLabel(t(sub_key))
-        sub.setWordWrap(True)
-        sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        if not bool(t(sub_key)):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
-            sub.hide()
-        box.addWidget(title)
-        box.addWidget(sub)
-        self._texts += [(title, title_key), (sub, sub_key)]
-        self._subs.append(sub)
-        return box
-
-    def _divider(self) -> QFrame:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setProperty("class", "HubDivider")
-        return sep
-
-    def _chip(self, text: str, on_click) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setProperty("class", "Chip")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(on_click)
-        return btn
-
-    def _switch_row(self, col: QVBoxLayout, title_key: str, sub_key: str, checked: bool, on_toggle) -> PillSwitch:
-        row = QHBoxLayout()
-        row.addLayout(self._info(title_key, sub_key), stretch=1)
-        sw = PillSwitch(checked=checked, theme=self._theme)
-        sw.toggled.connect(on_toggle)
-        row.addWidget(sw)
-        col.addLayout(row)
-        return sw
 
     def _bento_cell(self, title_key: str) -> tuple[QFrame, QVBoxLayout]:
         cell = QFrame()
@@ -295,18 +250,30 @@ class BatteryPage(BaseHubPage):
         # 2. Aparência (Bento 2×2)
         self.content_layout.addWidget(self._build_appearance_bento())
 
-        # 3. Tamanho (livre: o canto do cartão decide)
+        # 3. Tamanho (escala do cartão inteiro, como nos outros widgets)
+        self.scale_card = ScaleCard(
+            "weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self
+        )
+        self.scale_card.auto_clicked.connect(lambda: self.controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: self.controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: self.controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        self.controller.skin.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
+        self.controller.scale_changed.connect(lambda _s: self._sync_size())
+        self._sync_size()
+
+        # 3b. Formato (livre: o canto do cartão decide largura e altura)
         card, row = self._card()
         size_info = self._info("battery_size_title", "battery_size_sub", 14)
         row.addLayout(size_info, stretch=1)
         row.setAlignment(size_info, Qt.AlignmentFlag.AlignVCenter)
-        self.btn_reset = self._chip(t("battery_reset_size"), self.controller.reset_size)
+        self.btn_reset = self._chip(t("battery_shape_reset"), self.controller.reset_size)
         row.addWidget(self.btn_reset, alignment=Qt.AlignmentFlag.AlignVCenter)
         self.content_layout.addWidget(card)
 
         # 4. Comportamento
         card, col = self._card(vertical=True)
-        col.setSpacing(12)
+        col.setSpacing(ROWS_GAP)
         self.sw_remember = self._switch_row(
             col, "weather_opt_remember_title", "weather_opt_remember_sub",
             bool(config_manager.get_battery("remember_position", False)), self.controller.set_remember_position)
@@ -382,9 +349,15 @@ class BatteryPage(BaseHubPage):
         self._sync_switch(self.sw_show_count, self.controller.options.count, animated=vis)
         self._count_dim.set(1.0 if show_t else 0.42, animated=vis)
 
+    def _sync_size(self):
+        """Chip Automático e polegar seguem o widget (inclusive enquanto ele anima até o tamanho novo)."""
+        pct = max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, int(round(self.controller.skin.scale() * 100))))
+        self.scale_card.set_state(self.controller.is_scale_auto(), pct)
+
     def showEvent(self, event):
         super().showEvent(event)
         self._sync_options()
+        self._sync_size()
         self._sync_switch(self.sw_desktop, self.controller.skin.is_desktop_mode())
         self._sync_switch(self.sw_remember, bool(config_manager.get_battery("remember_position", False)))
 
@@ -397,6 +370,7 @@ class BatteryPage(BaseHubPage):
             sub.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
         for w in (
             self.pos_picker,
+            self.scale_card,
             self.hk_picker,
             self.sw_show_title,
             self.sw_show_names,
@@ -425,5 +399,6 @@ class BatteryPage(BaseHubPage):
         self._lbl_show_title.setText(t("battery_show_title_lbl"))
         self._lbl_show_names.setText(t("battery_show_names_lbl"))
         self._lbl_show_count.setText(t("battery_show_count_lbl"))
-        self.btn_reset.setText(t("battery_reset_size"))
+        self.btn_reset.setText(t("battery_shape_reset"))
+        self.scale_card.retranslate()
         self.btn_show.setText(t("weather_opt_show_btn"))

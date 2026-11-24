@@ -2,7 +2,8 @@
 BatteryWidgetController - liga o BatteryService (leitura em background) ao BatteryCard.
 
 - A leitura só roda com o cartão na tela (custo zero fechado); ao abrir, mostra a última lista na hora.
-- Opções (face, rótulo, o que mostrar, última linha ímpar) e o tamanho livre ficam em `battery_widget` na config.
+- Opções (face, rótulo, o que mostrar, última linha ímpar), o formato livre (largura x altura, pelo canto) e a escala
+  (controle de Tamanho do Hub) ficam em `battery_widget` na config.
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from app.core.i18n import i18n
 from app.core.widget_animator import AnimatedVisibilityMixin
 from app.services.battery.service import BatteryService
 from app.services.battery.system_events import SystemEventFilter
-from app.ui_components.floating_card import SCREEN_MARGIN, is_rect_on_screen, place_card_default, restore_card_position
+from app.ui_components.floating_card import (
+    MAX_SCALE, MIN_SCALE, SCREEN_MARGIN, is_rect_on_screen, place_card_default, restore_card_position,
+)
 from app.widgets.battery import layout as lay
 from app.widgets.battery.battery_card import BatteryCard
 from app.widgets.battery.card_state import FACES, LABELS, ODDS, SHOWS, Options
@@ -42,6 +45,7 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
     remember_position_changed = Signal(bool)
     options_changed = Signal(object)          # Options
     size_changed = Signal(float, float)
+    scale_changed = Signal(float)
 
     def __init__(self, service: Optional[BatteryService] = None):
         super().__init__()
@@ -53,7 +57,12 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
             desktop_mode=bool(config_manager.get_battery("desktop_mode", False)),
             size=_saved_size(),
             options=self.options,
+            scale=float(config_manager.get_battery("scale", 1.0) or 1.0),
         )
+        self.skin.scale_auto = bool(config_manager.get_battery("scale_auto", False))
+        if self.skin.scale_auto:
+            self.skin.set_scale(self.skin.auto_scale_target())
+        self.skin.scale_changed.connect(self.set_scale)
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)
         self.skin.remember_position_changed.connect(self.set_remember_position)
         self.skin.close_requested.connect(self.on_skin_closed)
@@ -111,6 +120,24 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
     def _on_size_committed(self, w: float, h: float):
         config_manager.set_battery("size", [round(float(w), 1), round(float(h), 1)])
         self.size_changed.emit(float(w), float(h))
+
+    # --- Escala (controle de Tamanho do Hub; o formato continua no canto do cartão) ---
+
+    def set_scale(self, scale: float | None):
+        auto = scale is None
+        config_manager.set_battery("scale_auto", auto)
+        self.skin.scale_auto = auto
+        target = self.skin.auto_scale_target() if auto else max(MIN_SCALE, min(MAX_SCALE, float(scale)))
+        self.skin.animate_scale_to(target)
+        config_manager.set_battery("scale", round(target, 3))
+        self.scale_changed.emit(target)
+
+    def apply_scale_live(self, scale: float):
+        self.skin.stop_scale_animation()
+        self.skin.set_scale(scale)
+
+    def is_scale_auto(self) -> bool:
+        return bool(self.skin.scale_auto)
 
     def set_desktop_mode(self, enabled: bool):
         config_manager.set_battery("desktop_mode", bool(enabled))

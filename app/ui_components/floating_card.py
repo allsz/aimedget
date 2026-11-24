@@ -28,7 +28,12 @@ from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
 from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
 from app.core.frame_clock import FrameTimer
-from app.core.theme_crossfade import DURATION_MS as THEME_FADE_MS, SHRINK as THEME_FADE_SHRINK, ease_out_cubic
+from app.core.theme_crossfade import (
+    DURATION_MS as THEME_FADE_MS,
+    SHRINK as THEME_FADE_SHRINK,
+    ease_in_out_cubic as mode_ease,
+    ease_out_cubic,
+)
 
 CARD_W = 300.0
 CARD_H = 262.0
@@ -202,6 +207,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._skin_swap_prev: Optional[QPixmap] = None
         self._skin_swap_t0: float = -1e9
         self._skin_swap_dur: float = 0.160
+        self._skin_swap_mode: bool = False   # troca claro/escuro: curva in-out, sem encolher (ver mode_crossfade)
         self._drag_offset: Optional[QPoint] = None
         self._dragged = False
         self._resize_start: Optional[tuple] = None
@@ -316,8 +322,9 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         now = self.now()
         return self._busy(now) or self._card_needs_frames(now)
 
-    def begin_skin_crossfade(self, duration_ms: int = THEME_FADE_MS):
-        """Captura a aparência atual do cartão para fazer crossfade suave ao trocar de skin ou tema."""
+    def begin_skin_crossfade(self, duration_ms: int = THEME_FADE_MS, mode_switch: bool = False):
+        """Captura a aparência atual do cartão para fazer crossfade suave ao trocar de skin ou tema.
+        `mode_switch`: troca claro/escuro do app, a dissolvência longa e suave do Hub (sem encolher)."""
         if not self.isVisible() or not animations_enabled():
             self._skin_swap_prev = None
             return
@@ -332,6 +339,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._skin_swap_prev = pm
         self._skin_swap_t0 = self.now()
         self._skin_swap_dur = max(0.04, duration_ms / 1000.0)
+        self._skin_swap_mode = bool(mode_switch)
         self.kick()
 
     def _skin_swap_progress(self, now: float) -> Optional[float]:
@@ -560,7 +568,13 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         p.setOpacity(1.0)
         rect = self.card_rect()
         swap_p = self._skin_swap_progress(now)
-        if swap_p is not None and self._skin_swap_prev is not None:
+        if swap_p is not None and self._skin_swap_prev is not None and self._skin_swap_mode:
+            # Claro/escuro: o cartão novo por baixo, inteiro, e a foto antiga sumindo por cima (como o Hub)
+            self.paint_card_content(p, rect, now)
+            p.setOpacity(1.0 - mode_ease(swap_p))
+            p.drawPixmap(rect.topLeft(), self._skin_swap_prev)
+            p.setOpacity(1.0)
+        elif swap_p is not None and self._skin_swap_prev is not None:
             e = ease_out_cubic(swap_p)   # a mesma curva e duração de toda troca de tema (app/core/theme_crossfade.py)
             cx, cy = rect.center().x(), rect.center().y()
             # Skin antiga saindo com fade e leve redução

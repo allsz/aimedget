@@ -8,9 +8,11 @@ A miniatura inclui a margem transparente que o tema pede (figurinhas que passam 
 
 from PySide6.QtCore import QRectF, QSizeF
 
+from app.core.config_manager import config_manager
 from app.core.preview_registry import SkinSpec
 from app.core.widget_theme import art_margin_px
 from app.hub.theme import THEME_DARK
+from app.widgets.timer.skins.nothing_dot_skin import paint_nothing_dot_timer
 from app.widgets.timer.skins.skin import DEFAULT_SIZE, SHADOW_PAD, TimerState, paint_windows_timer
 from app.widgets.timer.theme import TimerTheme
 
@@ -34,8 +36,20 @@ def _paint(p, rect: QRectF, theme: TimerTheme, hub_theme=None):
                         art=theme)
 
 
+def _paint_nothing(p, rect: QRectF, theme: TimerTheme, hub_theme=None):
+    hub = hub_theme or THEME_DARK
+    paint_nothing_dot_timer(p, rect, TimerState(current_seconds=300.0), theme.apply_to(hub), art=theme)
+
+
 def make_theme_spec(theme_id: str, title: str, theme: TimerTheme) -> SkinSpec:
     return SkinSpec(
         id=theme_id, widget_id=WIDGET_ID, title=title, subtitle="",
         natural_size=_natural, paint=_paint, mock_state=lambda: theme,
+    )
+
+
+def make_nothing_theme_spec(theme_id: str, title: str, theme: TimerTheme) -> SkinSpec:
+    return SkinSpec(
+        id=theme_id, widget_id="timer_nothing_theme", title=title, subtitle="",
+        natural_size=QSizeF(DEFAULT_SIZE, DEFAULT_SIZE), paint=_paint_nothing, mock_state=lambda: theme,
     )

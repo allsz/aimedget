@@ -14,6 +14,7 @@ from app.core.preview_registry import SkinSpec, get_skins_for_widget, register_s
 from app.hub.theme import HubTheme, THEME_DARK
 from app.core.skin_packs import discover
 from app.widgets.timer.skins.art_skin import paint_art_timer
+from app.widgets.timer.skins.nothing_dot_skin import paint_nothing_dot_timer
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
 
 
@@ -72,6 +73,16 @@ def init_timer_skin_specs() -> list[SkinSpec]:
             natural_size=QSizeF(164, 164),
             paint=_make_paint(paint_windows_timer),
             mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
+        ),
+        SkinSpec(
+            id="nothing_dot",
+            widget_id="timer",
+            title="Nothing Dot",
+            subtitle=t("skin_nothing_dot_timer_sub"),
+            natural_size=QSizeF(164, 164),
+            paint=_make_paint(paint_nothing_dot_timer),
+            mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
+            supports_themes=True,
         ),
         *[_pack_spec(pack) for pack in discover("timer")],   # skins com arte própria: só as que estão em disco
         SkinSpec(

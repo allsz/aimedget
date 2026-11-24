@@ -1,23 +1,82 @@
 """Hub: página Timer. Extraído de `pages.py` (mesmo código, só em arquivo próprio)."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from app.core.config_manager import config_manager
+from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.core.i18n import i18n, t
 from app.core.skin_packs import discover as discover_skin_packs
+from app.core.theme_loader import APP_ID, APP_NAME, DEFAULT_ID
 from app.hub.components.collapsible_section import skin_and_theme_block, skin_supports_themes
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
+from app.hub.components.scale_card import ScaleCard
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
 from app.hub.components.theme_gallery import ThemeGalleryCard
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.core.preview_card import PreviewCard
-from app.widgets.timer.theme import loader as timer_theme_loader
-from app.widgets.timer.theme_specs import make_theme_spec as make_timer_theme_spec
+from app.widgets.timer.theme import (
+    DEFAULT_THEME as TIMER_DEFAULT_THEME,
+    app_timer_theme,
+    loader as timer_theme_loader,
+    nothing_loader as nothing_timer_theme_loader,
+)
+from app.widgets.timer.theme_specs import (
+    make_nothing_theme_spec,
+    make_theme_spec as make_timer_theme_spec,
+)
 from app.widgets.timer import init_timer_skin_specs
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import CARD_MARGINS, ROWS_GAP
+
+
+class _NothingTimerThemeCard(QFrame):
+    """Galeria enxuta de cor de destaque da skin Nothing Dot: apenas Nothing Red e Aimedget (cor do app)."""
+
+    def __init__(self, on_applied, theme: HubTheme, parent=None):
+        super().__init__(parent)
+        self.setProperty("class", "HubCard")
+        self._on_applied = on_applied
+        self._theme = theme
+        self._cards: dict[str, PreviewCard] = {}
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(22, 20, 22, 22)
+        outer.setSpacing(16)
+
+        self._title = QLabel(t("theme_picker_title"))
+        self._title.setStyleSheet("font-size: 14.5px; font-weight: 600;")
+        outer.addWidget(self._title)
+
+        self._grid = ResponsiveCardGrid(min_card_width=150, spacing=16, parent=self)
+        outer.addWidget(self._grid)
+
+        active = nothing_timer_theme_loader.active_id()
+        for tid, title, th in (
+            (DEFAULT_ID, "Nothing Red", TIMER_DEFAULT_THEME),
+            (APP_ID, APP_NAME, app_timer_theme()),
+        ):
+            spec = make_nothing_theme_spec(tid, title, th)
+            card = PreviewCard(spec=spec, theme=self._theme, is_selected=(tid == active), parent=self._grid)
+            card.clicked.connect(self._on_pick)
+            self._cards[tid] = card
+            self._grid.add_card(card)
+
+    def _on_pick(self, tid: str):
+        nothing_timer_theme_loader.set_active(tid)
+        for k, card in self._cards.items():
+            card.set_selected(k == tid)
+        self._on_applied()
+
+    def set_theme(self, theme: HubTheme):
+        self._theme = theme
+        for card in self._cards.values():
+            card.set_theme(theme)
+
+    def retranslate_ui(self):
+        self._title.setText(t("theme_picker_title"))
 
 
 class TimerPage(BaseHubPage):
@@ -38,7 +97,7 @@ class TimerPage(BaseHubPage):
         pos_card = QFrame()
         pos_card.setProperty("class", "HubCard")
         pos_layout = QHBoxLayout(pos_card)
-        pos_layout.setContentsMargins(18, 14, 18, 14)
+        pos_layout.setContentsMargins(*CARD_MARGINS)
 
         pos_info = QVBoxLayout()
         pos_info.setSpacing(3)
@@ -56,6 +115,20 @@ class TimerPage(BaseHubPage):
         self.pos_picker.position_changed.connect(self._on_pos_changed)
         pos_layout.addWidget(self.pos_picker)
         self.content_layout.addWidget(pos_card)
+
+        # 1b. Tamanho (% do lado padrão; a alça do canto do widget continua valendo)
+        controller = self.bridge.timer_controller
+        self.scale_card = ScaleCard(
+            "weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self
+        )
+        self.scale_card.auto_clicked.connect(lambda: controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        controller.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
+        controller.scale_changed.connect(lambda _s: self._sync_size())
+        controller.skin_changed.connect(lambda _n: self._sync_size())
+        self._sync_size()
 
         # 2. Card de Skins & Estilos
         skin_card = QFrame()
@@ -99,7 +172,7 @@ class TimerPage(BaseHubPage):
 
         sk_layout.addWidget(self._skin_grid)
 
-        # 3. Card de Tema visual da skin Aimedget (aplica ao vivo no Timer)
+        # 3. Card de Tema visual (skin Windows tem a galeria completa; Nothing Dot tem só Nothing Red + Aimedget)
         self.theme_picker = ThemeGalleryCard(
             timer_theme_loader,
             "timer",
@@ -111,9 +184,22 @@ class TimerPage(BaseHubPage):
             subtitle_key="theme_picker_sub_timer",
             default_title_key="theme_default_timer",
         )
+        self.nothing_theme_picker = _NothingTimerThemeCard(
+            self.bridge.apply_timer_theme,
+            self._theme,
+            parent=self,
+        )
+        theme_host = QWidget(self)
+        th_lay = QVBoxLayout(theme_host)
+        th_lay.setContentsMargins(0, 0, 0, 0)
+        th_lay.setSpacing(0)
+        th_lay.addWidget(self.theme_picker)
+        th_lay.addWidget(self.nothing_theme_picker)
+        self._sync_theme_picker_kind(active_skin)
+
         # Skins + temas num bloco só: a galeria recolhe (animada) quando a skin escolhida não aceita temas
         skin_block, self.theme_section = skin_and_theme_block(
-            skin_card, self.theme_picker, self.content_layout.spacing(), self._active_skin_supports_themes())
+            skin_card, theme_host, self.content_layout.spacing(), self._active_skin_supports_themes())
         self.content_layout.addWidget(skin_block)
         self.bridge.timer_skin_changed.connect(self._on_active_timer_skin_changed)
 
@@ -121,8 +207,8 @@ class TimerPage(BaseHubPage):
         behav_card = QFrame()
         behav_card.setProperty("class", "HubCard")
         b_layout = QVBoxLayout(behav_card)
-        b_layout.setContentsMargins(18, 14, 18, 14)
-        b_layout.setSpacing(12)
+        b_layout.setContentsMargins(*CARD_MARGINS)
+        b_layout.setSpacing(ROWS_GAP)
 
         # Linha 1: Lembrar posição
         row1 = QHBoxLayout()
@@ -281,7 +367,7 @@ class TimerPage(BaseHubPage):
         hk_card = QFrame()
         hk_card.setProperty("class", "HubCard")
         hk_layout = QHBoxLayout(hk_card)
-        hk_layout.setContentsMargins(18, 14, 18, 14)
+        hk_layout.setContentsMargins(*CARD_MARGINS)
 
         hk_info = QVBoxLayout()
         hk_info.setSpacing(3)
@@ -341,8 +427,14 @@ class TimerPage(BaseHubPage):
         """A skin ativa aceita temas visuais? (Skins com arte própria, vindas de pacotes, não aceitam.)"""
         return skin_supports_themes(init_timer_skin_specs(), skin_key or self.bridge.timer_controller.active_skin_name)
 
+    def _sync_theme_picker_kind(self, skin_key: str):
+        is_nothing = (skin_key == "nothing_dot")
+        self.theme_picker.setVisible(not is_nothing)
+        self.nothing_theme_picker.setVisible(is_nothing)
+
     def _on_active_timer_skin_changed(self, skin_key: str):
-        """Mostra a galeria de temas só enquanto a skin ativa os aceita (o tema escolhido continua guardado)."""
+        """Mostra a galeria de temas certa para a skin ativa (Windows ou Nothing Dot)."""
+        self._sync_theme_picker_kind(skin_key)
         self.theme_section.set_open(self._active_skin_supports_themes(skin_key))
 
     def _on_skin_selected(self, skin_key: str):
@@ -364,8 +456,15 @@ class TimerPage(BaseHubPage):
             self.sw_smart_hover.set_checked(enabled, animated=False)
             self.sw_smart_hover.blockSignals(False)
 
+    def _sync_size(self):
+        """Chip Automático e polegar seguem o widget (inclusive enquanto ele anima até o tamanho novo)."""
+        controller = self.bridge.timer_controller
+        pct = max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, int(round(controller.scale() * 100))))
+        self.scale_card.set_state(controller.is_scale_auto(), pct)
+
     def showEvent(self, event):
         super().showEvent(event)
+        self._sync_size()
         self._sync_remember(config_manager.is_timer_position_remembered())
         self._sync_smart_hover(config_manager.is_timer_smart_hover_enabled())
         if hasattr(self, "_skin_cards"):
@@ -375,6 +474,7 @@ class TimerPage(BaseHubPage):
 
     def retranslate_ui(self):
         self.set_header(t("timer_title"), t("timer_subtitle"))
+        self.scale_card.retranslate()
         if hasattr(self, "t_pos"):
             self.t_pos.setText(t("timer_pos_title"))
         if hasattr(self, "s_pos"):
@@ -423,8 +523,13 @@ class TimerPage(BaseHubPage):
             self.hk_picker.retranslate_ui()
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
+        if hasattr(self, "nothing_theme_picker"):
+            self.nothing_theme_picker.retranslate_ui()
         # O título e o subtítulo da skin ficam na spec (criada na inicialização): refaz no idioma novo
-        timer_skin_texts = {"windows": (t("theme_default_timer"), t("skin_windows_sub"))}
+        timer_skin_texts = {
+            "windows": (t("theme_default_timer"), t("skin_windows_sub")),
+            "nothing_dot": ("Nothing Dot", t("skin_nothing_dot_timer_sub")),
+        }
         for pack in discover_skin_packs("timer"):
             timer_skin_texts[pack.id] = pack.texts(i18n.current_language)
         if hasattr(self, "_skin_cards"):
@@ -437,6 +542,7 @@ class TimerPage(BaseHubPage):
     def set_theme(self, theme: HubTheme):
         super().set_theme(theme)
         self.pos_picker.set_theme(theme)
+        self.scale_card.set_theme(theme)
         self.sw_remember.set_theme(theme)
         self.sw_desktop.set_theme(theme)
         self.sw_smart_hover.set_theme(theme)
@@ -446,6 +552,8 @@ class TimerPage(BaseHubPage):
             self.hk_picker.set_theme(theme)
         if hasattr(self, "theme_picker"):
             self.theme_picker.set_theme(theme)
+        if hasattr(self, "nothing_theme_picker"):
+            self.nothing_theme_picker.set_theme(theme)
         if hasattr(self, "_skin_cards"):
             for card in self._skin_cards.values():
                 card.set_theme(theme)

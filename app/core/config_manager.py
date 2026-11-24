@@ -351,6 +351,13 @@ class ConfigManager:
         timer_cfg["size"] = [int(w), int(h)]
         self._save()
 
+    def is_timer_size_auto(self) -> bool:
+        return bool(self._data.get("timer_widget", {}).get("size_auto", False))
+
+    def set_timer_size_auto(self, auto: bool):
+        self._data.setdefault("timer_widget", {})["size_auto"] = bool(auto)
+        self._save()
+
     def get_timer_mode(self, default: str = "timer") -> str:
         timer_cfg = self._data.get("timer_widget", {})
         return str(timer_cfg.get("mode", default))

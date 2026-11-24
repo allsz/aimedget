@@ -25,6 +25,7 @@ from app.hub.theme import (
     parse_color,
 )
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import CARD_MARGINS, ROWS_GAP
 
 
 ACCENT_BOX_W = 272   # largura do bloco da cor de destaque (barra + campo + restaurar)
@@ -60,8 +61,8 @@ class GeneralPage(BaseHubPage):
         card = QFrame()
         card.setProperty("class", "HubCard")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(18, 14, 18, 14)
-        c_layout.setSpacing(12)
+        c_layout.setContentsMargins(*CARD_MARGINS)
+        c_layout.setSpacing(ROWS_GAP)
 
         # Iniciar com o Windows
         row1 = QHBoxLayout()
@@ -248,7 +249,7 @@ class GeneralPage(BaseHubPage):
         card_update = QFrame()
         card_update.setProperty("class", "HubCard")
         up_layout = QVBoxLayout(card_update)
-        up_layout.setContentsMargins(18, 14, 18, 14)
+        up_layout.setContentsMargins(*CARD_MARGINS)
         up_layout.setSpacing(10)
 
         row_up = QHBoxLayout()

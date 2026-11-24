@@ -12,12 +12,12 @@ from app.widgets.performance.theme import PerformanceTheme
 WIDGET_ID = "performance_theme"
 
 
-def _paint(p, rect: QRectF, theme: PerformanceTheme, _hub_theme=None):
+def _paint(p, rect: QRectF, theme: PerformanceTheme, hub_theme=None):
     state = mock_state(skin_id=SKIN_NOTHING_DOT)
     scale = min(rect.width() / CARD_W, rect.height() / CARD_H)
     w, h = CARD_W * scale, CARD_H * scale
     target = QRectF(rect.x() + (rect.width() - w) / 2.0, rect.y() + (rect.height() - h) / 2.0, w, h)
-    paint_performance_card(p, target, state, nothing_theme=theme)
+    paint_performance_card(p, target, state, nothing_theme=theme, hub_theme=hub_theme)
 
 
 def make_theme_spec(theme_id: str, title: str, theme: PerformanceTheme) -> SkinSpec:

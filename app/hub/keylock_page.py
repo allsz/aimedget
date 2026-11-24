@@ -13,6 +13,7 @@ from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.widgets.keylock_osd.theme import loader as keylock_theme_loader
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import CARD_MARGINS, ROWS_GAP
 
 
 class LockKeysPage(BaseHubPage):
@@ -33,7 +34,7 @@ class LockKeysPage(BaseHubPage):
         test_card = QFrame()
         test_card.setProperty("class", "HubCard")
         t_layout = QHBoxLayout(test_card)
-        t_layout.setContentsMargins(18, 14, 18, 14)
+        t_layout.setContentsMargins(*CARD_MARGINS)
 
         t_info = QVBoxLayout()
         t_info.setSpacing(3)
@@ -80,8 +81,8 @@ class LockKeysPage(BaseHubPage):
         card = QFrame()
         card.setProperty("class", "HubCard")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(18, 14, 18, 14)
-        c_layout.setSpacing(12)
+        c_layout.setContentsMargins(*CARD_MARGINS)
+        c_layout.setSpacing(ROWS_GAP)
 
         keys_opts = [
             ("keys_opt_caps_title", "keys_opt_caps_sub", "Caps Lock"),
@@ -125,7 +126,7 @@ class LockKeysPage(BaseHubPage):
         hk_card = QFrame()
         hk_card.setProperty("class", "HubCard")
         hk_layout = QHBoxLayout(hk_card)
-        hk_layout.setContentsMargins(18, 14, 18, 14)
+        hk_layout.setContentsMargins(*CARD_MARGINS)
 
         hk_info = QVBoxLayout()
         hk_info.setSpacing(3)

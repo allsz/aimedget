@@ -113,6 +113,10 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     desktop_mode_changed = Signal(bool)   # "Fixar na área de trabalho" no menu (o controller aplica e grava)
     remember_position_changed = Signal(bool)
     smart_hover_changed = Signal(bool)
+    side_applied = Signal(int)          # lado do quadrado de fato aplicado, a cada quadro (o Hub acompanha)
+    size_committed = Signal(int)        # soltou a alça do canto: lado escolhido à mão
+    auto_size_requested = Signal()      # "Tamanho padrão" no menu: o controller anima até o tamanho da tela
+    drag_finished = Signal()            # soltou o arraste (talvez em outra tela)
 
     ANCHOR_KEY = "timer"   # chave na ancoragem (ver anchor_manager)
     DEFAULT_SIZE = 164
@@ -251,6 +255,7 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         if self.isVisible():
             anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
+        self.side_applied.emit(int(side))
 
     def _drag_window_to(self, pos: QPoint):
         """Arraste da janela: move o grupo ancorado inteiro e aplica o ímã de alinhamento."""
@@ -473,8 +478,5 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.smart_hover_changed.emit(checked)
 
     def _reset_default_size(self):
-        from app.core.screen_metrics import get_auto_timer_size
-        auto_w, auto_h = get_auto_timer_size(widget=self)
-        self.set_square_side(max(self.MIN_WIDTH, min(self.MAX_WIDTH, auto_w)))
-        config_manager.save_timer_size(auto_w, auto_h)
-        self.update()
+        """Volta ao tamanho automático (proporcional à tela); o controller anima e grava, como o botão do Hub."""
+        self.auto_size_requested.emit()

@@ -20,7 +20,7 @@ from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.preview_card import PreviewCard
 from app.core.preview_registry import SkinSpec
-from app.core.theme_loader import APP_ID, DEFAULT_ID, ThemeLoader
+from app.core.theme_loader import APP_ID, APP_NAME, DEFAULT_ID, ThemeLoader
 from app.core.theme_validation import CONTAINERS
 from app.core.theme_package import (
     PACKAGE_EXT, PackageError, analyze_package, export_themes, has_theme, install_package, slugify,
@@ -29,6 +29,8 @@ from app.hub.components.message_dialog import confirm_destructive, show_message
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.theme_import_dialog import TARGET_KEYS, ThemeImportDialog
 from app.hub.theme import HubTheme
+from app.hub.components.chips import chip
+from app.hub.ui_tokens import CHIP_GAP
 
 SpecFactory = Callable[[str, str, object], SkinSpec]   # (id do tema, título, tema carregado) -> SkinSpec
 
@@ -174,7 +176,7 @@ class ThemeGalleryCard(QFrame):
 
         # Linha de ações (a importação/exportação de temas entra aqui)
         self.actions = QHBoxLayout()
-        self.actions.setSpacing(8)
+        self.actions.setSpacing(CHIP_GAP)
         self.actions.addStretch()
         self.btn_import = self._action_button(self._pick_and_import)
         self.btn_export = self._action_button(self._export)
@@ -194,7 +196,8 @@ class ThemeGalleryCard(QFrame):
         if theme_id == DEFAULT_ID:
             return t(self._default_title_key)
         if theme_id == APP_ID:
-            return t("theme_app")   # o tema embutido que herda a aparência do app é o "Padrão"
+            # o tema que herda a aparência do app é o "Padrão", salvo nas skins com visual próprio (Nothing Dot)
+            return t("theme_app") if self._loader.app_is_default else APP_NAME
         return name or t("theme_custom")
 
     def _current_active(self, ids: set[str]) -> str:
@@ -236,11 +239,7 @@ class ThemeGalleryCard(QFrame):
         self._on_applied()
 
     def _action_button(self, slot) -> QPushButton:
-        btn = QPushButton()
-        btn.setProperty("class", "Chip")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(lambda _checked=False: slot())
-        return btn
+        return chip(on_click=lambda _checked=False: slot())
 
     # --- Importar / exportar (.aimskin) ---
 

@@ -719,15 +719,44 @@ class HubServiceBridge(QObject):
         self.battery_controller.remember_position_changed.emit(True)
 
     def on_theme_changed(self, theme=None):
-        """Notifica os widgets sobre alterações de tema global."""
-        if hasattr(self, "timer_controller") and self.timer_controller:
-            self.timer_controller.update_theme(theme)
+        """Notifica os widgets sobre alterações de tema global.
+
+        Troca de MODO (claro/escuro): os widgets que seguem o app dissolvem junto com o Hub (300 ms, curva in-out,
+        ver `mode_crossfade`). Só a cor de destaque mudando não anima: o arraste do seletor chama isto ~33x/s."""
+        from app.core.theme_crossfade import MODE_DURATION_MS, mode_crossfade
+        timer_skin = self.timer_controller.skin if getattr(self, "timer_controller", None) else None
+        old = getattr(timer_skin, "_hub_theme", None)   # a aparência com que os widgets vinham pintando
+        mode_changed = theme is not None and old is not None and old.mode != theme.mode
+
+        def _fade_card(card):
+            if mode_changed:
+                card.begin_skin_crossfade(MODE_DURATION_MS, mode_switch=True)
+
+        if timer_skin is not None:
+            if timer_skin.isVisible() and mode_changed:
+                with mode_crossfade(timer_skin):
+                    self.timer_controller.update_theme(theme)
+            else:
+                self.timer_controller.update_theme(theme)
+        if hasattr(self, "performance_controller") and self.performance_controller:
+            from app.core.theme_loader import APP_ID
+            from app.widgets.performance import theme as perf_theme
+            from app.widgets.performance.card_state import SKIN_NOTHING_DOT
+            if (self.performance_controller.active_skin_name == SKIN_NOTHING_DOT
+                    and perf_theme.loader.active_id() == APP_ID):   # só o tema "Aimedget" muda com o app
+                _fade_card(self.performance_controller.skin)   # foto ANTES de esquecer a aparência antiga
+                perf_theme.invalidate_live_hub_theme()
+                self.performance_controller.skin.update()
+            else:
+                perf_theme.invalidate_live_hub_theme()
         if hasattr(self, "storage_controller") and self.storage_controller:
             from app.widgets.storage.storage_card import invalidate_card_theme as invalidate_storage_theme
+            _fade_card(self.storage_controller.skin)
             invalidate_storage_theme()
             self.storage_controller.skin.update()
         if hasattr(self, "battery_controller") and self.battery_controller:
             from app.widgets.battery.battery_card import invalidate_card_theme
+            _fade_card(self.battery_controller.skin)
             invalidate_card_theme()
             self.battery_controller.skin.update()
 

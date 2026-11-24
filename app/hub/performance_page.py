@@ -4,7 +4,7 @@ exibir ao iniciar, abrir agora) e atalho de teclado.
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
@@ -26,6 +26,7 @@ from app.widgets.performance import init_performance_skin_specs
 from app.widgets.performance.card_state import SKIN_NOTHING_DOT
 from app.widgets.performance.theme import loader as perf_theme_loader
 from app.widgets.performance.theme_specs import make_theme_spec as make_perf_theme_spec
+from app.hub.ui_tokens import INLINE_GAP, ROWS_GAP
 
 
 class PerformancePage(BaseHubPage):
@@ -33,63 +34,9 @@ class PerformancePage(BaseHubPage):
         super().__init__(title=t("perf_title"), subtitle=t("perf_subtitle"), theme=theme, parent=parent)
         self.bridge = get_service_bridge()
         self.controller = self.bridge.performance_controller
-        self._texts: list[tuple[QLabel, str]] = []
-        self._subs: list[QLabel] = []
         self._fps_perm_requested = False
         self._build_ui()
         self.bridge.performance_skin_changed.connect(self._sync_skin_selection)
-
-    def _card(self, vertical: bool = False):
-        card = QFrame()
-        card.setProperty("class", "HubCard")
-        layout = QVBoxLayout(card) if vertical else QHBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        return card, layout
-
-    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5) -> QVBoxLayout:
-        box = QVBoxLayout()
-        box.setSpacing(2)
-        title = QLabel(t(title_key))
-        title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
-        sub_txt = t(sub_key)
-        sub = QLabel(sub_txt)
-        sub.setWordWrap(True)
-        sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
-            sub.hide()
-        box.addWidget(title)
-        box.addWidget(sub)
-        self._texts += [(title, title_key), (sub, sub_key)]
-        self._subs.append(sub)
-        return box
-
-    def _divider(self) -> QFrame:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setProperty("class", "HubDivider")
-        return sep
-
-    def _chip(self, text: str, on_click) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setProperty("class", "Chip")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(on_click)
-        return btn
-
-    @staticmethod
-    def _set_selected(btn: QPushButton, selected: bool):
-        btn.setProperty("selected", "true" if selected else "false")
-        btn.style().unpolish(btn)
-        btn.style().polish(btn)
-
-    def _switch_row(self, col: QVBoxLayout, title_key: str, sub_key: str, checked: bool, on_toggle) -> PillSwitch:
-        row = QHBoxLayout()
-        row.addLayout(self._info(title_key, sub_key), stretch=1)
-        sw = PillSwitch(checked=checked, theme=self._theme)
-        sw.toggled.connect(on_toggle)
-        row.addWidget(sw)
-        col.addLayout(row)
-        return sw
 
     def _build_ui(self):
         # 1. Posição
@@ -129,7 +76,7 @@ class PerformancePage(BaseHubPage):
             appliers=self.bridge.theme_appliers(),
             parent=self,
             subtitle_key="theme_picker_sub_performance",
-            default_title_key="theme_default_timer",
+            default_title_key="theme_default_nothing",
         )
         skin_block, self.theme_section = skin_and_theme_block(
             card,
@@ -151,7 +98,7 @@ class PerformancePage(BaseHubPage):
 
         # 3. Contador de FPS (opcional, somente em jogos)
         card, col = self._card(vertical=True)
-        col.setSpacing(12)
+        col.setSpacing(ROWS_GAP)
         fps_row = QHBoxLayout()
         fps_row.setSpacing(16)
         fps_info = QVBoxLayout()
@@ -187,7 +134,7 @@ class PerformancePage(BaseHubPage):
         col.addWidget(self._divider())
 
         fps_foot = QHBoxLayout()
-        fps_foot.setSpacing(12)
+        fps_foot.setSpacing(INLINE_GAP)
         self.lbl_fps_status = QLabel()
         self.lbl_fps_status.setWordWrap(True)
         self.lbl_fps_status.setStyleSheet(f"color: {self._theme.mute}; font-size: 12px;")
@@ -201,7 +148,7 @@ class PerformancePage(BaseHubPage):
 
         # 4. Comportamento
         card, col = self._card(vertical=True)
-        col.setSpacing(12)
+        col.setSpacing(ROWS_GAP)
         self.sw_remember = self._switch_row(
             col,
             "weather_opt_remember_title",

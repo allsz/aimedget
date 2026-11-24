@@ -18,6 +18,8 @@ from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton,
 from app.core.i18n import t
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.theme import HubTheme
+from app.hub.components.chips import chip
+from app.hub.ui_tokens import CHIP_GAP
 
 CONTENT_WIDTH = 420
 ICON_SIZE = 28
@@ -120,7 +122,7 @@ class MessageDialog(QDialog):
                              f"border-top: 1px solid {theme.line}; }}")
         buttons = QHBoxLayout(footer)
         buttons.setContentsMargins(24, 14, 24, 14)
-        buttons.setSpacing(8)
+        buttons.setSpacing(CHIP_GAP)
         buttons.addStretch()
         btn_no = None
         if no is not None:
@@ -148,13 +150,8 @@ class MessageDialog(QDialog):
 
     @staticmethod
     def _button(text: str, slot, primary: bool = False) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setProperty("class", "Chip")
-        if primary:
-            btn.setProperty("selected", "true")
+        btn = chip(text, slot, primary=primary)
         btn.setMinimumWidth(88)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(slot)
         return btn
 
 

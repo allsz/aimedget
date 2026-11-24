@@ -70,13 +70,14 @@ class BatteryCard(FloatingCard):
     size_committed = Signal(float, float)      # tamanho escolhido no canto (soltou) ou por "redefinir"
     refresh_requested = Signal()
 
-    def __init__(self, desktop_mode: bool = False, size=lay.DEFAULT_SIZE, options: Optional[Options] = None):
+    def __init__(self, desktop_mode: bool = False, size=lay.DEFAULT_SIZE, options: Optional[Options] = None,
+                 scale: float = 1.0):
         w, h = (float(size[0]), float(size[1])) if size else lay.DEFAULT_SIZE
         self.state = BatteryState(base_w=w, base_h=h, options=options or Options(), animated=animations_enabled())
         self._last_tick = 0.0
         self._free_resize: Optional[tuple] = None
         cw, ch = self.state.card_size()
-        super().__init__(scale=1.0, desktop_mode=desktop_mode, card_w=cw, card_h=ch)
+        super().__init__(scale=scale, desktop_mode=desktop_mode, card_w=cw, card_h=ch)
 
     # --- Relógio ---
 
@@ -152,14 +153,17 @@ class BatteryCard(FloatingCard):
 
     def is_scale_animating(self) -> bool:
         """Para o alinhador do anchor: o TAMANHO do cartão ainda está assentando. Só as molas de largura/altura contam;
-        o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento."""
-        return not (self.state.W.settled() and self.state.H.settled())
+        o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento. A escala (controle de
+        Tamanho do Hub) também conta enquanto a mola dela anda."""
+        return self._scale_animator.is_active() or not (self.state.W.settled() and self.state.H.settled())
 
     def match_card_size(self, target_w: Optional[float] = None, target_h: Optional[float] = None,
                         animate: bool = False):
-        """Alinhar tamanho com um vizinho (anchor): muda a largura OU a altura escolhida, nunca a escala."""
-        w = float(target_w) if target_w is not None else self.state.base_w
-        h = float(target_h) if target_h is not None else self.state.base_h
+        """Alinhar tamanho com um vizinho (anchor): muda a largura OU a altura escolhida, nunca a escala. O alvo vem em
+        px de tela (o cartão do vizinho); o formato é guardado sem a escala, então divide por ela."""
+        s = self._scale or 1.0
+        w = float(target_w) / s if target_w is not None else self.state.base_w
+        h = float(target_h) / s if target_h is not None else self.state.base_h
         self.state.animated = animate and self._live()
         self.state.set_base_size(w, h)
         self._refresh()

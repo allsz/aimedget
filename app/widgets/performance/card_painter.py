@@ -154,8 +154,12 @@ def paint_performance_card(
     pinned: bool = False,
     now: float = 0.0,
     nothing_theme=None,
+    hub_theme=None,
 ):
-    """Desenha o cartão de desempenho inteiro escalado para `rect` (proporção 300:262)."""
+    """Desenha o cartão de desempenho inteiro escalado para `rect` (proporção 300:262).
+
+    `hub_theme`: aparência do app para o tema "Aimedget" da Nothing Dot (miniaturas do Hub passam a do Hub;
+    sem ela, o widget vivo usa a do app guardada em `live_hub_theme`)."""
     s = rect.width() / CARD_W
     dpr = p.device().devicePixelRatioF() if p.device() is not None else 1.0
     origin = p.transform().map(rect.topLeft())
@@ -175,8 +179,11 @@ def paint_performance_card(
     p.setClipPath(card_path(CARD_W, CARD_H, CARD_RADIUS))
 
     if state.skin_id == SKIN_NOTHING_DOT:
-        from app.widgets.performance.theme import load_user_theme as _load_perf_theme
+        from app.core.nothing_theme import resolve_nothing_theme
+        from app.widgets.performance.theme import live_hub_theme, load_user_theme as _load_perf_theme
         nt = nothing_theme if nothing_theme is not None else _load_perf_theme()
+        if nt.follows_app:
+            nt = resolve_nothing_theme(nt, hub_theme if hub_theme is not None else live_hub_theme())
         _paint_nothing_dot_performance(p, state, pinned, now, nt)
         p.setClipping(False)
         p.setBrush(Qt.BrushStyle.NoBrush)
