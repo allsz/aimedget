@@ -60,7 +60,7 @@ for _r in range(7):
 
 _PERIMETER_CELLS = sorted(
     [
-        (cell, (cell[5] - _HOME_ANGLE) % (2.0 * math.pi))
+        (cell, (_HOME_ANGLE - cell[5]) % (2.0 * math.pi))
         for cell in _GRILLE_CELLS
         if cell[4] >= 0.70
     ],
@@ -364,20 +364,20 @@ def paint_nothing_dot_timer(
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawEllipse(QPointF(0.0, 0.0), btn_r - 0.8, btn_r - 0.8)
 
-    # Ícone Play / Pause centralizado
+    # Ícone Play / Pause centralizado (0.32x radius ~ 9px em escala 100%)
     p.setPen(Qt.PenStyle.NoPen)
     p.setBrush(colors["on_accent"])
     if state.is_running:
-        bw = btn_r * 0.22
-        bh = btn_r * 0.68
-        gap = btn_r * 0.17
+        bh = btn_r * 0.32
+        bw = bh * 0.32
+        gap = bh * 0.24
         rr = bw * 0.42
         p.drawRoundedRect(QRectF(-gap - bw, -bh * 0.5, bw, bh), rr, rr)
         p.drawRoundedRect(QRectF(gap, -bh * 0.5, bw, bh), rr, rr)
     else:
-        tri_h = btn_r * 0.64
+        tri_h = btn_r * 0.32
         tri_w = tri_h * 0.86
-        ox = btn_r * 0.08
+        ox = tri_h * 0.11
         path = QPainterPath()
         path.moveTo(-tri_w * 0.48 + ox, -tri_h * 0.5)
         path.lineTo(tri_w * 0.56 + ox, 0.0)

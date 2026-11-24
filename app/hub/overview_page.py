@@ -298,6 +298,8 @@ class OverviewPage(BaseHubPage):
             is_active=self.bridge.is_battery_enabled(),
             theme=self._theme,
         )
+        # Cor do anel trocada na página de Baterias: a miniatura repinta (com a mesma aparência do Hub)
+        self.bridge.battery_controller.ring_color_changed.connect(lambda: self.battery_card.set_theme(self._theme))
         self.battery_card.toggled.connect(self._on_card_toggled)
         self.battery_card.customize.connect(self.customize_requested.emit)
         self._cards.append(self.battery_card)

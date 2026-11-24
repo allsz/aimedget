@@ -14,6 +14,7 @@ from app.core.preview_registry import SkinSpec, get_skins_for_widget, register_s
 from app.hub.theme import HubTheme, THEME_DARK
 from app.core.skin_packs import discover
 from app.widgets.timer.skins.art_skin import paint_art_timer
+from app.widgets.timer.skins.focus_ring_skin import paint_focus_ring_timer
 from app.widgets.timer.skins.nothing_dot_skin import paint_nothing_dot_timer
 from app.widgets.timer.skins.skin import TimerState, paint_windows_timer
 
@@ -84,37 +85,17 @@ def init_timer_skin_specs() -> list[SkinSpec]:
             mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
             supports_themes=True,
         ),
+        SkinSpec(
+            id="focus_ring",
+            widget_id="timer",
+            title="Focus Ring",
+            subtitle=t("skin_focus_ring_timer_sub"),
+            natural_size=QSizeF(164, 164),
+            paint=_make_paint(paint_focus_ring_timer),
+            mock_state=lambda: TimerState(current_seconds=1020.0, is_running=True, mode="timer"),
+            supports_themes=False,
+        ),
         *[_pack_spec(pack) for pack in discover("timer")],   # skins com arte própria: só as que estão em disco
-        SkinSpec(
-            id="notion",
-            widget_id="timer",
-            title="TBA",
-            subtitle="",
-            natural_size=QSizeF(164, 164),
-            paint=_make_paint(paint_tba_timer),
-            mock_state=lambda: TimerState(current_seconds=1500.0, mode="timer"),
-            available=False,
-        ),
-        SkinSpec(
-            id="focus_wheel",
-            widget_id="timer",
-            title="TBA",
-            subtitle="",
-            natural_size=QSizeF(164, 164),
-            paint=_make_paint(paint_tba_timer),
-            mock_state=lambda: TimerState(current_seconds=1500.0, mode="timer"),
-            available=False,
-        ),
-        SkinSpec(
-            id="pomodoro_bars",
-            widget_id="timer",
-            title="TBA",
-            subtitle="",
-            natural_size=QSizeF(164, 164),
-            paint=_make_paint(paint_tba_timer),
-            mock_state=lambda: TimerState(current_seconds=1500.0, mode="timer"),
-            available=False,
-        ),
     ]
 
     for s in specs:

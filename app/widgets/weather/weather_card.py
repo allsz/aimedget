@@ -45,6 +45,7 @@ class WeatherCard(FloatingCard):
     ANCHOR_KEY = "weather"
     refresh_requested = Signal()
     units_changed = Signal(str)            # 'c' / 'f'
+    forecast_mode_changed = Signal(str)    # 'daily' / 'hourly'
     day_selected = Signal(int)
     city_step = Signal(int)                # +1 próxima cidade, -1 anterior (a lista dá a volta)
     city_selected = Signal(int)            # escolhida no menu "Cidade"
@@ -203,6 +204,15 @@ class WeatherCard(FloatingCard):
         act_manage.triggered.connect(self.manage_cities_requested.emit)
         city_menu.addAction(act_manage)
         menu.addMenu(city_menu)
+
+        fmode = "hourly" if config_manager.get_weather("forecast_mode", "daily") == "hourly" else "daily"
+        mode_menu = FluentMusicMenu(t("weather_mode_title"), menu, theme=theme)
+        for key, label in (("daily", t("weather_mode_daily")), ("hourly", t("weather_mode_hourly"))):
+            act = QAction(label, self)
+            mode_menu.set_trailing_check(act, fmode == key)
+            act.triggered.connect(lambda checked=False, k=key: self.forecast_mode_changed.emit(k))
+            mode_menu.addAction(act)
+        menu.addMenu(mode_menu)
 
         unit = config_manager.get_weather("units", "c")
         units_menu = FluentMusicMenu(t("weather_menu_units"), menu, theme=theme)

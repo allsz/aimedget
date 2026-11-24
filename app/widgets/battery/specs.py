@@ -3,7 +3,7 @@ Miniatura do Battery Widget para o Hub: o mesmo `paint_battery_card` do widget v
 """
 
 from PySide6.QtCore import QRectF, QSizeF
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QColor, QPainter
 
 from app.core.preview_registry import WidgetSpec, get_widget_spec, register_widget
 from app.services.battery.models import KIND_CONTROLLER, KIND_KEYBOARD, KIND_MOUSE, BatteryDevice
@@ -35,7 +35,11 @@ def paint_battery(p: QPainter, rect: QRectF, state=None, theme=None):
     tw, th = w * scale, h * scale
     target = QRectF(rect.x() + (rect.width() - tw) / 2.0, rect.y() + (rect.height() - th) / 2.0, tw, th)
     light = bool(theme is not None and not getattr(theme, "is_dark", True))
-    paint_battery_card(p, target, st, theme=THEME_LIGHT if light else THEME_DARK)
+    from app.core.config_manager import config_manager
+    accent = None
+    if theme is not None and config_manager.get_battery("follow_accent", False):
+        accent = QColor(theme.accent)
+    paint_battery_card(p, target, st, theme=THEME_LIGHT if light else THEME_DARK, accent=accent)
 
 
 def init_battery_spec() -> WidgetSpec:

@@ -529,6 +529,7 @@ class TimerPage(BaseHubPage):
         timer_skin_texts = {
             "windows": (t("theme_default_timer"), t("skin_windows_sub")),
             "nothing_dot": ("Nothing Dot", t("skin_nothing_dot_timer_sub")),
+            "focus_ring": ("Focus Ring", t("skin_focus_ring_timer_sub")),
         }
         for pack in discover_skin_packs("timer"):
             timer_skin_texts[pack.id] = pack.texts(i18n.current_language)

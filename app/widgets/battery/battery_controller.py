@@ -46,6 +46,7 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
     options_changed = Signal(object)          # Options
     size_changed = Signal(float, float)
     scale_changed = Signal(float)
+    ring_color_changed = Signal()             # "Seguir cor de destaque": a miniatura do Hub repinta
 
     def __init__(self, service: Optional[BatteryService] = None):
         super().__init__()
@@ -103,7 +104,9 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
         self.options_changed.emit(self.options)
 
     def _on_option_requested(self, key: str, value: str):
-        if key == "count":
+        if key == "follow_accent":
+            self.set_follow_accent(value == "on")
+        elif key == "count":
             self.set_show_count(value == "on")
         elif key == "size" and value == "reset":
             self.reset_size()
@@ -120,6 +123,18 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
     def _on_size_committed(self, w: float, h: float):
         config_manager.set_battery("size", [round(float(w), 1), round(float(h), 1)])
         self.size_changed.emit(float(w), float(h))
+
+    # --- Cor do anel ---
+
+    def set_follow_accent(self, enabled: bool):
+        """Anel na cor de destaque do app (ligado) ou no verde padrão: dissolve para a cor nova, sem corte."""
+        enabled = bool(enabled)
+        if enabled == bool(config_manager.get_battery("follow_accent", False)):
+            return
+        self.skin.begin_skin_crossfade()
+        config_manager.set_battery("follow_accent", enabled)
+        self.skin.update()
+        self.ring_color_changed.emit()
 
     # --- Escala (controle de Tamanho do Hub; o formato continua no canto do cartão) ---
 

@@ -12,7 +12,7 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QPainter
+from PySide6.QtGui import QAction, QColor, QPainter
 
 from app.core.anchor_manager import anchor_bar_items, anchor_manager
 from app.core.config_manager import config_manager
@@ -41,7 +41,7 @@ from app.widgets.battery.card_state import (
 )
 
 
-_theme_cache = [0.0, THEME_DARK]
+_theme_cache = [0.0, THEME_DARK, None]   # (quando, modo do cartão, cor de destaque do app)
 
 
 def card_theme() -> str:
@@ -51,12 +51,21 @@ def card_theme() -> str:
     if now - _theme_cache[0] < 0.5:
         return _theme_cache[1]
     pref = config_manager.get_hub_theme("system")
+    hub = resolve_theme(pref)
     if pref == "true_dark":
         theme = THEME_BLACK
     else:
-        theme = THEME_DARK if resolve_theme(pref).is_dark else THEME_LIGHT
-    _theme_cache[0], _theme_cache[1] = now, theme
+        theme = THEME_DARK if hub.is_dark else THEME_LIGHT
+    _theme_cache[0], _theme_cache[1], _theme_cache[2] = now, theme, hub.accent
     return theme
+
+
+def card_accent() -> QColor | None:
+    """Cor do anel: a de destaque do app com "Seguir cor de destaque" ligado; senão None (o verde da paleta)."""
+    if not config_manager.get_battery("follow_accent", False):
+        return None
+    card_theme()   # atualiza o cache, se vencido
+    return QColor(_theme_cache[2]) if _theme_cache[2] else None
 
 
 def invalidate_card_theme():
@@ -172,7 +181,7 @@ class BatteryCard(FloatingCard):
     # --- Pintura ---
 
     def paint_card_content(self, p: QPainter, rect: QRectF, now: float):
-        paint_battery_card(p, rect, self.state, theme=card_theme(), now=now)
+        paint_battery_card(p, rect, self.state, theme=card_theme(), now=now, accent=card_accent())
 
     # --- Canto: tamanho livre ---
 
@@ -234,7 +243,6 @@ class BatteryCard(FloatingCard):
     def contextMenuEvent(self, event):
         theme = resolve_theme(config_manager.get_hub_theme("system"))
         menu = FluentMusicMenu(parent=self, theme=theme)
-        o = self.state.options
         menu.add_action_bar([
             ActionBarItem(key="refresh", icon="refresh", tooltip=t("battery_refresh_now"), close_menu=True,
                           on_trigger=self.refresh_requested.emit),
@@ -245,23 +253,13 @@ class BatteryCard(FloatingCard):
                           checked=self._desktop_mode, on_trigger=self.desktop_mode_changed.emit),
             *anchor_bar_items(self),
         ])
-        self._choice_menu(menu, theme, "battery_opt_face_title", "face", o.face, (
-            (FACE_HOVER, "battery_face_hover"), (FACE_ICON, "battery_face_icon"),
-            (FACE_PERCENT, "battery_face_percent"), (FACE_BOTH, "battery_face_both")))
-        self._choice_menu(menu, theme, "battery_opt_label_title", "label", o.label, (
-            (LABEL_NAME, "battery_label_name"), (LABEL_TYPE, "battery_label_type")))
-        self._choice_menu(menu, theme, "battery_opt_show_title", "show", o.show, (
-            (SHOW_ALL, "battery_show_all"), (SHOW_NAMES, "battery_show_names"),
-            (SHOW_HEADER, "battery_show_header"), (SHOW_NONE, "battery_show_none")))
-        self._choice_menu(menu, theme, "battery_opt_odd_title", "odd", o.odd, (
-            (lay.ODD_CENTER, "battery_odd_center"), (lay.ODD_LEFT, "battery_odd_left")))
-        act_count = QAction(t("battery_menu_show_count"), self)
-        menu.set_trailing_check(act_count, o.count)
-        act_count.triggered.connect(lambda _c=False: self.option_requested.emit("count", "off" if o.count else "on"))
-        menu.addAction(act_count)
-        act_reset = QAction(t("battery_reset_size"), self)
-        act_reset.triggered.connect(lambda _c=False: self.option_requested.emit("size", "reset"))
-        menu.addAction(act_reset)
+        follow = bool(config_manager.get_battery("follow_accent", False))
+        act_accent = QAction(t("battery_follow_accent_title"), self)
+        menu.set_trailing_check(act_accent, follow)
+        act_accent.triggered.connect(
+            lambda _c=False: self.option_requested.emit("follow_accent", "off" if follow else "on")
+        )
+        menu.addAction(act_accent)
         menu.addSeparator()
         act_configure = QAction(t("menu_configure_widget"), self)
         act_configure.triggered.connect(self.configure_requested.emit)

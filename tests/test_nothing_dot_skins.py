@@ -49,7 +49,8 @@ class TestNothingDotSkins(unittest.TestCase):
         img = QImage(300, 262, QImage.Format.Format_ARGB32)
         img.fill(0)
         p = QPainter(img)
-        paint_card(p, QRectF(0, 0, 300, 262), state, 3.2)
+        from app.core.nothing_theme import DEFAULT_NOTHING_THEME   # independe do tema salvo na máquina
+        paint_card(p, QRectF(0, 0, 300, 262), state, 3.2, nothing_theme=DEFAULT_NOTHING_THEME)
         p.end()
 
         # Fundo fosco Nothing (#161616) e nenhum ponto vermelho à esquerda da cidade
@@ -234,6 +235,71 @@ class TestNothingDotSkins(unittest.TestCase):
             skin._start_reset_orbit()
             out = QImage(skin.size(), QImage.Format.Format_ARGB32)
             skin.render(out)
+        finally:
+            skin.close()
+
+    def test_focus_ring_timer_skin_steps_formatting_and_morph_render(self):
+        from app.hub.theme import THEME_DARK
+        from app.widgets.timer.skins import timer_skin_classes
+        from app.widgets.timer.skins.focus_ring_skin import (
+            FOCUS_MAX_MINUTES,
+            FOCUS_MIN_MINUTES,
+            FocusRingTimerSkin,
+            format_focus_duration,
+            paint_focus_ring_timer,
+            step_focus_minutes,
+        )
+        from app.widgets.timer.skins.skin import TimerState
+        from app.widgets.timer.skins.specs import init_timer_skin_specs
+
+        self.assertIn("focus_ring", timer_skin_classes())
+        self.assertIn("focus_ring", [s.id for s in init_timer_skin_specs()])
+
+        # Passos progressivos (1-10m: ±1m, 10-60m: ±5m, 60-180m: ±15m) e limites 1m..3h
+        self.assertEqual(step_focus_minutes(5, 1), 6)
+        self.assertEqual(step_focus_minutes(10, 1), 15)
+        self.assertEqual(step_focus_minutes(25, 1), 30)
+        self.assertEqual(step_focus_minutes(60, 1), 75)
+        self.assertEqual(step_focus_minutes(180, 1), FOCUS_MAX_MINUTES)
+        self.assertEqual(step_focus_minutes(1, -1), FOCUS_MIN_MINUTES)
+        self.assertEqual(step_focus_minutes(75, -1), 60)
+        self.assertEqual(step_focus_minutes(15, -1), 10)
+        self.assertEqual(step_focus_minutes(10, -1), 9)
+
+        # Formatação compacta
+        self.assertEqual(format_focus_duration(25), "25m")
+        self.assertEqual(format_focus_duration(60), "1h")
+        self.assertEqual(format_focus_duration(90), "1h30")
+        self.assertEqual(format_focus_duration(180), "3h")
+
+        # Pintura direta (idle, meio do morph, ativo e alarme)
+        img = QImage(164, 164, QImage.Format.Format_ARGB32)
+        for morph, running, alarming in ((0.0, False, False), (0.5, True, False), (1.0, True, False), (1.0, False, True)):
+            img.fill(0)
+            p = QPainter(img)
+            paint_focus_ring_timer(
+                p,
+                QRectF(0, 0, 164, 164),
+                TimerState(current_seconds=900.0, is_running=running, is_alarm_pulsing=alarming),
+                THEME_DARK,
+                morph=morph,
+                progress=0.65,
+                setup_minutes=25,
+            )
+            p.end()
+
+        # Instância da janela FocusRingTimerSkin: idle -> running (morph=1) -> reset (morph=0) e sem menu de Modos
+        skin = FocusRingTimerSkin()
+        try:
+            self.assertFalse(skin.SUPPORTS_MODES)
+            skin.set_time_state(1500.0, False, "timer")
+            self.assertEqual(skin._morph_blend.value, 0.0)
+            skin.set_time_state(1490.0, True, "timer")
+            self.assertEqual(skin._morph_blend.value, 1.0)
+            out = QImage(skin.size(), QImage.Format.Format_ARGB32)
+            skin.render(out)
+            skin.set_time_state(0.0, False, "timer")
+            self.assertEqual(skin._morph_blend.value, 0.0)
         finally:
             skin.close()
 

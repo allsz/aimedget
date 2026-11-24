@@ -242,6 +242,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_sub": "Abre ou oculta o widget.",
         "skin_windows_sub": "PIP clássico",
         "skin_nothing_dot_timer_sub": "Ponto-matriz · Hardware",
+        "skin_focus_ring_timer_sub": "Anel de foco · Sem números",
+        "timer_focus_title": "Foco",
+        "timer_focus_start": "Iniciar",
 
         # General Page
         "gen_title": "Geral",
@@ -498,6 +501,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "battery_size_sub": "Arraste o canto do cartão. Com muitos dispositivos, ele cresce sozinho.",
         "battery_reset_size": "Tamanho padrão",
         "battery_shape_reset": "Padrão",
+        "battery_follow_accent_title": "Seguir cor de destaque",
+        "battery_follow_accent_sub": "Anel na cor do app, não verde.",
         "battery_sources_title": "Dispositivos suportados",
         "battery_sources_sub": "Logitech, DualSense, DualShock 4 e Xbox sem fio.",
         "battery_sources_help": "Logitech via Bolt, Unifying ou Bluetooth.\n\nPor Bluetooth, o DualSense só informa a carga enquanto um app (ex.: Steam) usa o controle.",
@@ -758,6 +763,9 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "timer_hotkey_sub": "Show or hide the widget.",
         "skin_windows_sub": "Classic PIP",
         "skin_nothing_dot_timer_sub": "Dot-matrix · Hardware",
+        "skin_focus_ring_timer_sub": "Focus ring · Numberless",
+        "timer_focus_title": "Focus",
+        "timer_focus_start": "Start",
 
         # General Page
         "gen_title": "General",
@@ -1014,6 +1022,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "battery_size_sub": "Drag the card's corner. With many devices it grows on its own.",
         "battery_reset_size": "Default size",
         "battery_shape_reset": "Default",
+        "battery_follow_accent_title": "Follow app accent",
+        "battery_follow_accent_sub": "Ring uses the app color, not green.",
         "battery_sources_title": "Supported devices",
         "battery_sources_sub": "Logitech, DualSense, DualShock 4 and wireless Xbox.",
         "battery_sources_help": "Logitech via Bolt, Unifying or Bluetooth.\n\nOver Bluetooth, DualSense only reports charge while an app (e.g. Steam) is using it.",

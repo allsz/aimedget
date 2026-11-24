@@ -77,6 +77,7 @@ class BatteryPage(BaseHubPage):
         self._bento_titles: list[tuple[QLabel, str]] = []
         self._build_ui()
         self.controller.options_changed.connect(lambda _o: self._sync_options())
+        self.controller.ring_color_changed.connect(self._sync_follow_accent)
 
     def _bento_cell(self, title_key: str) -> tuple[QFrame, QVBoxLayout]:
         cell = QFrame()
@@ -289,6 +290,10 @@ class BatteryPage(BaseHubPage):
             bool(config_manager.get_battery("show_on_startup", False)),
             lambda on: config_manager.set_battery("show_on_startup", bool(on)))
         col.addWidget(self._divider())
+        self.sw_accent = self._switch_row(
+            col, "battery_follow_accent_title", "battery_follow_accent_sub",
+            bool(config_manager.get_battery("follow_accent", False)), self._on_follow_accent)
+        col.addWidget(self._divider())
         show_row = QHBoxLayout()
         show_info = self._info("weather_opt_show_title", "weather_opt_show_sub")
         show_row.addLayout(show_info, stretch=1)
@@ -322,6 +327,9 @@ class BatteryPage(BaseHubPage):
 
         self.content_layout.addStretch()
 
+    def _on_follow_accent(self, enabled: bool):
+        self.controller.set_follow_accent(enabled)
+
     def _on_show_clicked(self):
         self.bridge.set_battery_enabled(True)
         self.controller.skin.raise_()
@@ -354,10 +362,18 @@ class BatteryPage(BaseHubPage):
         pct = max(SCALE_PCT_MIN, min(SCALE_PCT_MAX, int(round(self.controller.skin.scale() * 100))))
         self.scale_card.set_state(self.controller.is_scale_auto(), pct)
 
+    def _sync_follow_accent(self):
+        self._sync_switch(
+            self.sw_accent,
+            bool(config_manager.get_battery("follow_accent", False)),
+            animated=self.isVisible(),
+        )
+
     def showEvent(self, event):
         super().showEvent(event)
         self._sync_options()
         self._sync_size()
+        self._sync_follow_accent()
         self._sync_switch(self.sw_desktop, self.controller.skin.is_desktop_mode())
         self._sync_switch(self.sw_remember, bool(config_manager.get_battery("remember_position", False)))
 
@@ -378,6 +394,7 @@ class BatteryPage(BaseHubPage):
             self.sw_remember,
             self.sw_desktop,
             self.sw_startup,
+            self.sw_accent,
             *self._groups.values(),
         ):
             if hasattr(w, "set_theme"):

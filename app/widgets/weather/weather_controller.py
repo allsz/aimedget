@@ -160,6 +160,7 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.configure_requested.connect(self.configure_requested.emit)
         self.skin.refresh_requested.connect(lambda: self.service.refresh(force=True))
         self.skin.units_changed.connect(self.set_units)
+        self.skin.forecast_mode_changed.connect(self.set_forecast_mode)
         self.skin.scale_changed.connect(self.set_scale)
         self.skin.day_selected.connect(self.select_day)
         self.skin.city_step.connect(self.step_city)

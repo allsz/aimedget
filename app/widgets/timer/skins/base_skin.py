@@ -119,6 +119,7 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
     drag_finished = Signal()            # soltou o arraste (talvez em outra tela)
 
     ANCHOR_KEY = "timer"   # chave na ancoragem (ver anchor_manager)
+    SUPPORTS_MODES: bool = True
     DEFAULT_SIZE = 164
     MIN_SCALE_RATIO = 0.75
     MAX_SCALE_RATIO = 1.55
@@ -429,28 +430,29 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         ]
         menu.add_action_bar(bar_items)
 
-        # Alternar Modo (Temporizador vs Cronômetro vs Alarme)
-        mode_menu = FluentTimerMenu(t("timer_menu_mode"), menu, theme=self._hub_theme)
-        mode_menu.setFont(get_ui_font(13))
-        mode_menu.setStyleSheet(menu_qss)
+        # Alternar Modo (Temporizador vs Cronômetro vs Alarme) — omitido em skins de foco puro
+        if self.SUPPORTS_MODES:
+            mode_menu = FluentTimerMenu(t("timer_menu_mode"), menu, theme=self._hub_theme)
+            mode_menu.setFont(get_ui_font(13))
+            mode_menu.setStyleSheet(menu_qss)
 
-        act_timer = QAction(t("timer_mode_timer"), self)
-        mode_menu.set_trailing_check(act_timer, self.mode == "timer")
-        act_timer.triggered.connect(lambda: self.mode_changed.emit("timer"))
-        mode_menu.addAction(act_timer)
+            act_timer = QAction(t("timer_mode_timer"), self)
+            mode_menu.set_trailing_check(act_timer, self.mode == "timer")
+            act_timer.triggered.connect(lambda: self.mode_changed.emit("timer"))
+            mode_menu.addAction(act_timer)
 
-        act_stopwatch = QAction(t("timer_mode_stopwatch"), self)
-        mode_menu.set_trailing_check(act_stopwatch, self.mode == "stopwatch")
-        act_stopwatch.triggered.connect(lambda: self.mode_changed.emit("stopwatch"))
-        mode_menu.addAction(act_stopwatch)
+            act_stopwatch = QAction(t("timer_mode_stopwatch"), self)
+            mode_menu.set_trailing_check(act_stopwatch, self.mode == "stopwatch")
+            act_stopwatch.triggered.connect(lambda: self.mode_changed.emit("stopwatch"))
+            mode_menu.addAction(act_stopwatch)
 
-        act_alarm = QAction(t("timer_mode_alarm"), self)
-        mode_menu.set_trailing_check(act_alarm, self.mode == "alarm")
-        act_alarm.triggered.connect(lambda: self.mode_changed.emit("alarm"))
-        mode_menu.addAction(act_alarm)
-        menu.addMenu(mode_menu)
+            act_alarm = QAction(t("timer_mode_alarm"), self)
+            mode_menu.set_trailing_check(act_alarm, self.mode == "alarm")
+            act_alarm.triggered.connect(lambda: self.mode_changed.emit("alarm"))
+            mode_menu.addAction(act_alarm)
+            menu.addMenu(mode_menu)
 
-        menu.addSeparator()
+            menu.addSeparator()
 
         # Fechar Widget
         act_configure = QAction(t("menu_configure_widget"), self)
