@@ -745,10 +745,16 @@ class HubServiceBridge(QObject):
             if (self.performance_controller.active_skin_name == SKIN_NOTHING_DOT
                     and perf_theme.loader.active_id() == APP_ID):   # só o tema "Aimedget" muda com o app
                 _fade_card(self.performance_controller.skin)   # foto ANTES de esquecer a aparência antiga
-                perf_theme.invalidate_live_hub_theme()
                 self.performance_controller.skin.update()
-            else:
-                perf_theme.invalidate_live_hub_theme()
+        if getattr(self, "weather_controller", None):
+            from app.core.theme_loader import APP_ID
+            from app.widgets.weather import font_skins, theme as weather_theme
+            if (font_skins.is_nothing_skin(self.weather_controller.active_skin_name)
+                    and weather_theme.loader.active_id() == APP_ID):
+                _fade_card(self.weather_controller.skin)
+                self.weather_controller.skin.update()
+        from app.core.nothing_theme import invalidate_live_hub_theme
+        invalidate_live_hub_theme()   # depois das fotos: os próximos quadros já pintam com a aparência nova
         if hasattr(self, "storage_controller") and self.storage_controller:
             from app.widgets.storage.storage_card import invalidate_card_theme as invalidate_storage_theme
             _fade_card(self.storage_controller.skin)

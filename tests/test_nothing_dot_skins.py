@@ -312,5 +312,45 @@ class TestNothingDotSkins(unittest.TestCase):
             self.assertEqual(img.pixelColor(int(screen.left() + 6), int(screen.bottom() - 6)).name().lower(),
                              hub.panel.lower())
 
+    def test_weather_app_theme_follows_app_background_and_accent(self):
+        from app.core.nothing_theme import APP_NOTHING_THEME
+        from app.core.theme_loader import APP_ID, DEFAULT_ID
+        from app.hub.theme import THEME_DARK, THEME_LIGHT, with_accent
+        from app.widgets.weather import theme as weather_theme
+        from app.widgets.weather.specs import PREVIEW_NOW
+
+        # Nothing Red (clássico) primeiro e padrão; Aimedget logo depois
+        ids = [info.id for info in weather_theme.loader.list_themes()]
+        self.assertEqual(ids[:2], [DEFAULT_ID, APP_ID])
+        self.assertEqual(weather_theme.loader.fallback_id(), DEFAULT_ID)
+        self.assertIs(weather_theme.loader.theme_for(APP_ID), APP_NOTHING_THEME)
+
+        for hub in (with_accent(THEME_DARK, "#33AAFF"), with_accent(THEME_LIGHT, "#22BB66")):
+            img = QImage(300, 262, QImage.Format.Format_ARGB32)
+            img.fill(0)
+            p = QPainter(img)
+            paint_card(p, QRectF(0, 0, 300, 262), mock_weather_state(skin_id=font_skins.NOTHING_DOT_SKIN),
+                       PREVIEW_NOW, nothing_theme=APP_NOTHING_THEME, hub_theme=hub)
+            p.end()
+            # Fundo do app num canto livre do cartão
+            self.assertEqual(img.pixelColor(150, 8).name().lower(), hub.bg.lower())
+            # Algum ponto no tom do texto do app (ícones e temperatura legíveis também no claro)
+            text = QColor(hub.text)
+            found = any(
+                abs(img.pixelColor(x, y).red() - text.red()) < 24 and abs(img.pixelColor(x, y).lightness() - text.lightness()) < 24
+                for x in range(0, 300, 2) for y in range(40, 200, 2)
+            )
+            self.assertTrue(found)
+
+    def test_dot_weather_icon_color(self):
+        img = QImage(40, 40, QImage.Format.Format_ARGB32)
+        img.fill(0)
+        p = QPainter(img)
+        draw_dot_weather_icon(p, "clear", QRectF(0, 0, 40, 40), color=QColor("#1F1E1D"))
+        p.end()
+        colors = {img.pixelColor(x, y).name() for x in range(40) for y in range(40) if img.pixelColor(x, y).alpha() == 255}
+        self.assertIn("#1f1e1d", colors)
+        self.assertNotIn("#ffffff", colors)
+
 if __name__ == "__main__":
     unittest.main()

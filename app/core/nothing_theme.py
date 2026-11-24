@@ -70,6 +70,25 @@ def nothing_theme_from_hub(hub: HubTheme) -> NothingDotTheme:
     )
 
 
+_live_hub: HubTheme | None = None
+
+
+def live_hub_theme() -> HubTheme:
+    """Aparência do app para os widgets vivos, guardada entre quadros (ler a do sistema a cada quadro sairia caro)."""
+    global _live_hub
+    if _live_hub is None:
+        from app.core.app_theme import current_hub_theme
+        _live_hub = current_hub_theme()
+    return _live_hub
+
+
+def invalidate_live_hub_theme() -> HubTheme | None:
+    """O app trocou de modo ou de destaque: o próximo quadro relê. Devolve a aparência que estava guardada."""
+    global _live_hub
+    old, _live_hub = _live_hub, None
+    return old
+
+
 def resolve_nothing_theme(theme: NothingDotTheme, hub: HubTheme) -> NothingDotTheme:
     """O tema com as cores de fato: o "Aimedget" vira as cores do app `hub`; os outros ficam como estão."""
     return nothing_theme_from_hub(hub) if theme.follows_app else theme

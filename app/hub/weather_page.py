@@ -204,7 +204,7 @@ class WeatherPage(BaseHubPage):
             appliers=self.bridge.theme_appliers(),
             parent=self,
             subtitle_key="theme_picker_sub_weather",
-            default_title_key="theme_default_timer",
+            default_title_key="theme_default_nothing",
         )
         skin_block, self.theme_section = skin_and_theme_block(
             card,

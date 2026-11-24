@@ -116,20 +116,6 @@ class TimerPage(BaseHubPage):
         pos_layout.addWidget(self.pos_picker)
         self.content_layout.addWidget(pos_card)
 
-        # 1b. Tamanho (% do lado padrão; a alça do canto do widget continua valendo)
-        controller = self.bridge.timer_controller
-        self.scale_card = ScaleCard(
-            "weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self
-        )
-        self.scale_card.auto_clicked.connect(lambda: controller.set_scale(None))
-        self.scale_card.live_changed.connect(lambda pct: controller.apply_scale_live(pct / 100.0))
-        self.scale_card.committed.connect(lambda pct: controller.set_scale(pct / 100.0))
-        self.content_layout.addWidget(self.scale_card)
-        controller.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
-        controller.scale_changed.connect(lambda _s: self._sync_size())
-        controller.skin_changed.connect(lambda _n: self._sync_size())
-        self._sync_size()
-
         # 2. Card de Skins & Estilos
         skin_card = QFrame()
         skin_card.setProperty("class", "HubCard")
@@ -202,6 +188,20 @@ class TimerPage(BaseHubPage):
             skin_card, theme_host, self.content_layout.spacing(), self._active_skin_supports_themes())
         self.content_layout.addWidget(skin_block)
         self.bridge.timer_skin_changed.connect(self._on_active_timer_skin_changed)
+
+        # 3b. Tamanho, depois do Estilo, como no Desempenho (% do lado padrão; a alça do canto continua valendo)
+        controller = self.bridge.timer_controller
+        self.scale_card = ScaleCard(
+            "weather_size_title", "weather_size_sub", self._theme, SCALE_PCT_MIN, SCALE_PCT_MAX, self
+        )
+        self.scale_card.auto_clicked.connect(lambda: controller.set_scale(None))
+        self.scale_card.live_changed.connect(lambda pct: controller.apply_scale_live(pct / 100.0))
+        self.scale_card.committed.connect(lambda pct: controller.set_scale(pct / 100.0))
+        self.content_layout.addWidget(self.scale_card)
+        controller.scale_applied.connect(lambda _s: self._sync_size())   # acompanha a animação quadro a quadro
+        controller.scale_changed.connect(lambda _s: self._sync_size())
+        controller.skin_changed.connect(lambda _n: self._sync_size())
+        self._sync_size()
 
         # 4. Card de Comportamento & Ações
         behav_card = QFrame()

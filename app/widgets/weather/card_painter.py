@@ -79,9 +79,13 @@ def paint_card(
     now: float,
     cache: dict | None = None,
     nothing_theme=None,
+    hub_theme=None,
 ):
     """
     Desenha o cartão em `rect` (proporção 300:262).
+
+    `hub_theme`: aparência do app para o tema "Aimedget" da Nothing Dot (a miniatura do Hub passa a do Hub; sem ela,
+    o widget vivo usa a guardada em `live_hub_theme`).
 
     `cache` (o widget vivo passa um dict seu): o céu suave é desenhado numa imagem pequena reaproveitada e ampliado, e
     textos + abas ficam num pixmap enquanto nenhuma troca está em curso. Sem `cache` (miniatura do Hub), tudo é
@@ -104,6 +108,9 @@ def paint_card(
     if font_skins.is_nothing_skin(state.skin_id):
         from app.widgets.weather.theme import load_user_theme as _load_weather_theme
         nt = nothing_theme if nothing_theme is not None else _load_weather_theme()
+        if nt.follows_app:
+            from app.core.nothing_theme import live_hub_theme, resolve_nothing_theme
+            nt = resolve_nothing_theme(nt, hub_theme if hub_theme is not None else live_hub_theme())
         _paint_nothing_dot_card(p, state, now, nt)
         p.setClipping(False)
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -423,7 +430,7 @@ def _paint_nothing_dot_card(p: QPainter, state: CardState, now: float, theme):
         p.translate(c)
         p.scale(s_out, s_out)
         p.translate(-c)
-        draw_dot_weather_icon(p, state.icon.previous, icon_rect, opacity=1.0 - ic_p)
+        draw_dot_weather_icon(p, state.icon.previous, icon_rect, opacity=1.0 - ic_p, color=theme.dot_on)
         p.restore()
     p.save()
     c = icon_rect.center()
@@ -431,7 +438,8 @@ def _paint_nothing_dot_card(p: QPainter, state: CardState, now: float, theme):
     p.translate(c)
     p.scale(s_in, s_in)
     p.translate(-c)
-    draw_dot_weather_icon(p, state.icon.current, icon_rect, opacity=ic_p if state.icon.previous else 1.0)
+    draw_dot_weather_icon(p, state.icon.current, icon_rect, opacity=ic_p if state.icon.previous else 1.0,
+                          color=theme.dot_on)
     p.restore()
 
     # 3. Centro: Temperatura em matriz de pontos circular (dígitos escalonados como no Glass + ° em accent)
@@ -546,6 +554,7 @@ def _paint_nothing_dot_card(p: QPainter, state: CardState, now: float, theme):
             day.condition,
             QRectF(tr.center().x() - 8.5, tr.y() + 16.0, 17.0, 17.0),
             opacity=(0.95 if is_sel else 0.65) * wd_alpha,
+            color=theme.dot_on,
         )
 
         tp_txt = f"{int(round(day.temp))}°"
