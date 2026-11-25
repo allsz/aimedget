@@ -794,6 +794,7 @@ class HubServiceBridge(QObject):
         mgr = anchor_manager()
         if mgr.is_grouped(skin):
             mgr.detach(skin)
+        mgr.user_placed(skin)      # o lugar escolhido fica gravado no monitor (quando o deslize terminar)
 
     def _calc_coords(self, screen_geo: QRect, w: int, h: int, pos_key: str, margin: int) -> tuple[int, int]:
         sx = screen_geo.x()

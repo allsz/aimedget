@@ -186,6 +186,9 @@ class DesktopPinMixin:
         self._pin_guard.stop()
 
     def desktop_pin_native_event(self, event_type, message):
+        from app.core import screen_debug, screen_watcher
+        screen_debug.native(self, message)
+        screen_watcher.native_event(message)
         if self._desktop_mode and desktop_layer.IS_WINDOWS:
             try:
                 msg = wintypes.MSG.from_address(int(message))

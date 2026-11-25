@@ -141,6 +141,16 @@ class SlideFadeAnimator(QObject):
             return
         self._run(1.0, duration_ms)
 
+    def replay_appear(self, duration_ms: int):
+        """Janela já visível que foi posta num lugar novo de uma vez (voltou de uma tela que saiu): surge de novo ali."""
+        w = self._widget
+        if not w.isVisible() or self.is_animating() or not animations_enabled() or duration_ms <= 0:
+            return
+        self._rest = w.pos()
+        self._t = 0.0
+        self._apply(0.0)
+        self._run(1.0, duration_ms)
+
     def delay_appear(self, ms: int):
         """Chamado durante o show() (no showEvent): o fade de entrada só começa daqui a `ms`."""
         self._delay_ms = max(0, int(ms))
