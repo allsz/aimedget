@@ -4,6 +4,12 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [Não lançado]
+
+### Adicionado
+- Bateria: **mouses Redragon** pelo dongle 2.4G ou pelo cabo. No cabo, mouse e dongle continuam sendo um cartão só,
+  agora carregando.
+
 ## [1.1.2] - 2026-11-24
 
 ### Adicionado

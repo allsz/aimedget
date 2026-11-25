@@ -103,6 +103,49 @@ class Mouse1KTests(unittest.TestCase):
         self.assertIn("1234:0001", logs.output[0])
         self.assertEqual(Recorder.opened, [])
 
+    # Respostas reais do Redragon: dongle F5D5 a 5% (3262 mV) e o mouse no cabo F55E a 15%, carregando (3493 mV)
+    REDRAGON_DONGLE_REPLY = bytes.fromhex("08040000000205000cbe00000000000078")
+    REDRAGON_WIRED_REPLY = bytes.fromhex("0804000000020f010da500000000000085")
+    RED_DONGLE = hid(0x3554, 0xF5D5, 0xFF02, r"\?\hid#vid_3554&pid_f5d5&mi_01&col05#7&13&0&0004#{x}", inp=17, out=17,
+                     product="2.4G Wireless Receiver")
+    RED_CABLE = hid(0x3554, 0xF55E, 0xFF02, r"\?\hid#vid_3554&pid_f55e&mi_01&col05#7&15&0&0004#{x}", inp=17, out=17,
+                    product="3-Mode Mouse")
+
+    @staticmethod
+    def _by_pid(replies):
+        """Handle falso que responde por PID (None = mudo)."""
+        class Handle(Recorder):
+            def _send(self, kind, data):
+                reply = replies.get(self.info.pid)
+                if reply is not None:
+                    Recorder.queue.append(reply)
+                return True
+        Recorder.opened, Recorder.sent, Recorder.queue = [], [], []
+        return mock.patch.object(hid_win, "HidHandle", Handle)
+
+    def test_redragon_real_replies(self):
+        self.assertEqual(mouse_1k.parse_reply(self.REDRAGON_DONGLE_REPLY), (5.0, False, 3262))
+        self.assertEqual(mouse_1k.parse_reply(self.REDRAGON_WIRED_REPLY), (15.0, True, 3493))
+
+    def test_redragon_dongle_reads_with_its_name(self):
+        with self._by_pid({0xF5D5: self.REDRAGON_DONGLE_REPLY}):
+            out = mouse_1k.read_devices([self.RED_DONGLE])
+        self.assertEqual([(d.name, d.source, d.percent) for d in out], [("Redragon Mouse", "redragon", 5.0)])
+
+    def test_redragon_on_the_cable_is_one_card_with_the_dongle(self):
+        """Cenário real: no cabo o dongle fica mudo e o F55E responde. Um cartão só, com o id do dongle."""
+        with self._by_pid({0xF55E: self.REDRAGON_WIRED_REPLY}):
+            out = mouse_1k.read_devices([self.RED_DONGLE, self.RED_CABLE])
+        self.assertEqual([(d.name, d.percent, d.charging) for d in out], [("Redragon Mouse", 15.0, True)])
+        self.assertEqual(out[0].id, "redragon:" + self.RED_DONGLE.path.lower())
+        self.assertEqual(mouse_1k.present_ids([self.RED_DONGLE, self.RED_CABLE]), {out[0].id})
+
+    def test_redragon_cable_never_takes_a_silent_vxe_dongle(self):
+        """VXE dormindo e Redragon no cabo, mesmo VID: famílias diferentes, o Redragon fica com o próprio cartão."""
+        with self._by_pid({0xF55E: self.REDRAGON_WIRED_REPLY}):
+            out = mouse_1k.read_devices([VXE_DONGLE, self.RED_CABLE])
+        self.assertEqual([d.id for d in out], ["redragon:" + self.RED_CABLE.path.lower()])
+
     def test_broken_enumeration_does_not_raise(self):
         def boom():
             raise RuntimeError("x")
