@@ -49,7 +49,7 @@ def main():
         return
     instance.listen()
 
-    from app.core import screen_debug   # AIMEDGET_SCREEN_DEBUG=1: registra trocas de monitor (só observa)
+    from app.core import screen_debug   # AIMEDGET_SCREEN_DEBUG=1 (ou =observe): registro de trocas de monitor
     screen_debug.install()
 
     # Temas que vêm com o app vão para a pasta de temas do usuário (uma vez; antes dos flyouts lerem os temas)

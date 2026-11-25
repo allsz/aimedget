@@ -36,6 +36,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from PySide6.QtCore import QObject, QTimer
 
+from app.core import screen_debug
 from app.core.anchor_geometry import Rect
 
 logger = logging.getLogger(__name__)
@@ -269,15 +270,21 @@ def move_native(items: Iterable[Tuple[object, int, int, float]]):
 WM_DISPLAYCHANGE = 0x007E
 
 
-def native_event(message):
-    """Chamada no nativeEvent dos widgets: um WM_DISPLAYCHANGE dispara a volta ao monitor na hora."""
+def native_event(widget, message):
+    """
+    Chamada no nativeEvent dos widgets (toda mensagem passa aqui: lê o MSG uma vez e sai logo nas comuns). Um
+    WM_DISPLAYCHANGE devolve os widgets ao monitor na hora; as mensagens de tela/posição vão para o diagnóstico.
+    """
     try:
         msg = wintypes.MSG.from_address(int(message))
     except (TypeError, ValueError, OSError):
         return
-    if msg.message != WM_DISPLAYCHANGE:
+    m = msg.message
+    if m in screen_debug.WATCHED:
+        screen_debug.native_msg(widget, msg)
+    if m != WM_DISPLAYCHANGE:
         return
-    from app.core import anchor_manager as am
+    from app.core import anchor_manager as am   # aqui: o anchor_manager importa este módulo
 
     mgr = am._manager
     if mgr is not None and am.shiboken6.isValid(mgr):
@@ -386,7 +393,7 @@ class ScreenWatcher(QObject):
             return
         p = self._placements.get(key)
         if p is None:
-            QTimer.singleShot(ADOPT_DELAY_MS, lambda: self._adopt_later(w, key))
+            QTimer.singleShot(ADOPT_DELAY_MS, w, lambda: self._adopt_later(w, key))   # some com a janela
             return
         if not _remembers(key):
             return
@@ -397,9 +404,7 @@ class ScreenWatcher(QObject):
         move_card(w, *logical)
 
     def _adopt_later(self, w, key: str):
-        import shiboken6
-
-        if key not in self._placements and shiboken6.isValid(w):
+        if key not in self._placements:
             self.remember(w)
 
     def _logical(self, p: Placement) -> Optional[Tuple[float, float]]:

@@ -23,7 +23,7 @@ from app.core.desktop_pin_guard import DesktopPinGuard
 from app.core.position_glide import glide_widget_to
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.scale_animator import ScaleAnimator
-from app.core import screen_debug, screen_watcher
+from app.core import screen_watcher
 from app.core.screen_metrics import get_screen_scale_ratio
 from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
@@ -507,8 +507,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._sync_show_desktop()
 
     def nativeEvent(self, event_type, message):
-        screen_debug.native(self, message)
-        screen_watcher.native_event(message)
+        screen_watcher.native_event(self, message)   # troca de monitor (e o diagnóstico, se ligado)
         if self._desktop_mode and desktop_layer.IS_WINDOWS:
             try:
                 msg = wintypes.MSG.from_address(int(message))

@@ -245,16 +245,22 @@ def _origin() -> str:
     return "origem=APP " + " < ".join(f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in frames[-4:][::-1])
 
 
+WATCHED = frozenset(_NAMES)   # o nativeEvent só chama native_msg para estas (o resto não custa nada)
+
+
 def native(widget, message):
-    """Chamada no nativeEvent dos widgets. Nunca altera a mensagem."""
-    if not enabled():
-        return
+    """Para um ponteiro de MSG cru. Nunca altera a mensagem."""
     try:
         msg = wintypes.MSG.from_address(int(message))
     except (TypeError, ValueError, OSError):
         return
+    native_msg(widget, msg)
+
+
+def native_msg(widget, msg):
+    """Uma mensagem já lida (ver screen_watcher.native_event). Desligado, sai na primeira linha."""
     m = msg.message
-    if m not in _NAMES:
+    if m not in _NAMES or not enabled():
         return
     key = getattr(widget, "ANCHOR_KEY", None) or type(widget).__name__
     name = _NAMES[m]

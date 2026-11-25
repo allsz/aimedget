@@ -668,10 +668,7 @@ class AnchorManager(QObject):
         def check():
             glide = getattr(w, "_position_glide", None)
             if glide is not None and glide.is_running():
-                def once():
-                    glide.finished.disconnect(once)
-                    done()
-                glide.finished.connect(once)
+                glide.finished.connect(done, Qt.ConnectionType.SingleShotConnection)
             else:
                 done()
 

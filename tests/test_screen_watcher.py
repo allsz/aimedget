@@ -161,7 +161,7 @@ def test_widgets_are_back_inside_the_switch_signal_and_on_wm_displaychange(no_an
 
     _use(env, [_mon("MON", real.rect.moved(60, 20), real.scale, primary=True)])
     msg = wintypes.MSG(int(c.winId()), sw.WM_DISPLAYCHANGE, 32, 0)
-    sw.native_event(ctypes.addressof(msg))                      # o aviso do Windows também basta
+    sw.native_event(c, ctypes.addressof(msg))                      # o aviso do Windows também basta
     n = _native(c)
     assert (n.l, n.t) == pytest.approx((before.l + 60, before.t + 20), abs=1)
     assert watcher.is_settling()
