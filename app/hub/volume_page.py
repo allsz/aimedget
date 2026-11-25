@@ -11,6 +11,7 @@ from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.widgets.volume_mixer.theme import loader as mixer_theme_loader
 from app.hub.base_page import BaseHubPage
+from app.hub.ui_tokens import CARD_MARGINS
 
 
 class VolumePage(BaseHubPage):
@@ -31,7 +32,7 @@ class VolumePage(BaseHubPage):
         test_card = QFrame()
         test_card.setProperty("class", "HubCard")
         t_layout = QHBoxLayout(test_card)
-        t_layout.setContentsMargins(18, 14, 18, 14)
+        t_layout.setContentsMargins(*CARD_MARGINS)
 
         t_info = QVBoxLayout()
         t_info.setSpacing(3)
@@ -71,7 +72,7 @@ class VolumePage(BaseHubPage):
         hk_card = QFrame()
         hk_card.setProperty("class", "HubCard")
         hk_layout = QHBoxLayout(hk_card)
-        hk_layout.setContentsMargins(18, 14, 18, 14)
+        hk_layout.setContentsMargins(*CARD_MARGINS)
 
         hk_info = QVBoxLayout()
         hk_info.setSpacing(3)

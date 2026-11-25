@@ -8,13 +8,17 @@ from app.core.alarm_sound import play_alarm, stop_alarm
 from app.core.config_manager import config_manager
 from app.core.frame_clock import FrameTimer
 from app.core.refresh_rate import refresh_interval_ms
-from app.core.widget_animator import AnimatedVisibilityMixin, swap_skin_windows
+from app.core.scale_animator import ScaleAnimator
+from app.core.screen_metrics import BASELINE_TIMER_SIZE, get_auto_timer_size
+from app.core.widget_animator import AnimatedVisibilityMixin, animations_enabled, swap_skin_windows
 from app.widgets.timer.alarm_rules import default_alarm_time, next_alarm, normalize_alarm_time
 from app.widgets.timer.duration_rules import MIN_RUN_SECONDS, normalize_duration
 from app.widgets.timer.skins.base_skin import BaseTimerSkin
 from app.widgets.timer.skins import timer_skin_classes
 from app.widgets.timer.skins.windows_skin import WindowsTimerSkin
 from app.widgets.timer.time_layout import is_compact
+
+BASE_SIDE = BASELINE_TIMER_SIZE[0]   # lado do quadrado em 100% (o controle de Tamanho do Hub fala em % dele)
 
 
 class TimerWidgetController(AnimatedVisibilityMixin, QObject):
@@ -37,6 +41,8 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
     desktop_mode_changed = Signal(bool)      # o widget foi (ou saiu) para a área de trabalho: o Hub acompanha
     remember_position_changed = Signal(bool)
     smart_hover_changed = Signal(bool)
+    scale_changed = Signal(float)            # tamanho escolhido (Hub, menu, alça do canto), em fração do lado padrão
+    scale_applied = Signal(float)            # tamanho de fato aplicado, a cada quadro (o Hub acompanha a animação)
 
     @staticmethod
     def available_skins() -> dict[str, Type[BaseTimerSkin]]:
@@ -72,6 +78,7 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
 
         # Inicializa a skin
         self.skin: Optional[BaseTimerSkin] = None
+        self._side_anim: Optional[ScaleAnimator] = None
         saved_skin = config_manager.get_timer_active_skin("windows")
         initial_skin = skin_name or saved_skin
         if initial_skin not in self.available_skins():
@@ -89,6 +96,8 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         old_pos = None
         was_visible = False
         saved_size = config_manager.get_timer_saved_size()
+        if config_manager.is_timer_size_auto():
+            saved_size = get_auto_timer_size()
 
         if old_skin is not None:
             old_pos = old_skin.square_origin()   # o quadrado não muda de lugar ao trocar de skin ou de tema
@@ -106,8 +115,14 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
                 old_skin.desktop_mode_changed.disconnect(self.set_desktop_mode)
                 old_skin.remember_position_changed.disconnect(self.remember_position_changed.emit)
                 old_skin.smart_hover_changed.disconnect(self.smart_hover_changed.emit)
+                old_skin.side_applied.disconnect(self._on_side_applied)
+                old_skin.size_committed.disconnect(self._on_size_committed)
+                old_skin.auto_size_requested.disconnect(self._on_auto_size_requested)
+                old_skin.drag_finished.disconnect(self._retarget_auto_size)
             except Exception:
                 pass
+            if self._side_anim is not None:
+                self._side_anim.stop()
 
         self.skin = skin_cls(width=saved_size[0], height=saved_size[1])
         self.skin.play_pause_clicked.connect(self.toggle_play_pause)
@@ -121,6 +136,11 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.desktop_mode_changed.connect(self.set_desktop_mode)   # a skin nova já nasce na camada gravada
         self.skin.remember_position_changed.connect(self.remember_position_changed.emit)
         self.skin.smart_hover_changed.connect(self.smart_hover_changed.emit)
+        self.skin.side_applied.connect(self._on_side_applied)
+        self.skin.size_committed.connect(self._on_size_committed)
+        self.skin.auto_size_requested.connect(self._on_auto_size_requested)
+        self.skin.drag_finished.connect(self._retarget_auto_size)
+        self._side_anim = ScaleAnimator(self.skin, self._apply_scale, tolerance=0.003)
 
         self._sync_skin()
 
@@ -134,6 +154,61 @@ class TimerWidgetController(AnimatedVisibilityMixin, QObject):
         swap_skin_windows(old_skin, self.skin, was_visible)
 
         self.skin_changed.emit(skin_name)
+
+    # --- Tamanho (controle do Hub: % do lado padrão; o canto do widget continua valendo) ---
+
+    def scale(self) -> float:
+        return self.skin.square_side() / BASE_SIDE if self.skin else 1.0
+
+    def is_scale_auto(self) -> bool:
+        return config_manager.is_timer_size_auto()
+
+    @staticmethod
+    def _clamp_side(side: float) -> int:
+        return max(BaseTimerSkin.MIN_WIDTH, min(BaseTimerSkin.MAX_WIDTH, int(round(side))))
+
+    def _apply_scale(self, scale: float):
+        if self.skin:
+            self.skin.set_square_side(self._clamp_side(scale * BASE_SIDE))
+
+    def set_scale(self, scale: float | None):
+        """None = automático (proporcional à tela). Anima até o lado novo e grava."""
+        if not self.skin:
+            return
+        auto = scale is None
+        config_manager.set_timer_size_auto(auto)
+        side = get_auto_timer_size(widget=self.skin)[0] if auto else float(scale) * BASE_SIDE
+        side = self._clamp_side(side)
+        target = side / BASE_SIDE
+        if animations_enabled() and self.skin.isVisible() and abs(self.scale() - target) > 0.003:
+            self._side_anim.start(self.scale(), target)
+        else:
+            self._side_anim.stop()
+            self._apply_scale(target)
+        config_manager.save_timer_size(side, side)
+        self.scale_changed.emit(target)
+
+    def apply_scale_live(self, scale: float):
+        self._side_anim.stop()
+        self._apply_scale(scale)
+
+    def _on_side_applied(self, side: int):
+        self.scale_applied.emit(side / BASE_SIDE)
+
+    def _on_size_committed(self, side: int):
+        """Alça do canto: o tamanho passa a ser manual."""
+        config_manager.set_timer_size_auto(False)
+        self.scale_changed.emit(side / BASE_SIDE)
+
+    def _on_auto_size_requested(self):
+        self.set_scale(None)
+
+    def _retarget_auto_size(self):
+        """Soltou o widget (talvez em outra tela): no automático, o tamanho acompanha a tela nova, com movimento."""
+        if self.skin and self.is_scale_auto():
+            target = self._clamp_side(get_auto_timer_size(widget=self.skin)[0]) / BASE_SIDE
+            if abs(self.scale() - target) >= 0.02:
+                self.set_scale(None)
 
     def set_desktop_mode(self, enabled: bool):
         """"Fixar na área de trabalho" (menu do widget ou Hub): aplica com a onda de pontos, grava e avisa o Hub."""

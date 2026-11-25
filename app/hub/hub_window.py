@@ -22,14 +22,14 @@ from PySide6.QtWidgets import (
 
 from app.core.config_manager import config_manager
 from app.core.i18n import t
-from app.core.theme_crossfade import theme_crossfade
+from app.core.theme_crossfade import mode_crossfade, theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
 from app.hub.components.accent_wipe import AccentWipe
 from app.hub.components.page_transition import PageTransition
 from app.hub.components.message_dialog import confirm
 from app.hub.components.sidebar import HubSidebar
-from app.hub.dwm_helper import apply_windows_dwm_titlebar
+from app.hub.dwm_helper import apply_windows_dwm_titlebar, mix_hex, set_dark_frame, set_titlebar_colors
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
 from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
 from app.hub.performance_page import PerformancePage
@@ -67,6 +67,8 @@ class AimedgetHubWindow(QMainWindow):
         # Carregar preferência salva
         self._theme_preference = config_manager.get_hub_theme("system")
         self._current_theme: HubTheme = resolve_theme(self._theme_preference)
+        self._current_theme_before_mode: HubTheme = self._current_theme
+        self._titlebar_hex: str | None = None   # cor que a barra nativa mostra agora (a troca de modo parte dela)
 
         self._pending_accent = config_manager.get_hub_accent()
         self._icons_pending = False
@@ -99,6 +101,11 @@ class AimedgetHubWindow(QMainWindow):
         self._apply_theme(self._current_theme)
         self.retranslate_ui()
         self._apply_asymmetric_windows_icons()
+
+        # Modo "Sistema": acompanha o Windows ao vivo (claro/escuro), não só ao abrir o app
+        hints = QApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_system_color_scheme_changed)
 
         # Verificação discreta de atualizações em segundo plano após 5 segundos
         QTimer.singleShot(5000, self._check_background_update)
@@ -447,9 +454,39 @@ class AimedgetHubWindow(QMainWindow):
         self._stop_wipe()
         self._theme_preference = mode
         config_manager.set_hub_theme(mode)
-        resolved = resolve_theme(mode)
-        with theme_crossfade(self.shell, shrink=0.0):   # claro/escuro: a mesma dissolvência dos temas, sem encolher a janela
-            self._apply_theme(resolved)
+        self._switch_mode_animated(resolve_theme(mode))
+
+    def _on_system_color_scheme_changed(self, *_args):
+        """O Windows trocou de claro/escuro: no modo "Sistema", o Hub e os widgets que seguem o app trocam juntos,
+        com a mesma dissolvência da troca manual."""
+        if self._theme_preference != "system":
+            return
+        resolved = resolve_theme("system")
+        if resolved == self._current_theme:
+            return
+        self._stop_wipe()
+        self._switch_mode_animated(resolved)
+
+    def _switch_mode_animated(self, resolved: HubTheme):
+        """Claro/escuro: a janela dissolve em 300 ms (curva in-out) e a barra de título nativa muda de cor junto,
+        quadro a quadro, com a mesma curva (protótipo mockups/theme-mode-transition.html, variante C)."""
+        hwnd = int(self.winId())
+        start = self._titlebar_hex or self._current_theme.bg
+        target = resolved.bg
+        dark_sent = [None]
+
+        def _titlebar(e: float):
+            color = target if e >= 1.0 else mix_hex(start, target, e)
+            self._titlebar_hex = color
+            set_titlebar_colors(hwnd, color, color)   # título = cor da barra (ver _apply_theme)
+            want_dark = resolved.is_dark if e >= 0.5 else self._current_theme_before_mode.is_dark
+            if dark_sent[0] != want_dark:   # botões do quadro trocam no meio, quando a barra cruza o cinza
+                dark_sent[0] = want_dark
+                set_dark_frame(hwnd, want_dark)
+
+        self._current_theme_before_mode = self._current_theme
+        with mode_crossfade(self.shell, on_progress=_titlebar):
+            self._apply_theme(resolved, titlebar=False)
             get_service_bridge().on_theme_changed(resolved)
 
     def _change_accent(self, accent, committed: bool):
@@ -532,7 +569,8 @@ class AimedgetHubWindow(QMainWindow):
         self.tray_icon.setIcon(create_aimedget_icon(32))
         self._apply_asymmetric_windows_icons()
 
-    def _apply_theme(self, theme: HubTheme):
+    def _apply_theme(self, theme: HubTheme, titlebar: bool = True):
+        """`titlebar=False`: a barra nativa fica com quem chamou (a troca de modo a anima junto com a dissolvência)."""
         self._current_theme = theme
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Window, QColor(theme.bg))
@@ -554,7 +592,10 @@ class AimedgetHubWindow(QMainWindow):
         if hasattr(self, "tray_icon") and self.tray_icon:
             self.tray_icon.update_theme(theme)
 
+        if not titlebar:
+            return
         # Aplica a cor na barra nativa e garante os cantos arredondados nativos do Windows 11
+        self._titlebar_hex = theme.bg
         apply_windows_dwm_titlebar(
             hwnd=int(self.winId()),
             bg_hex=theme.bg,

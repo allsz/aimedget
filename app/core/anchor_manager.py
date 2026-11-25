@@ -666,6 +666,7 @@ class AnchorManager(QObject):
             target = target_w if target_w is not None else target_h
             side = max(int(w.MIN_WIDTH), min(int(w.MAX_WIDTH), int(round(target))))
             config_manager.save_timer_size(side, side)
+            config_manager.set_timer_size_auto(False)   # tamanho escolhido: o automático não desfaz o alinhamento
             if animate and abs(w.square_side() - side) >= 1:
                 from app.core.scale_animator import ScaleAnimator
                 anim = getattr(w, "_align_side_anim", None)

@@ -148,12 +148,15 @@ class ThemeLoader(Generic[T]):
 
     def __init__(self, container_id: str, default: T, parse: Callable[[dict, str], T], label: str,
                  context: Callable[[], object] | None = None, app_theme: Callable[[], T] | None = None,
-                 default_factory: Callable[[], T] | None = None):
+                 default_factory: Callable[[], T] | None = None, app_is_default: bool = True):
         # `context` devolve algo que, quando muda, invalida o cache (ex.: a razão de escala da tela)
         self._context = context
         # `app_theme` calcula o tema embutido "Aimedget" (sem arquivos). Deve devolver o MESMO objeto enquanto a
         # aparência do app não mudar. Sem ele, o loader não oferece esse tema.
         self._app_theme = app_theme
+        # `app_is_default`: o "Aimedget" é o visual de uma instalação nova (e o destino ao excluir o tema em uso).
+        # Falso nas skins com identidade própria (Nothing Dot: escura com vermelho), que só o oferecem na galeria.
+        self._app_is_default = app_theme is not None and app_is_default
         self.container_id = container_id
         self._default_static = default
         # `default_factory`: o visual embutido "Windows" quando ele muda com o app (ex.: versão clara). Deve devolver
@@ -206,7 +209,8 @@ class ThemeLoader(Generic[T]):
         """Aimedget, Windows (visual original), o tema solto da raiz (se houver) e cada subpasta com um theme.json."""
         themes = [ThemeInfo(DEFAULT_ID, "")]  # o visual original do Windows; o nome é traduzido pela interface
         if self._app_theme is not None:
-            themes.insert(0, ThemeInfo(APP_ID, APP_NAME))   # o Aimedget vem primeiro
+            # O Aimedget vem primeiro quando é o padrão; senão, logo depois do visual próprio da skin
+            themes.insert(0 if self._app_is_default else 1, ThemeInfo(APP_ID, APP_NAME))
         if os.path.isfile(self.path()):
             themes.append(ThemeInfo(CUSTOM_ID, self._display_name(self.path(), "")))
         try:
@@ -229,7 +233,12 @@ class ThemeLoader(Generic[T]):
             return choice
         if os.path.isfile(self.path()):
             return CUSTOM_ID
-        return APP_ID if self._app_theme is not None else DEFAULT_ID
+        return APP_ID if self._app_is_default else DEFAULT_ID
+
+    @property
+    def app_is_default(self) -> bool:
+        """O "Aimedget" é o visual padrão deste container (a galeria o chama de "Padrão")."""
+        return self._app_is_default
 
     def is_builtin(self, theme_id: str) -> bool:
         """Temas sem pasta (Padrão e Aimedget): não há arquivos para exportar."""
@@ -243,7 +252,7 @@ class ThemeLoader(Generic[T]):
 
     def fallback_id(self) -> str:
         """O visual de uma instalação nova ("Padrão"): para onde a escolha volta quando o tema em uso é excluído."""
-        return APP_ID if self._app_theme is not None else DEFAULT_ID
+        return APP_ID if self._app_is_default else DEFAULT_ID
 
     def is_protected(self, theme_id: str) -> bool:
         """Temas que o Hub não exclui: os sem pasta (Padrão/Windows) e os que vêm com o app (ex.: Keycap Digital)."""

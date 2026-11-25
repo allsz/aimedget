@@ -12,7 +12,7 @@ import time
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QPainter
+from PySide6.QtGui import QAction, QColor, QPainter
 
 from app.core.anchor_manager import anchor_bar_items, anchor_manager
 from app.core.config_manager import config_manager
@@ -41,7 +41,7 @@ from app.widgets.battery.card_state import (
 )
 
 
-_theme_cache = [0.0, THEME_DARK]
+_theme_cache = [0.0, THEME_DARK, None]   # (quando, modo do cartão, cor de destaque do app)
 
 
 def card_theme() -> str:
@@ -51,12 +51,21 @@ def card_theme() -> str:
     if now - _theme_cache[0] < 0.5:
         return _theme_cache[1]
     pref = config_manager.get_hub_theme("system")
+    hub = resolve_theme(pref)
     if pref == "true_dark":
         theme = THEME_BLACK
     else:
-        theme = THEME_DARK if resolve_theme(pref).is_dark else THEME_LIGHT
-    _theme_cache[0], _theme_cache[1] = now, theme
+        theme = THEME_DARK if hub.is_dark else THEME_LIGHT
+    _theme_cache[0], _theme_cache[1], _theme_cache[2] = now, theme, hub.accent
     return theme
+
+
+def card_accent() -> QColor | None:
+    """Cor do anel: a de destaque do app com "Seguir cor de destaque" ligado; senão None (o verde da paleta)."""
+    if not config_manager.get_battery("follow_accent", False):
+        return None
+    card_theme()   # atualiza o cache, se vencido
+    return QColor(_theme_cache[2]) if _theme_cache[2] else None
 
 
 def invalidate_card_theme():
@@ -70,13 +79,14 @@ class BatteryCard(FloatingCard):
     size_committed = Signal(float, float)      # tamanho escolhido no canto (soltou) ou por "redefinir"
     refresh_requested = Signal()
 
-    def __init__(self, desktop_mode: bool = False, size=lay.DEFAULT_SIZE, options: Optional[Options] = None):
+    def __init__(self, desktop_mode: bool = False, size=lay.DEFAULT_SIZE, options: Optional[Options] = None,
+                 scale: float = 1.0):
         w, h = (float(size[0]), float(size[1])) if size else lay.DEFAULT_SIZE
         self.state = BatteryState(base_w=w, base_h=h, options=options or Options(), animated=animations_enabled())
         self._last_tick = 0.0
         self._free_resize: Optional[tuple] = None
         cw, ch = self.state.card_size()
-        super().__init__(scale=1.0, desktop_mode=desktop_mode, card_w=cw, card_h=ch)
+        super().__init__(scale=scale, desktop_mode=desktop_mode, card_w=cw, card_h=ch)
 
     # --- Relógio ---
 
@@ -152,14 +162,17 @@ class BatteryCard(FloatingCard):
 
     def is_scale_animating(self) -> bool:
         """Para o alinhador do anchor: o TAMANHO do cartão ainda está assentando. Só as molas de largura/altura contam;
-        o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento."""
-        return not (self.state.W.settled() and self.state.H.settled())
+        o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento. A escala (controle de
+        Tamanho do Hub) também conta enquanto a mola dela anda."""
+        return self._scale_animator.is_active() or not (self.state.W.settled() and self.state.H.settled())
 
     def match_card_size(self, target_w: Optional[float] = None, target_h: Optional[float] = None,
                         animate: bool = False):
-        """Alinhar tamanho com um vizinho (anchor): muda a largura OU a altura escolhida, nunca a escala."""
-        w = float(target_w) if target_w is not None else self.state.base_w
-        h = float(target_h) if target_h is not None else self.state.base_h
+        """Alinhar tamanho com um vizinho (anchor): muda a largura OU a altura escolhida, nunca a escala. O alvo vem em
+        px de tela (o cartão do vizinho); o formato é guardado sem a escala, então divide por ela."""
+        s = self._scale or 1.0
+        w = float(target_w) / s if target_w is not None else self.state.base_w
+        h = float(target_h) / s if target_h is not None else self.state.base_h
         self.state.animated = animate and self._live()
         self.state.set_base_size(w, h)
         self._refresh()
@@ -168,7 +181,7 @@ class BatteryCard(FloatingCard):
     # --- Pintura ---
 
     def paint_card_content(self, p: QPainter, rect: QRectF, now: float):
-        paint_battery_card(p, rect, self.state, theme=card_theme(), now=now)
+        paint_battery_card(p, rect, self.state, theme=card_theme(), now=now, accent=card_accent())
 
     # --- Canto: tamanho livre ---
 
@@ -230,7 +243,6 @@ class BatteryCard(FloatingCard):
     def contextMenuEvent(self, event):
         theme = resolve_theme(config_manager.get_hub_theme("system"))
         menu = FluentMusicMenu(parent=self, theme=theme)
-        o = self.state.options
         menu.add_action_bar([
             ActionBarItem(key="refresh", icon="refresh", tooltip=t("battery_refresh_now"), close_menu=True,
                           on_trigger=self.refresh_requested.emit),
@@ -241,23 +253,13 @@ class BatteryCard(FloatingCard):
                           checked=self._desktop_mode, on_trigger=self.desktop_mode_changed.emit),
             *anchor_bar_items(self),
         ])
-        self._choice_menu(menu, theme, "battery_opt_face_title", "face", o.face, (
-            (FACE_HOVER, "battery_face_hover"), (FACE_ICON, "battery_face_icon"),
-            (FACE_PERCENT, "battery_face_percent"), (FACE_BOTH, "battery_face_both")))
-        self._choice_menu(menu, theme, "battery_opt_label_title", "label", o.label, (
-            (LABEL_NAME, "battery_label_name"), (LABEL_TYPE, "battery_label_type")))
-        self._choice_menu(menu, theme, "battery_opt_show_title", "show", o.show, (
-            (SHOW_ALL, "battery_show_all"), (SHOW_NAMES, "battery_show_names"),
-            (SHOW_HEADER, "battery_show_header"), (SHOW_NONE, "battery_show_none")))
-        self._choice_menu(menu, theme, "battery_opt_odd_title", "odd", o.odd, (
-            (lay.ODD_CENTER, "battery_odd_center"), (lay.ODD_LEFT, "battery_odd_left")))
-        act_count = QAction(t("battery_menu_show_count"), self)
-        menu.set_trailing_check(act_count, o.count)
-        act_count.triggered.connect(lambda _c=False: self.option_requested.emit("count", "off" if o.count else "on"))
-        menu.addAction(act_count)
-        act_reset = QAction(t("battery_reset_size"), self)
-        act_reset.triggered.connect(lambda _c=False: self.option_requested.emit("size", "reset"))
-        menu.addAction(act_reset)
+        follow = bool(config_manager.get_battery("follow_accent", False))
+        act_accent = QAction(t("battery_follow_accent_title"), self)
+        menu.set_trailing_check(act_accent, follow)
+        act_accent.triggered.connect(
+            lambda _c=False: self.option_requested.emit("follow_accent", "off" if follow else "on")
+        )
+        menu.addAction(act_accent)
         menu.addSeparator()
         act_configure = QAction(t("menu_configure_widget"), self)
         act_configure.triggered.connect(self.configure_requested.emit)

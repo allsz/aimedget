@@ -2,11 +2,17 @@
 
 from typing import Optional
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+)
 from app.core.i18n import t
+from app.hub.components.chips import chip
+from app.hub.components.help_badge import HelpBadge
+from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.hub.ui_tokens import BADGE_GAP, CARD_MARGINS, INFO_GAP, INLINE_GAP, PAGE_GAP
 
 
 class HubScrollArea(QScrollArea):
@@ -27,6 +33,9 @@ class BaseHubPage(QWidget):
     def __init__(self, title: str, subtitle: str, theme: HubTheme = THEME_LIGHT, parent=None):
         super().__init__(parent)
         self._theme = theme
+        self._texts: list[tuple[QLabel, str]] = []   # (rótulo, chave i18n) para retraduzir
+        self._subs: list[QLabel] = []                # legendas cinzas (a cor muda com o tema)
+        self._help_badges: list = []                 # (HelpBadge, chave i18n)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -39,7 +48,7 @@ class BaseHubPage(QWidget):
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(32, 28, 36, 32)
-        self.content_layout.setSpacing(18)
+        self.content_layout.setSpacing(PAGE_GAP)
 
         # Header padronizado
         self.lbl_title = QLabel(title)
@@ -70,6 +79,64 @@ class BaseHubPage(QWidget):
             if frame.property("class") == "HubCard":
                 frame.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
+    # --- Peças padrão das páginas (uma só versão para todas; espaçamentos de app/hub/ui_tokens.py) ---
+
+    def _card(self, vertical: bool = False):
+        card = QFrame()
+        card.setProperty("class", "HubCard")
+        layout = QVBoxLayout(card) if vertical else QHBoxLayout(card)
+        layout.setContentsMargins(*CARD_MARGINS)
+        return card, layout
+
+    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5, help_key: str | None = None) -> QVBoxLayout:
+        box = QVBoxLayout()
+        box.setSpacing(INFO_GAP)
+        title = QLabel(t(title_key))
+        title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
+        if help_key:
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(BADGE_GAP)
+            title_row.addWidget(title)
+            badge = HelpBadge(t(help_key), theme=self._theme)
+            title_row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
+            title_row.addStretch()
+            box.addLayout(title_row)
+            self._help_badges.append((badge, help_key))
+        else:
+            box.addWidget(title)
+        sub_txt = t(sub_key)
+        sub = QLabel(sub_txt)
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
+            sub.hide()
+        box.addWidget(sub)
+        self._texts += [(title, title_key), (sub, sub_key)]
+        self._subs.append(sub)
+        return box
+
+    @staticmethod
+    def _divider() -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setProperty("class", "HubDivider")
+        return sep
+
+    @staticmethod
+    def _chip(text: str, on_click) -> QPushButton:
+        return chip(text, on_click)
+
+    def _switch_row(self, col: QVBoxLayout, title_key: str, sub_key: str, checked: bool, on_toggle) -> PillSwitch:
+        row = QHBoxLayout()
+        row.setSpacing(INLINE_GAP)
+        row.addLayout(self._info(title_key, sub_key), stretch=1)
+        sw = PillSwitch(checked=checked, theme=self._theme)
+        sw.toggled.connect(on_toggle)
+        row.addWidget(sw)
+        col.addLayout(row)
+        return sw
+
     def set_header(self, title: str, subtitle: str):
         self.lbl_title.setText(title)
         self.lbl_sub.setText(subtitle)
@@ -91,11 +158,11 @@ class BaseHubPage(QWidget):
         card = QFrame()
         card.setProperty("class", "HubCard")
         row = QHBoxLayout(card)
-        row.setContentsMargins(18, 14, 18, 14)
-        row.setSpacing(16)
+        row.setContentsMargins(*CARD_MARGINS)
+        row.setSpacing(INLINE_GAP)
 
         info = QVBoxLayout()
-        info.setSpacing(3)
+        info.setSpacing(INFO_GAP)
         self.t_osd_pos = QLabel(t("osd_pos_title"))
         self.t_osd_pos.setStyleSheet("font-size: 14px; font-weight: 600;")
         self.s_osd_pos = QLabel(t(sub_key))

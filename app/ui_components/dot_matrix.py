@@ -241,8 +241,10 @@ def draw_dot_weather_icon(
     condition: str,
     rect: QRectF,
     opacity: float = 1.0,
+    color: QColor | None = None,
 ) -> None:
-    """Desenha ícone climático 9x9 em pontos circulares dentro de `rect`."""
+    """Desenha ícone climático 9x9 em pontos circulares dentro de `rect`. `color`: pontos neutros (padrão branco; no
+    tema "Aimedget" claro, o texto escuro do app). Chuva e raio mantêm o azul e o âmbar."""
     key = _icon_key(condition)
     grid = _DOT_ICONS[key]
     size = min(rect.width(), rect.height())
@@ -252,7 +254,7 @@ def draw_dot_weather_icon(
     r = step * 0.34
     alpha = max(0.0, min(1.0, opacity))
 
-    white = QColor(255, 255, 255)
+    white = QColor(color) if color is not None else QColor(255, 255, 255)
     white.setAlphaF(alpha)
     rain_blue = QColor(NOTHING_RAIN_BLUE)
     rain_blue.setAlphaF(alpha)

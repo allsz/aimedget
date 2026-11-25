@@ -42,6 +42,7 @@ class TestWidgetHubSync(unittest.TestCase):
 
     def test_weather_context_menu_units_sync_to_hub_page(self):
         orig_unit = config_manager.get_weather("units", "c")
+        orig_mode = config_manager.get_weather("forecast_mode", "daily")
         page = WeatherPage()
         try:
             page.controller.skin.units_changed.emit("f")
@@ -51,9 +52,35 @@ class TestWidgetHubSync(unittest.TestCase):
             page.controller.skin.units_changed.emit("c")
             self.assertEqual(page._unit_group.button("c").property("selected"), "true")
             self.assertEqual(page._unit_group.button("f").property("selected"), "false")
+
+            page.controller.skin.forecast_mode_changed.emit("hourly")
+            self.assertEqual(page.controller.forecast_mode(), "hourly")
+            self.assertEqual(page._forecast_group.button("hourly").property("selected"), "true")
+
+            page.controller.skin.forecast_mode_changed.emit("daily")
+            self.assertEqual(page.controller.forecast_mode(), "daily")
+            self.assertEqual(page._forecast_group.button("daily").property("selected"), "true")
         finally:
             page.close()
             config_manager.set_weather("units", orig_unit)
+            config_manager.set_weather("forecast_mode", orig_mode)
+
+    def test_battery_context_menu_follow_accent_syncs_to_hub_page(self):
+        from app.hub.battery_page import BatteryPage
+
+        orig = bool(config_manager.get_battery("follow_accent", False))
+        page = BatteryPage()
+        try:
+            page.controller.skin.option_requested.emit("follow_accent", "on")
+            self.assertTrue(bool(config_manager.get_battery("follow_accent", False)))
+            self.assertTrue(page.sw_accent.isChecked())
+
+            page.controller.skin.option_requested.emit("follow_accent", "off")
+            self.assertFalse(bool(config_manager.get_battery("follow_accent", False)))
+            self.assertFalse(page.sw_accent.isChecked())
+        finally:
+            page.close()
+            config_manager.set_battery("follow_accent", orig)
 
 
 if __name__ == "__main__":

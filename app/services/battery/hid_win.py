@@ -145,6 +145,10 @@ def _load():
     hid.HidD_GetProductString.restype = wintypes.BOOLEAN
     hid.HidD_GetSerialNumberString.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
     hid.HidD_GetSerialNumberString.restype = wintypes.BOOLEAN
+    hid.HidD_SetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
+    hid.HidD_SetFeature.restype = wintypes.BOOLEAN
+    hid.HidD_GetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
+    hid.HidD_GetFeature.restype = wintypes.BOOLEAN
     _libs = (k32, sapi, hid)
     return _libs
 
@@ -248,6 +252,7 @@ class HidHandle:
         if not libs:
             raise OSError("HID indisponível")
         self._k32 = libs[0]
+        self._hid = libs[2]
         access = GENERIC_READ | (GENERIC_WRITE if write else 0)
         self._h = _open(info.path, access)
         if self._h is None:
@@ -298,6 +303,12 @@ class HidHandle:
             return None
         return buf.raw[: n.value]
 
+    def set_feature(self, data: bytes) -> bool:
+        """Envia um relatório de recurso (o primeiro byte é o id), completado até o tamanho da coleção."""
+        size = max(len(data), int(self.info.feature_len) or len(data))
+        buf = ctypes.create_string_buffer(bytes(data).ljust(size, b"\x00"), size)
+        return bool(self._hid.HidD_SetFeature(self._h, buf, size))
+
     def write(self, data: bytes, timeout_ms: int = 300) -> bool:
         k32 = self._k32
         size = max(len(data), int(self.info.output_len) or len(data))
@@ -318,6 +329,45 @@ class HidHandle:
             return bool(k32.GetOverlappedResult(self._h, ctypes.byref(ov), ctypes.byref(n), False))
         finally:
             k32.CloseHandle(ev)
+
+
+class FeatureHandle:
+    """Uma coleção aberta só para relatórios de recurso. Tenta leitura+escrita e, se o Windows segurar a coleção
+    (a de mouse/teclado do sistema), abre sem acesso: HidD_SetFeature/HidD_GetFeature funcionam assim também."""
+
+    def __init__(self, info: HidInfo):
+        self.info = info
+        libs = _load()
+        if not libs:
+            raise OSError("HID indisponível")
+        self._k32, self._hid = libs[0], libs[2]
+        self._h = _open(info.path, GENERIC_READ | GENERIC_WRITE) or _open(info.path, 0)
+        if self._h is None:
+            raise OSError(f"não abriu {info.path}")
+
+    def close(self):
+        if self._h is not None:
+            self._k32.CloseHandle(self._h)
+            self._h = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def set_feature(self, data: bytes) -> bool:
+        size = max(len(data), int(self.info.feature_len) or len(data))
+        buf = ctypes.create_string_buffer(bytes(data).ljust(size, b"\x00"), size)
+        return bool(self._hid.HidD_SetFeature(self._h, buf, size))
+
+    def get_feature(self, report_id: int = 0) -> Optional[bytes]:
+        size = max(1, int(self.info.feature_len))
+        buf = ctypes.create_string_buffer(size)
+        buf[0] = report_id
+        if not self._hid.HidD_GetFeature(self._h, buf, size):
+            return None
+        return buf.raw
 
 
 class SP_DEVINFO_DATA(ctypes.Structure):

@@ -24,10 +24,11 @@ from app.services.battery import (
     bluetooth,
     hid_win,
     logitech,
+    mouse_1k,
+    razer,
     sony,
     switch_pro,
     system_events,
-    vxe,
     xinput,
 )
 from app.services.battery.models import BatteryDevice, sort_devices
@@ -48,6 +49,9 @@ BURST_DELAYS_S = (0.3, 1.0, 3.0, 6.0)
 # Fontes que mandam dados sem parar (controles): sumir de uma leitura = desligado/desconectado, sem carência.
 # O Bluetooth genérico entra aqui também: o "conectado" do Windows é confiável, então sumir é ter desconectado.
 STREAMING_SOURCES = frozenset({"xinput", "sony", "switch", bluetooth.SOURCE})
+# Fontes que sabem se o aparelho (dongle/mouse no cabo) ainda está espetado: quem sumiu e não está mais espetado sai
+# na hora, sem carência (a carência é para mouse dormindo, com o dongle ainda no PC).
+PRESENCE_SOURCES = frozenset({f.source for f in mouse_1k.FAMILIES} | {razer.SOURCE})
 CONFIRM_DELAY_S = 0.5     # controle faltou uma vez: lê de novo em seguida para confirmar
 ACTIVITY_CHECK_S = 1.0
 ACTIVITY_GAP_S = 5.0
@@ -62,7 +66,8 @@ DEDICATED_SOURCES = {
     sony.SONY_VID: {"sony"},
     switch_pro.NINTENDO_VID: {"switch"},
     logitech.LOGI_VID: {"logitech"},
-    vxe.VXE_VID: {"vxe"},
+    **{f.vid: {f.source} for f in mouse_1k.FAMILIES},
+    razer.RAZER_VID: {razer.SOURCE},
     MICROSOFT_VID: {"xinput"},
 }
 
@@ -81,7 +86,7 @@ _pool: Optional[ThreadPoolExecutor] = None
 def _executor() -> ThreadPoolExecutor:
     global _pool
     if _pool is None:
-        _pool = ThreadPoolExecutor(max_workers=5, thread_name_prefix="BatteryRead")
+        _pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="BatteryRead")
     return _pool
 
 
@@ -96,6 +101,23 @@ def _timed(name: str, fn: Callable[[], list], times: dict) -> list:
         times[name] = time.monotonic() - t0
 
 
+class Reading(list):
+    """Uma leitura (lista de dispositivos) e, das fontes por dongle/cabo, quais aparelhos ainda estão espetados.
+    `present=None`: a leitura não sabe dizer (o leitor de teste, uma leitura que falhou)."""
+
+    def __init__(self, devices=(), present: Optional[set] = None):
+        super().__init__(devices)
+        self.present = present
+
+
+def present_ids(hids: list) -> set[str]:
+    try:
+        return mouse_1k.present_ids(hids) | razer.present_ids(hids)
+    except Exception:  # noqa: BLE001 - sem essa informação vale a carência normal
+        log.exception("battery: present ids")
+        return set()
+
+
 def read_all_sources() -> list[BatteryDevice]:
     """Fontes em paralelo (a leitura leva o tempo da mais lenta, não a soma). O Bluetooth genérico do Windows vem
     depois, porque pula o que as outras já entregaram."""
@@ -103,19 +125,21 @@ def read_all_sources() -> list[BatteryDevice]:
     times: dict[str, float] = {}
     pool = _executor()
     xin = pool.submit(_timed, "xinput", xinput.read_devices, times)
-    hids = _timed("enumerate", lambda: hid_win.enumerate_hid(
-        {sony.SONY_VID, logitech.LOGI_VID, switch_pro.NINTENDO_VID, vxe.VXE_VID, MICROSOFT_VID}), times)
+    vendors = {sony.SONY_VID, logitech.LOGI_VID, switch_pro.NINTENDO_VID, MICROSOFT_VID, razer.RAZER_VID}
+    hids = _timed("enumerate", lambda: hid_win.enumerate_hid(vendors | mouse_1k.vendor_ids()), times)
     hid_jobs = [pool.submit(_timed, name, (lambda fn=fn: fn(hids)), times)
                 for name, fn in (("sony", sony.read_devices), ("switch", switch_pro.read_devices),
-                                 ("logitech", logitech.read_devices), ("vxe", vxe.read_devices))]
+                                 ("logitech", logitech.read_devices), ("mouse_1k", mouse_1k.read_devices),
+                                 ("razer", razer.read_devices))]
     devices: list[BatteryDevice] = list(xin.result())
     for job in hid_jobs:                    # ordem fixa: a saída não depende de quem terminou antes
         devices += job.result()
+    pool.submit(mouse_1k.log_candidates)    # uma vez por execução, fora do caminho da leitura
     skip = bluetooth_skip(hids, devices)
     devices += _timed("bluetooth", lambda: bluetooth.read_devices(skip), times)
     log.debug("battery: read %.2fs (%s)", time.monotonic() - t0,
               ", ".join(f"{k} {v:.2f}" for k, v in sorted(times.items())))
-    return devices
+    return Reading(devices, present_ids(hids))
 
 
 class DeviceTracker:
@@ -155,19 +179,22 @@ class DeviceTracker:
         return prev
 
     def update(self, reading: list[BatteryDevice], count_misses: bool = True,
-               drop_missing: bool = False) -> list[BatteryDevice]:
+               drop_missing: bool = False, present: Optional[set] = None) -> list[BatteryDevice]:
         """Quem some:
         - controle (fonte em STREAMING_SOURCES): sai na hora, em qualquer leitura; ele manda dados sem parar, então
           não responder é estar desligado ou fora de alcance;
         - pelo dongle (mouse/teclado): pode só estar dormindo. `count_misses=False` (leituras extras) não gasta a
           carência; senão um mouse dormindo sairia só porque outro dispositivo foi ligado;
         - `drop_missing=True` (atualizar à mão): todo mundo que não respondeu sai, e a carga vale como veio (sem
-          segurar a leitura "para trás")."""
+          segurar a leitura "para trás");
+        - fonte em PRESENCE_SOURCES cujo aparelho não está em `present` (dongle tirado): sai na hora."""
         now = {d.id: d for d in reading}
         for dev_id in list(self._last):
             if dev_id in now:
                 continue
-            if drop_missing:
+            unplugged = (present is not None and self._last[dev_id].source in PRESENCE_SOURCES
+                         and dev_id not in present)
+            if drop_missing or unplugged:
                 self._forget(dev_id)
                 continue
             if self._last[dev_id].source in STREAMING_SOURCES:
@@ -356,7 +383,8 @@ class BatteryService(QObject):
             self.reads += 1
             if self._stop.is_set():
                 break
-            devices = self._tracker.update(reading, count_misses=regular, drop_missing=manual)
+            devices = self._tracker.update(reading, count_misses=regular, drop_missing=manual,
+                                           present=getattr(reading, "present", None))
             ids = frozenset(d.id for d in devices)
             read_ids = frozenset(d.id for d in reading)
             done = time.monotonic()

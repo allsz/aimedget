@@ -9,6 +9,7 @@ Fontes escolhidas por estabilidade, sem dependências novas (só ctypes):
 - `logitech`: HID++ 2.0 pelo receptor (Bolt/Unifying/Lightspeed) ou Bluetooth direto (Unified Battery 0x1004 /
   Battery Status 0x1000), o mesmo caminho do Solaar.
 - `vxe`: mouses VXE/ATK pelo dongle "Mouse 1K" (relatório de fabricante de 17 bytes, o mesmo do app web da ATK).
+- `ajazz`: mouses AJAZZ pelo dongle "2.4G Wireless Receiver" (o pacote dos VXE, pedido por relatório de recurso).
 - `bluetooth`: a carga que o Windows guarda para qualquer dispositivo Bluetooth conectado (fones pelo HFP,
   dispositivos LE pelo GATT), sem código por marca. Quem já tem leitor próprio é pulado pelo endereço.
 

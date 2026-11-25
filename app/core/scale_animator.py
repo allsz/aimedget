@@ -27,6 +27,7 @@ class ScaleAnimator(QObject):
         self._k, self._c = spring
         self._tol = tolerance
         self._x = self._v = self._target = 0.0
+        self._dir = 1.0
         self._last = 0.0
         self._timer = FrameTimer(self)
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -47,6 +48,7 @@ class ScaleAnimator(QObject):
             self._last = time.perf_counter()
             self._timer.setInterval(refresh_interval_ms(self._owner))   # taxa do monitor onde o widget está agora
             self._timer.start()
+        self._dir = 1.0 if self._target >= self._x else -1.0   # lado de onde vem: cruzar o alvo = chegou
 
     def stop(self):
         """Para onde está (o usuário assumiu o controle)."""
@@ -67,7 +69,9 @@ class ScaleAnimator(QObject):
             a = -self._k * (self._x - self._target) - self._c * self._v
             self._v += a * sub
             self._x += self._v * sub
-        if abs(self._x - self._target) < self._tol and abs(self._v) < self._tol * 13.0:
+        # A 320/30 é levemente subamortecida (passaria ~0,2% do alvo e voltaria 1 px): ao cruzar o alvo, para nele.
+        crossed = (self._target - self._x) * self._dir <= 0.0
+        if crossed or (abs(self._x - self._target) < self._tol and abs(self._v) < self._tol * 13.0):
             self._timer.stop()
             self._apply(self._target)
         else:

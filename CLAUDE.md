@@ -11,6 +11,10 @@ que estiverem secas.
   subpassos): veja `Spring` em `app/hub/components/city_list.py`. Valores já usados: MORPH 320/20, PRESS 520/20,
   LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30, CLOSE 280/34 (fechar/reabrir fileiras de
   um grupo de ancoragem, sem passar do ponto; `app/core/anchor_manager.py`). Curvas: `app/widgets/weather/motion.py`.
+- **Troca de tema/aparência:** escolher um tema = `theme_crossfade` (160 ms, saída cúbica). Trocar o MODO claro/escuro
+  (manual ou seguindo o Windows) = `mode_crossfade` (300 ms, in-out, sem encolher; cartões flutuantes:
+  `begin_skin_crossfade(MODE_DURATION_MS, mode_switch=True)`), com a barra de título nativa do Hub mudando de cor
+  junto, quadro a quadro (`app/core/theme_crossfade.py`, protótipo `mockups/theme-mode-transition.html`, variante C).
 - **Exemplos prontos no app:** entrada "Unfold and rise", remoção com check, arrastar para reordenar (levanta, as
   vizinhas deslizam, assenta) em `city_list.py`; onda de pontos e assentar do cartão no Weather Widget.
 - **Respeite o Windows:** com `animations_enabled()` (app/core/widget_animator.py) falso, tudo acontece na hora.
@@ -36,6 +40,18 @@ O app adota redação minimalista e precisa (veja a skill completa em `.agents/s
 - **Zero jargão interno:** não exponha nomes de APIs/bibliotecas (`Open-Meteo`, `GSMTC`, etc.) nem termos de código em
   rótulos voltados ao usuário.
 - **Botões e chips:** 1–2 palavras no máximo; paridade natural entre `pt` e `en` em `app/core/i18n.py`.
+
+## Espaçamento e peças padrão do Hub (obrigatório)
+
+- **Nada de número solto:** espaçamentos e margens vêm de `app/hub/ui_tokens.py` (`CARD_MARGINS`, `ROWS_GAP`,
+  `INLINE_GAP`, `CHIP_GAP`, `STACK_GAP`, ...). Precisa de um valor novo? Crie o token lá, com comentário dizendo onde
+  se usa; nunca um `setSpacing(7)` na página.
+- **Peças prontas:** cartão, título+subtítulo, divisor, linha com switch e chip vêm de `BaseHubPage` (`_card`,
+  `_info`, `_divider`, `_switch_row`, `_chip`); nunca recopie essas funções numa página. Botões lado a lado sempre em
+  `chip_row(...)` (`app/hub/components/chips.py`), que já traz o vão.
+- **Um dono por vão:** o espaço entre dois itens pertence ao layout pai. Um item não põe margem em volta de si. Exceção:
+  vão que abre/fecha junto com o item (`Fold`, linhas da `CityList`) fica dentro dele, e o vizinho desconta (ex.:
+  `STACK_GAP - LIST_ROW_GAP`).
 
 ## Armadilhas do Qt já encontradas
 

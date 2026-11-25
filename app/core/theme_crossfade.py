@@ -14,13 +14,18 @@ Uso (ao redor de QUALQUER mudança de aparência que o usuário pediu e que o wi
 transparente para o mouse mostra a foto por cima, sumindo em DURATION_MS. O primeiro quadro é idêntico à foto, então
 não há salto. Se a janela mudar de tamanho/posição por causa do tema (margem da arte, inclinação), a foto continua no
 mesmo ponto da tela. Sem "Efeitos de animação" do Windows, ou com o widget oculto, o bloco só aplica.
+
+Troca de MODO (claro/escuro/true dark, manual ou seguindo o Windows): `mode_crossfade(...)`, mais longa e suave
+(MODE_DURATION_MS, curva in-out, sem encolher), escolhida no protótipo mockups/theme-mode-transition.html (variante C).
+Na troca de modo a janela inteira muda; uma dissolvência curta de saída rápida parecia corte. `on_progress(e)` recebe a
+mesma curva a cada quadro (o Hub pinta a barra de título nativa junto com a dissolvência).
 """
 
 from __future__ import annotations
 
 import time
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QPainter, QPixmap
@@ -32,6 +37,7 @@ from app.core.widget_animator import animations_enabled
 
 DURATION_MS = 160
 SHRINK = 0.025   # quanto a aparência antiga encolhe ao sair (fração)
+MODE_DURATION_MS = 300   # troca claro/escuro: protótipo mockups/theme-mode-transition.html, variante C
 
 
 def ease_out_cubic(t: float) -> float:
@@ -39,10 +45,18 @@ def ease_out_cubic(t: float) -> float:
     return 1.0 - (1.0 - t) ** 3
 
 
+def ease_in_out_cubic(t: float) -> float:
+    """Começa e termina devagar: a curva da troca de modo (claro/escuro)."""
+    t = max(0.0, min(1.0, t))
+    return 4.0 * t * t * t if t < 0.5 else 1.0 - (-2.0 * t + 2.0) ** 3 / 2.0
+
+
 class ThemeCrossfade(QWidget):
     """Camada filha, transparente para o mouse, que dissolve a foto antiga por cima do widget já com o tema novo."""
 
-    def __init__(self, host: QWidget, snapshot: QPixmap, origin: QPoint, duration_ms: int, shrink: float):
+    def __init__(self, host: QWidget, snapshot: QPixmap, origin: QPoint, duration_ms: int, shrink: float,
+                 ease: Callable[[float], float] = ease_out_cubic,
+                 on_progress: Optional[Callable[[float], None]] = None):
         """`origin`: onde a área útil do widget estava NA TELA quando a foto foi tirada."""
         super().__init__(host)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -53,6 +67,8 @@ class ThemeCrossfade(QWidget):
         self._shift = QPoint(0, 0)              # quanto a foto fica deslocada no widget (fixado em run())
         self._duration = max(0.04, duration_ms / 1000.0)
         self._shrink = float(shrink)
+        self._ease = ease
+        self._on_progress = on_progress   # recebe a curva (0..1) a cada quadro e 1.0 ao terminar
         self._t0 = 0.0
         self._timer = FrameTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -85,6 +101,7 @@ class ThemeCrossfade(QWidget):
     def stop(self):
         """Termina na hora e libera a camada (nunca setParent(None): oculta e apaga)."""
         self._timer.stop()
+        self._notify(1.0)   # quem acompanha (barra de título) termina no estado final, mesmo se interrompido
         host = self._host()
         if host is not None:
             host.removeEventFilter(self)
@@ -108,17 +125,26 @@ class ThemeCrossfade(QWidget):
             pass
         return False
 
+    def _notify(self, e: float):
+        cb, self._on_progress = self._on_progress, (self._on_progress if e < 1.0 else None)
+        if cb is not None:
+            try:
+                cb(e)
+            except RuntimeError:   # janela destruída no meio
+                pass
+
     def _tick(self):
         if self.progress() >= 1.0:
             self.stop()
         else:
+            self._notify(self._ease(self.progress()))
             self.update()
 
     # --- Desenho ---
 
     def paintEvent(self, _event):
         p = QPainter(self)
-        e = ease_out_cubic(self.progress())
+        e = self._ease(self.progress())
         shift = self._shift
         w = self._snapshot.width() / max(1.0, self._snapshot.devicePixelRatio())
         h = self._snapshot.height() / max(1.0, self._snapshot.devicePixelRatio())
@@ -134,7 +160,9 @@ class ThemeCrossfade(QWidget):
         p.end()
 
 
-def begin_theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrink: float = SHRINK) -> Optional[ThemeCrossfade]:
+def begin_theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrink: float = SHRINK,
+                          ease: Callable[[float], float] = ease_out_cubic,
+                          on_progress: Optional[Callable[[float], None]] = None) -> Optional[ThemeCrossfade]:
     """Tira a foto do widget (se vale a pena animar) e devolve a camada; `run()` dela começa a dissolver."""
     if not isinstance(widget, QWidget) or not animations_enabled():
         return None
@@ -143,9 +171,10 @@ def begin_theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrin
     previous = getattr(widget, "_theme_crossfade", None)
     if previous is not None:
         previous.hide()          # a foto nova não pode incluir a camada anterior
+        previous._on_progress = None   # a nova transição continua a barra de título de onde ela está, sem salto
         previous.stop()
     snapshot = widget.grab()
-    layer = ThemeCrossfade(widget, snapshot, widget.mapToGlobal(QPoint(0, 0)), duration_ms, shrink)
+    layer = ThemeCrossfade(widget, snapshot, widget.mapToGlobal(QPoint(0, 0)), duration_ms, shrink, ease, on_progress)
     widget._theme_crossfade = layer
     return layer
 
@@ -162,3 +191,19 @@ def theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrink: flo
         raise
     if layer is not None:
         layer.run()
+
+
+@contextmanager
+def mode_crossfade(widget: QWidget, on_progress: Optional[Callable[[float], None]] = None) -> Iterator[None]:
+    """Troca de modo claro/escuro: 300 ms, curva in-out, sem encolher. Sem animação, `on_progress(1.0)` na hora."""
+    layer = begin_theme_crossfade(widget, MODE_DURATION_MS, 0.0, ease_in_out_cubic, on_progress)
+    try:
+        yield
+    except BaseException:
+        if layer is not None:
+            layer.stop()
+        raise
+    if layer is not None:
+        layer.run()
+    elif on_progress is not None:
+        on_progress(1.0)

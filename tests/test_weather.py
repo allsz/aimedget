@@ -796,6 +796,22 @@ class TestCitiesCardNoJitter(TestAddCityNoStrayWindow):
         self.assertTrue(up or down, f"a altura foi e voltou: {sorted(set(heights))} ({heights[:3]}..{heights[-3:]})")
         self.assertNotEqual(heights[0], heights[-1])
 
+    def test_add_my_location_button_has_equal_space_above_and_below(self):
+        """O espaço entre a última cidade e o botão é o mesmo que entre o botão e a busca."""
+        from app.hub.ui_tokens import LIST_ROW_GAP
+        page = self._page()
+        card = page.city_list.parentWidget()
+        self.assertTrue(page.btn_add_auto.isVisible())
+
+        def top_of(w):
+            return w.mapTo(card, w.rect().topLeft()).y()
+
+        list_bottom = top_of(page.city_list) + page.city_list.height() - LIST_ROW_GAP   # a folga final da lista não é conteúdo
+        above = top_of(page.btn_add_auto) - list_bottom
+        below = top_of(page.search_box) - (top_of(page.btn_add_auto) + page.btn_add_auto.height())
+        self.assertEqual(above, below)
+        page.close()
+
     def test_add_my_location_grows_without_dip(self):
         page = self._page()
         self.assertTrue(page.fold_auto.isVisible())

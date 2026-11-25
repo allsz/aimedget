@@ -32,8 +32,9 @@ from app.core.widget_animator import animations_enabled
 from app.hub.theme import HubTheme
 from app.widgets.weather.motion import cubic_bezier
 from app.core.frame_clock import FrameTimer
+from app.hub.ui_tokens import LIST_ROW_GAP
 
-ROW_GAP = 6                  # espaço entre linhas (fica DENTRO da linha, para fechar junto com ela ao sair)
+ROW_GAP = LIST_ROW_GAP        # espaço entre linhas (fica DENTRO da linha, para fechar junto com ela ao sair)
 
 QWIDGETSIZE_MAX = (1 << 24) - 1
 

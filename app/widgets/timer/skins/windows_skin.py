@@ -511,10 +511,12 @@ class WindowsTimerSkin(BaseTimerSkin):
                 if config_manager.is_timer_position_remembered():
                     origin = self.square_origin()
                     config_manager.save_timer_position(origin.x(), origin.y())
+                self.drag_finished.emit()
 
             if was_resizing:
                 self._is_resizing = False
                 config_manager.save_timer_size(self.square_side(), self.square_side())
+                self.size_committed.emit(self.square_side())
 
             if self.pressed_btn == "close" and hit == "close":
                 self.close_requested.emit()

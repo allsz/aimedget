@@ -12,7 +12,7 @@ dos textos >= 4,5:1 nos três temas.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QByteArray, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
@@ -63,6 +63,9 @@ PALETTES = {
                          QColor("#2c2d2c"), QColor("#14c414"), QColor("#d9922a")),
 }
 
+# Bateria fraca com "Seguir cor de destaque": vermelho, legível no fundo de cada tema
+LOW_RED = {THEME_DARK: "#ff5a4f", THEME_LIGHT: "#d93a2f", THEME_BLACK: "#ff5a4f"}
+
 _ICON_PATHS = {
     KIND_MOUSE: '<rect x="4.5" y="1.5" width="7" height="13" rx="3.5"/><path d="M8 4.5v2.5"/>',
     KIND_KEYBOARD: '<rect x="1.5" y="3.5" width="13" height="9" rx="2"/>'
@@ -108,8 +111,13 @@ def count_label(n: int) -> str:
     return t("battery_count_one") if n == 1 else t("battery_count").format(n=n)
 
 
-def paint_battery_card(p: QPainter, rect: QRectF, state: BatteryState, theme: str = THEME_DARK, now: float = 0.0):
+def paint_battery_card(p: QPainter, rect: QRectF, state: BatteryState, theme: str = THEME_DARK, now: float = 0.0,
+                       accent: QColor | None = None):
+    """`accent`: "Seguir cor de destaque" ligado: o anel e a bolinha de carga usam a cor do app em vez do verde
+    (bateria fraca vira vermelho: o âmbar de alerta se confundiria com destaques quentes, como o laranja padrão)."""
     pal = PALETTES.get(theme, PALETTES[THEME_DARK])
+    if accent is not None:
+        pal = replace(pal, ok=QColor(accent), low=QColor(LOW_RED.get(theme, LOW_RED[THEME_DARK])))
     W, H = max(1.0, state.W.x), max(1.0, state.H.x)
     s = rect.width() / W
 

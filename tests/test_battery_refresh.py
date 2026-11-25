@@ -367,16 +367,18 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.sony, "read_devices", slow("sony")), \
                 mock.patch.object(svc.switch_pro, "read_devices", slow("switch")), \
                 mock.patch.object(svc.logitech, "read_devices", slow("logitech")), \
-                mock.patch.object(svc.vxe, "read_devices", slow("vxe")), \
+                mock.patch.object(svc.mouse_1k, "read_devices", slow("mouse_1k")), \
+                mock.patch.object(svc.razer, "read_devices", slow("razer")), \
+                mock.patch.object(svc.mouse_1k, "log_candidates", lambda: None), \
                 mock.patch.object(svc.bluetooth, "read_devices", lambda skip: [dev("bluetooth")]), \
                 mock.patch.object(svc, "bluetooth_skip", skip):
             t0 = time.monotonic()
             out = REAL_READ()
             elapsed = time.monotonic() - t0
         self.assertEqual([d.id for d in out],
-                         ["xinput", "sony", "switch", "logitech", "vxe", "bluetooth"])
-        self.assertLess(elapsed, 0.6)           # em série seriam 1.0 s
-        self.assertEqual(seen, {"n": 5})        # o Bluetooth genérico vê tudo das outras
+                         ["xinput", "sony", "switch", "logitech", "mouse_1k", "razer", "bluetooth"])
+        self.assertLess(elapsed, 0.6)           # em série seriam 1.2 s
+        self.assertEqual(seen, {"n": 6})        # o Bluetooth genérico vê tudo das outras
 
     def test_broken_source_does_not_break_others(self):
         def boom(*_a):
@@ -386,7 +388,9 @@ class ParallelReadTests(unittest.TestCase):
                 mock.patch.object(svc.sony, "read_devices", lambda h: [dev("sony")]), \
                 mock.patch.object(svc.switch_pro, "read_devices", boom), \
                 mock.patch.object(svc.logitech, "read_devices", lambda h: []), \
-                mock.patch.object(svc.vxe, "read_devices", lambda h: []), \
+                mock.patch.object(svc.mouse_1k, "read_devices", lambda h: []), \
+                mock.patch.object(svc.razer, "read_devices", lambda h: []), \
+                mock.patch.object(svc.mouse_1k, "log_candidates", lambda: None), \
                 mock.patch.object(svc.bluetooth, "read_devices", boom), \
                 self.assertLogs("app.services.battery.service", "ERROR"):
             out = REAL_READ()
@@ -414,6 +418,47 @@ class SystemEventTests(unittest.TestCase):
         msg.message = 0x0010
         f.nativeEventFilter(b"windows_generic_MSG", addressof(msg))
         self.assertEqual(got, ["resume"])
+
+
+class UnpluggedTests(unittest.TestCase):
+    """Dongle tirado do PC: o cartão sai na hora, sem a carência de mouse dormindo."""
+
+    @staticmethod
+    def mouse(i, source="ajazz"):
+        return BatteryDevice(id=i, name=i, kind="mouse", percent=50.0, source=source)
+
+    def test_unplugged_dongle_leaves_at_once_even_in_extra_reads(self):
+        tr = DeviceTracker()
+        tr.update([self.mouse("ajazz:dongle")], present={"ajazz:dongle"})
+        out = tr.update([self.mouse("ajazz:cabo")], count_misses=False, present={"ajazz:cabo"})
+        self.assertEqual([d.id for d in out], ["ajazz:cabo"])
+
+    def test_sleeping_mouse_with_dongle_plugged_keeps_the_grace(self):
+        tr = DeviceTracker()
+        tr.update([self.mouse("ajazz:dongle")], present={"ajazz:dongle"})
+        for _ in range(svc.GRACE_POLLS):
+            out = tr.update([], present={"ajazz:dongle"})
+            self.assertEqual([d.id for d in out], ["ajazz:dongle"])
+        self.assertEqual(tr.update([], present={"ajazz:dongle"}), [])
+
+    def test_unknown_presence_and_other_sources_keep_the_grace(self):
+        tr = DeviceTracker()
+        tr.update([self.mouse("ajazz:dongle"), self.mouse("logi:1", "logitech")])
+        self.assertEqual(len(tr.update([], present=None)), 2)        # leitura que não sabe dizer
+        out = tr.update([], present=set())                            # Logitech não informa presença
+        self.assertEqual([d.id for d in out], ["logi:1"])
+
+    def test_service_drops_unplugged_dongle_on_the_burst(self):
+        state = {"r": svc.Reading([self.mouse("ajazz:dongle")], {"ajazz:dongle"})}
+        s = BatteryService(reader=lambda: state["r"], interval_s=60.0, burst_delays=(0.05,))
+        s.start()
+        try:
+            self.assertTrue(wait_until(lambda: s.reads >= 1 and s.last_devices))
+            state["r"] = svc.Reading([], set())                       # dongle tirado: aviso do Windows
+            s.notify_change("device")
+            self.assertTrue(wait_until(lambda: s.last_devices == []))
+        finally:
+            s.stop()
 
 
 if __name__ == "__main__":

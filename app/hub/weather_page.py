@@ -13,7 +13,6 @@ from app.hub.components.city_list import CityList
 from app.hub.components.collapsible_section import skin_and_theme_block
 from app.hub.components.fold import Fold
 from app.hub.components.help_badge import HelpBadge
-from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
@@ -28,10 +27,10 @@ from app.widgets.weather import font_skins, init_weather_skin_specs
 from app.widgets.weather.theme import loader as weather_theme_loader
 from app.widgets.weather.theme_specs import make_theme_spec as make_weather_theme_spec
 from app.services.weather_service import MAX_CITIES, city_key
+from app.hub.ui_tokens import LIST_ROW_GAP, ROWS_GAP, STACK_GAP
 
 SEARCH_DEBOUNCE_MS = 450
 MAX_RESULTS = 6
-CITY_GAP = 10   # espaço entre os itens do cartão de cidades
 
 _SOURCE_OPTIONS = (
     ("auto", "weather_model_auto", "weather_model_auto_origin"),
@@ -155,9 +154,6 @@ class WeatherPage(BaseHubPage):
         self.bridge = get_service_bridge()
         self.controller = self.bridge.weather_controller
         self.service = self.controller.service
-        self._texts: list = []      # (QLabel, chave i18n)
-        self._subs: list = []       # legendas cinzas (a cor muda com o tema)
-        self._help_badges: list = []
         self._bento_cells: list[QFrame] = []
         self._bento_titles: list[tuple[QLabel, str]] = []
         self._result_buttons: list = []
@@ -173,60 +169,6 @@ class WeatherPage(BaseHubPage):
         self.bridge.weather_skin_changed.connect(self._sync_skin_selection)
 
     # --- Construção ---
-
-    def _card(self, vertical: bool = False):
-        card = QFrame()
-        card.setProperty("class", "HubCard")
-        layout = QVBoxLayout(card) if vertical else QHBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        return card, layout
-
-    def _info(self, title_key: str, sub_key: str, title_px: float = 13.5, help_key: str | None = None) -> QVBoxLayout:
-        box = QVBoxLayout()
-        box.setSpacing(2)
-        title = QLabel(t(title_key))
-        title.setStyleSheet(f"font-size: {title_px}px; font-weight: 600;")
-        if help_key:
-            title_row = QHBoxLayout()
-            title_row.setContentsMargins(0, 0, 0, 0)
-            title_row.setSpacing(6)
-            title_row.addWidget(title)
-            badge = HelpBadge(t(help_key), theme=self._theme)
-            title_row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
-            title_row.addStretch()
-            box.addLayout(title_row)
-            self._help_badges.append((badge, help_key))
-        else:
-            box.addWidget(title)
-        sub_txt = t(sub_key)
-        sub = QLabel(sub_txt)
-        sub.setWordWrap(True)
-        sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
-        if not bool(sub_txt):   # sem pai ainda: setVisible(True) abriria uma janela solta; só oculta o vazio
-            sub.hide()
-        box.addWidget(sub)
-        self._texts += [(title, title_key), (sub, sub_key)]
-        self._subs.append(sub)
-        return box
-
-    def _divider(self) -> QFrame:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setProperty("class", "HubDivider")
-        return sep
-
-    def _chip(self, text: str, on_click) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setProperty("class", "Chip")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(on_click)
-        return btn
-
-    @staticmethod
-    def _set_selected(btn: QPushButton, selected: bool):
-        btn.setProperty("selected", "true" if selected else "false")
-        btn.style().unpolish(btn)
-        btn.style().polish(btn)
 
     def _build_ui(self):
         # 1. Posição
@@ -262,7 +204,7 @@ class WeatherPage(BaseHubPage):
             appliers=self.bridge.theme_appliers(),
             parent=self,
             subtitle_key="theme_picker_sub_weather",
-            default_title_key="theme_default_timer",
+            default_title_key="theme_default_nothing",
         )
         skin_block, self.theme_section = skin_and_theme_block(
             card,
@@ -298,17 +240,18 @@ class WeatherPage(BaseHubPage):
         self.lbl_empty.setWordWrap(True)
         self.lbl_empty.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
         self._subs.append(self.lbl_empty)
-        self.fold_empty = Fold(self.lbl_empty, gap=CITY_GAP)
+        self.fold_empty = Fold(self.lbl_empty, gap=STACK_GAP)
         col.addWidget(self.fold_empty)
-        col.addSpacing(CITY_GAP)
+        col.addSpacing(STACK_GAP)
         self.city_list = CityList(self._theme, card)
         self.city_list.moved.connect(self.service.move_city)
         self.city_list.removed.connect(self.service.remove_city)
         col.addWidget(self.city_list)
         self.btn_add_auto = self._chip(t("weather_add_my_location"), self._on_add_auto)
-        self.fold_auto = Fold(self.btn_add_auto, gap=CITY_GAP, align=Qt.AlignmentFlag.AlignLeft)
+        # Cada linha da lista já leva LIST_ROW_GAP de folga embaixo; descontar aqui deixa o espaço acima do botão igual ao de baixo.
+        self.fold_auto = Fold(self.btn_add_auto, gap=STACK_GAP - LIST_ROW_GAP, align=Qt.AlignmentFlag.AlignLeft)
         col.addWidget(self.fold_auto)
-        col.addSpacing(CITY_GAP)
+        col.addSpacing(STACK_GAP)
         self.search_box = QLineEdit()
         self.search_box.setObjectName("SearchInput")
         self.search_box.textChanged.connect(lambda _txt: self._search_timer.start())
@@ -318,14 +261,14 @@ class WeatherPage(BaseHubPage):
         self.lbl_search_status.setWordWrap(True)
         self.lbl_search_status.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
         self._subs.append(self.lbl_search_status)
-        self.fold_status = Fold(self.lbl_search_status, gap=CITY_GAP)
+        self.fold_status = Fold(self.lbl_search_status, gap=STACK_GAP)
         self.fold_status.set_open(False)
         col.addWidget(self.fold_status)
         self.results_box = QWidget()
         self.results_layout = QVBoxLayout(self.results_box)
         self.results_layout.setContentsMargins(0, 0, 0, 0)
         self.results_layout.setSpacing(6)
-        self.fold_results = Fold(self.results_box, gap=CITY_GAP)
+        self.fold_results = Fold(self.results_box, gap=STACK_GAP)
         self.fold_results.set_open(False)
         col.addWidget(self.fold_results)
         self.content_layout.addWidget(card)
@@ -341,7 +284,7 @@ class WeatherPage(BaseHubPage):
 
         # 5. Comportamento
         card, col = self._card(vertical=True)
-        col.setSpacing(12)
+        col.setSpacing(ROWS_GAP)
         self.sw_remember = self._switch_row(col, "weather_opt_remember_title", "weather_opt_remember_sub",
                                             bool(config_manager.get_weather("remember_position", False)),
                                             self.controller.set_remember_position)
@@ -380,15 +323,6 @@ class WeatherPage(BaseHubPage):
         self.content_layout.addWidget(card)
 
         self.content_layout.addStretch()
-
-    def _switch_row(self, col: QVBoxLayout, title_key: str, sub_key: str, checked: bool, on_toggle) -> PillSwitch:
-        row = QHBoxLayout()
-        row.addLayout(self._info(title_key, sub_key), stretch=1)
-        sw = PillSwitch(checked=checked, theme=self._theme)
-        sw.toggled.connect(on_toggle)
-        row.addWidget(sw)
-        col.addLayout(row)
-        return sw
 
     # --- Cidades ---
 
@@ -517,7 +451,7 @@ class WeatherPage(BaseHubPage):
 
     def _build_forecast_bento(self) -> QFrame:
         card, outer = self._card(vertical=True)
-        outer.setSpacing(12)
+        outer.setSpacing(ROWS_GAP)
         header = QLabel(t("weather_mode_title"))
         header.setStyleSheet("font-size: 14px; font-weight: 600;")
         self._texts.append((header, "weather_mode_title"))

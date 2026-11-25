@@ -4,6 +4,30 @@ Todas as mudanças relevantes do Aimedget ficam registradas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o
 [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [1.1.2] - 2026-11-24
+
+### Adicionado
+- **Timer: skin Nothing Dot** (tela de matriz de pontos, botão de play na cor de destaque e uma grade de pontos que
+  reinicia com um pulo de 360°) e **skin Focus Ring** (um anel de foco sem números enquanto corre; o menu dela não tem
+  a troca de modo).
+- Timer, Desempenho, Clima: o tema **Aimedget** da skin Nothing Dot segue o app: fundo do app (off-white no modo
+  claro), texto e cor de destaque. O **Nothing Red** continua o padrão e vem primeiro na galeria.
+- Timer: controle de **Tamanho** no Hub (% do lado padrão, com Automático), logo abaixo do Estilo. A alça do canto do
+  widget continua valendo.
+- Bateria: opção **Seguir cor de destaque**: o anel e a bolinha de carga usam a cor do app em vez do verde (bateria
+  fraca fica vermelha). Desligada por padrão. Controle de **Tamanho** no Hub.
+- Bateria: **mouses AJAZZ** (AJ139 PRO) e **mouses Razer** (leitura da bateria, só de leitura; ainda não testado em
+  hardware: a primeira leitura de cada modelo vai para o log).
+- Clima: previsão **por hora** no menu do widget, além dos 5 dias.
+
+### Alterado
+- O Hub no modo **Sistema** acompanha o Windows ao vivo (claro/escuro) sem precisar reabrir o app.
+- Troca de modo claro/escuro mais suave: 300 ms, começando e terminando devagar, com a barra de título do Hub mudando
+  de cor junto. O Timer, a Bateria, o Armazenamento e os widgets Nothing Dot com o tema Aimedget dissolvem com ele.
+- Bateria: um dongle ou cabo desconectado sai do cartão em cerca de 1 s (antes, 1 a 2 minutos).
+- Desempenho: a matriz de pontos mostra os últimos 32 segundos, um ponto por segundo; o passado só desliza.
+- Timer: as três vagas "TBA" saíram da galeria de skins.
+
 ## [1.1.1] - 2026-11-22
 
 ### Adicionado

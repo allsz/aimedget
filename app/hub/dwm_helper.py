@@ -61,3 +61,37 @@ def apply_windows_dwm_titlebar(hwnd: int, bg_hex: str, text_hex: str, is_dark: b
 
     except Exception:
         pass
+
+
+def mix_hex(a: str, b: str, t: float) -> str:
+    """'#RRGGBB' entre `a` (t=0) e `b` (t=1)."""
+    t = max(0.0, min(1.0, t))
+    ca = [int(a.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    cb = [int(b.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02X}" for x, y in zip(ca, cb))
+
+
+def set_titlebar_colors(hwnd: int, bg_hex: str, text_hex: str):
+    """Só as cores da barra (fundo e título): barato, chamado a cada quadro durante a troca de modo."""
+    if sys.platform != "win32":
+        return
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi")
+        bgr_color = c_int(hex_to_bgr_int(bg_hex))
+        dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, byref(bgr_color), 4)
+        bgr_text = c_int(hex_to_bgr_int(text_hex))
+        dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, byref(bgr_text), 4)
+    except Exception:
+        pass
+
+
+def set_dark_frame(hwnd: int, is_dark: bool):
+    """Modo escuro do quadro nativo (cor dos botões minimizar/maximizar/fechar)."""
+    if sys.platform != "win32":
+        return
+    try:
+        dwmapi = ctypes.WinDLL("dwmapi")
+        dark_val = c_int(1 if is_dark else 0)
+        dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, byref(dark_val), 4)
+    except Exception:
+        pass

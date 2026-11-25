@@ -21,6 +21,8 @@ from app.core.theme_package import COPY, REPLACE, PackageReport, TargetReport
 from app.hub.components.message_dialog import confirm
 from app.hub.dwm_helper import apply_windows_dwm_titlebar
 from app.hub.theme import HubTheme
+from app.hub.components.chips import chip
+from app.hub.ui_tokens import CHIP_GAP
 
 TARGET_KEYS = {
     "keylock": "theme_import_target_keylock",
@@ -141,7 +143,7 @@ class ThemeImportDialog(QDialog):
 
         # 4. Ação: o botão principal diz o que vai acontecer
         buttons = QHBoxLayout()
-        buttons.setSpacing(8)
+        buttons.setSpacing(CHIP_GAP)
         buttons.addStretch()
         self.btn_cancel = self._button(t("theme_import_cancel"), self.reject)
         buttons.addWidget(self.btn_cancel)
@@ -166,13 +168,7 @@ class ThemeImportDialog(QDialog):
         return label
 
     def _button(self, text: str, slot, primary: bool = False) -> QPushButton:
-        btn = QPushButton(text)
-        btn.setProperty("class", "Chip")
-        if primary:
-            btn.setProperty("selected", "true")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.clicked.connect(slot)
-        return btn
+        return chip(text, slot, primary=primary)
 
     def _target_row(self, target: TargetReport) -> QWidget:
         row = QWidget()
