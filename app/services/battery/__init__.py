@@ -10,6 +10,7 @@ Fontes escolhidas por estabilidade, sem dependências novas (só ctypes):
   Battery Status 0x1000), o mesmo caminho do Solaar.
 - `vxe`: mouses VXE/ATK pelo dongle "Mouse 1K" (relatório de fabricante de 17 bytes, o mesmo do app web da ATK).
 - `ajazz`: mouses AJAZZ pelo dongle "2.4G Wireless Receiver" (o pacote dos VXE, pedido por relatório de recurso).
+- Redragon: o pacote e o transporte dos VXE, uma família própria em `mouse_1k.py` (dongle F5D5, cabo F55E).
 - `bluetooth`: a carga que o Windows guarda para qualquer dispositivo Bluetooth conectado (fones pelo HFP,
   dispositivos LE pelo GATT), sem código por marca. Quem já tem leitor próprio é pulado pelo endereço.
 

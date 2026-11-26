@@ -1,5 +1,5 @@
 """
-Mouses com o protocolo de 17 bytes dos dongles 2.4G "1K" (VXE/ATK, AJAZZ e parentes): um só código para o pacote, a
+Mouses com o protocolo de 17 bytes dos dongles 2.4G "1K" (VXE/ATK, AJAZZ, Redragon e parentes): um só código para o pacote, a
 leitura e a troca dongle/cabo; cada marca entra como uma linha em FAMILIES.
 
 O pacote (igual em todas as famílias confirmadas):
@@ -69,7 +69,15 @@ AJAZZ = Family(
     send=SEND_FEATURE, reply_page=0xFF01, reply_id=0x09,
 )
 
-FAMILIES = (VXE, AJAZZ)
+REDRAGON = Family(
+    source="redragon", vid=0x3554,
+    # Mesmo VID e mesmo transporte dos VXE, família à parte para nunca juntar um VXE com um Redragon. F5D5 = dongle
+    # "2.4G Wireless Receiver" (resposta `08 04 00 00 00 02 05 00 0c be ...` = 5%); F55E = o próprio mouse no cabo
+    # ("3-Mode Mouse", com serial; `... 0f 01 0d a5 ...` = 15%, carregando), com o dongle mudo enquanto isso.
+    pids={0xF5D5: "Redragon Mouse", 0xF55E: "Redragon Mouse"}, wired_pids=frozenset({0xF55E}),
+)
+
+FAMILIES = (VXE, AJAZZ, REDRAGON)
 
 
 # ---------------------------------------------------------------------------------------------------------- pacote
