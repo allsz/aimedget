@@ -128,7 +128,17 @@ def on_window_pos_changing(lparam: int, own_hwnd: int):
     pos = WINDOWPOS.from_address(lparam)
     if pos.flags & SWP_NOZORDER:
         return
+    if not _is_raise(pos.hwndInsertAfter) and owner_of(own_hwnd) == desktop_host():
+        # Uma janela específica como vizinha: é o Windows levando o cartão junto com o desktop (dono). Reescrever
+        # aqui, com o desktop ainda no meio do movimento, deixava um cartão atrás dele (piscada).
+        return
     pos.hwndInsertAfter = insert_after_for(own_hwnd)
+
+
+def _is_raise(insert_after) -> bool:
+    """HWND_TOP/BOTTOM/TOPMOST/NOTOPMOST (clique, ativação, raise_()), e não "logo abaixo de tal janela"."""
+    value = ctypes.c_ssize_t(insert_after or 0).value
+    return value in (HWND_TOP, HWND_BOTTOM, -1, -2)
 
 
 def send_to_desktop_layer(own_hwnd: int):
@@ -327,12 +337,54 @@ def set_topmost(own_hwnd: int, topmost: bool):
         _user32.SetWindowPos(own_hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
 
 
+# --- Dono = desktop: o Windows nunca põe o desktop por cima do cartão ---
+#
+# Clicar no desktop (menu de contexto, "Atualizar") o ativa, e o Windows pode subi-lo por cima dos cartões fixados.
+# O guarda os devolvia ao lugar ~2 ms depois do aviso, mas se o DWM compusesse um quadro nesse meio-tempo o cartão
+# sumia por um quadro (piscada; medido num notebook na bateria). Uma janela "possuída" fica sempre acima da dona, e o
+# Windows aplica isso na mesma operação que move a dona: com o desktop como dono, não há intervalo.
+# Se o Explorer reiniciar, o Windows só desfaz o vínculo (janelas de outra thread não são destruídas com a dona); o
+# guarda refaz com o desktop novo (`ensure_desktop_owner`).
+
+if IS_WINDOWS:
+    _u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    _u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+
+GWLP_HWNDPARENT = -8
+GW_OWNER = 4
+
+
+def owner_of(own_hwnd: int) -> int:
+    if not IS_WINDOWS or not own_hwnd:
+        return 0
+    return _user32.GetWindow(own_hwnd, GW_OWNER) or 0
+
+
+def set_owner(own_hwnd: int, owner_hwnd: int):
+    """Troca a janela dona (GWLP_HWNDPARENT numa janela de primeiro nível muda a dona, não o pai)."""
+    if not IS_WINDOWS or not own_hwnd:
+        return
+    _u32.SetWindowLongPtrW(own_hwnd, GWLP_HWNDPARENT, owner_hwnd or 0)
+
+
+def ensure_desktop_owner(own_hwnd: int) -> bool:
+    """Garante o desktop atual como dono. True se precisou trocar (primeira vez ou Explorer reiniciou)."""
+    host = desktop_host()
+    if not host or owner_of(own_hwnd) == host:
+        return False
+    set_owner(own_hwnd, host)
+    return True
+
+
 def apply_layer(own_hwnd: int, desktop: bool):
-    """Põe a janela no nível pedido: logo acima do desktop, ou sempre no topo."""
+    """Põe a janela no nível pedido: logo acima do desktop (com ele como dono), ou sempre no topo."""
     if desktop:
         set_topmost(own_hwnd, False)
+        ensure_desktop_owner(own_hwnd)
         send_to_desktop_layer(own_hwnd)
     else:
+        if owner_of(own_hwnd) == desktop_host():
+            set_owner(own_hwnd, 0)
         set_topmost(own_hwnd, True)
 
 

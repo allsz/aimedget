@@ -17,13 +17,30 @@ Para ligar um widget a isto sem repetir código há dois mixins:
 
 import ctypes
 import sys
+import time
 
 from PySide6.QtCore import QEasingCurve, QObject, QPoint, Qt, QTimer, QVariantAnimation
 from PySide6.QtWidgets import QWidget
 
+from app.core.frame_clock import FrameTimer
+from app.core.refresh_rate import refresh_interval_ms
+
 SLIDE_PX = 8
 
+# Troca de área de trabalho virtual (variação B do protótipo mockups/virtual-desktop-switch.html, escolhida pelo
+# usuário): o widget sai junto com os apps e volta do lado oposto, como se viesse com a área nova.
+SWEEP_PX = 24
+SWEEP_OUT_MS = 144          # 45% do deslize do Windows (~320 ms): sai junto com os apps
+SWEEP_FADE_IN_MS = 160
+SWEEP_SPRING = (420.0, 34.0)  # mola SLIDE (CLAUDE.md)
+SWEEP_SETTLE_PX = 0.5
+
 _SPI_GETCLIENTAREAANIMATION = 0x1042
+
+
+def _ease_out_cubic(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return 1.0 - (1.0 - t) ** 3
 
 
 def animations_enabled() -> bool:
@@ -106,11 +123,20 @@ class SlideFadeAnimator(QObject):
         self._delay_timer.setSingleShot(True)
         self._delay_timer.timeout.connect(self._start_delayed)
         self._delayed_duration = 0
+        # Troca de área de trabalho virtual: sai/volta na horizontal (ver sweep)
+        self._sweep: dict | None = None
+        self._sweep_clock = FrameTimer(self)
+        self._sweep_clock.setTimerType(Qt.TimerType.PreciseTimer)
+        self._sweep_clock.timeout.connect(self._step_sweep)
 
     # --- Estado ---
 
     def is_animating(self) -> bool:
-        return self._anim.state() == QVariantAnimation.State.Running or self._delay_timer.isActive()
+        return (self._anim.state() == QVariantAnimation.State.Running or self._delay_timer.isActive()
+                or self._sweep is not None)
+
+    def is_sweeping(self) -> bool:
+        return self._sweep is not None
 
     def is_hiding(self) -> bool:
         return self.is_animating() and self._target == 0.0
@@ -124,6 +150,7 @@ class SlideFadeAnimator(QObject):
     # --- API ---
 
     def show(self, duration_ms: int):
+        self._end_sweep()
         w = self._widget
         if not w.isVisible():
             self._rest = w.pos()
@@ -150,6 +177,7 @@ class SlideFadeAnimator(QObject):
             self._run(1.0, self._delayed_duration)
 
     def hide(self, duration_ms: int):
+        self._end_sweep()
         w = self._widget
         if not w.isVisible():
             return
@@ -191,9 +219,84 @@ class SlideFadeAnimator(QObject):
         widget.setGeometry(x + offset.x(), y + offset.y(), w, h)
         widget.setFixedSize(w, h)
 
+    def sweep(self, direction: int):
+        """
+        Troca de área de trabalho virtual: sai para o lado dos apps (-direction) enquanto eles deslizam e volta do
+        lado oposto com a mola SLIDE. Só com o widget parado na tela e com as animações do Windows ligadas (sem elas,
+        o widget fica onde está, como hoje). Outra troca no meio recomeça a partir de onde o widget está.
+        """
+        w = self._widget
+        if not direction or not w.isVisible() or not animations_enabled():
+            return
+        if self._anim.state() == QVariantAnimation.State.Running or self._delay_timer.isActive():
+            return   # surgindo/sumindo: essa animação manda
+        glide = getattr(w, "_position_glide", None)
+        if glide is not None and glide.is_running():
+            return   # deslizando para outro lugar: a posição de repouso ainda não é a final
+        if self._rest is None:
+            self._rest = w.pos()
+        prev = self._sweep
+        offset = (w.pos() - self._rest).x() if prev else 0.0
+        opacity = w.windowOpacity() if prev else 1.0
+        self._sweep = {"dir": 1 if direction > 0 else -1, "t0": time.perf_counter(), "last": time.perf_counter(),
+                       "from_x": float(offset), "from_opacity": float(opacity), "spring": None, "in_t0": 0.0}
+        w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        if not self._sweep_clock.isActive():
+            self._sweep_clock.start(refresh_interval_ms(w))
+        self._step_sweep()
+
+    def _step_sweep(self):
+        s = self._sweep
+        w = self._widget
+        if s is None or self._rest is None or not w.isVisible():
+            self._end_sweep()
+            return
+        now = time.perf_counter()
+        elapsed_ms = (now - s["t0"]) * 1000.0
+        dt = min(0.064, now - s["last"])
+        s["last"] = now
+        if elapsed_ms < SWEEP_OUT_MS:
+            q = _ease_out_cubic(elapsed_ms / SWEEP_OUT_MS)
+            x = s["from_x"] + (-s["dir"] * SWEEP_PX - s["from_x"]) * q
+            opacity = s["from_opacity"] * (1.0 - q)
+        else:
+            spring = s["spring"]
+            if spring is None:
+                spring = s["spring"] = [s["dir"] * SWEEP_PX, 0.0]   # posição, velocidade (alvo 0)
+                s["in_t0"] = elapsed_ms
+            k, c = SWEEP_SPRING
+            sub = dt / 4.0
+            for _ in range(4):   # massa 1, Euler semi-implícito, 4 subpassos (como city_list.Spring)
+                spring[1] += (-k * spring[0] - c * spring[1]) * sub
+                spring[0] += spring[1] * sub
+            x = spring[0]
+            fade = min(1.0, (elapsed_ms - s["in_t0"]) / SWEEP_FADE_IN_MS)
+            opacity = _ease_out_cubic(fade)
+            if fade >= 1.0 and abs(spring[0]) < SWEEP_SETTLE_PX and abs(spring[1]) < SWEEP_SETTLE_PX * 20:
+                self._end_sweep()
+                return
+        w.setWindowOpacity(max(0.0, min(1.0, opacity)))
+        w.move(self._rest.x() + round(x), self._rest.y())
+
+    def _end_sweep(self):
+        """Termina a troca no lugar de repouso, totalmente visível."""
+        if self._sweep is None:
+            return
+        self._sweep = None
+        self._sweep_clock.stop()
+        w = self._widget
+        if self._rest is not None:
+            w.move(self._rest)
+        w.setWindowOpacity(1.0)
+        w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self._rest = None
+
     def settle(self):
         """Conclui a animação em curso no estado final, imediatamente."""
         if not self.is_animating():
+            return
+        if self._sweep is not None:
+            self._end_sweep()
             return
         self._delay_timer.stop()
         self._anim.stop()

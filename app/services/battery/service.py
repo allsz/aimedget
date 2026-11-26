@@ -66,10 +66,11 @@ DEDICATED_SOURCES = {
     sony.SONY_VID: {"sony"},
     switch_pro.NINTENDO_VID: {"switch"},
     logitech.LOGI_VID: {"logitech"},
-    **{f.vid: {f.source} for f in mouse_1k.FAMILIES},
     razer.RAZER_VID: {razer.SOURCE},
     MICROSOFT_VID: {"xinput"},
 }
+for _fam in mouse_1k.FAMILIES:            # VXE e Redragon dividem o VID 3554: as fontes se somam
+    DEDICATED_SOURCES.setdefault(_fam.vid, set()).add(_fam.source)
 
 
 def bluetooth_skip(hids: list, devices: list[BatteryDevice]) -> set[str]:
