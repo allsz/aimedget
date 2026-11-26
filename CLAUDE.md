@@ -55,6 +55,10 @@ O app adota redação minimalista e precisa (veja a skill completa em `.agents/s
 
 ## Armadilhas do Qt já encontradas
 
+- Widget fixado no desktop tem o desktop como janela dona (`desktop_layer.ensure_desktop_owner`). O Qt zera a dona
+  ao mostrar a janela (depois do `showEvent`), então o vínculo é refeito logo em seguida pelo `DesktopPinGuard`. E o
+  gancho de WM_WINDOWPOSCHANGING só reescreve subidas (HWND_TOP etc.): reescrever o movimento que o Windows faz
+  levando o widget junto com o desktop o deixava atrás dele (piscada).
 - Nunca `setParent(None)` em widget visível: ele vira uma janela solta por um instante, fora do Hub. Use
   `hide()` + `removeWidget()` + `deleteLater()`.
 - Rodar a suíte: `python -m pytest --ignore=tests/test_pack_theme.py` (esse arquivo abre um diálogo nativo). O

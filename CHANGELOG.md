@@ -10,6 +10,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Bateria: **mouses Redragon** pelo dongle 2.4G ou pelo cabo. No cabo, mouse e dongle continuam sendo um cartão só,
   agora carregando.
 
+### Corrigido
+- Widgets fixados na área de trabalho não piscam mais ao clicar no desktop, usar "Atualizar" ou o Win+D (acontecia
+  mais em notebooks na bateria). Agora o desktop leva os widgets junto quando sobe.
+
 ## [1.1.2] - 2026-11-24
 
 ### Adicionado

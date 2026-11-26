@@ -40,6 +40,9 @@ class DesktopPinGuard(QObject):
         self._hook = desktop_layer.ForegroundHook(self._on_foreground_changed)
         self._timer.start()
         self.check()
+        # Ao mostrar, o Qt reaplica a janela dona dele (nenhuma) depois do showEvent: refaz o vínculo com o desktop
+        # logo em seguida, em vez de esperar a checagem de 250 ms.
+        QTimer.singleShot(0, self, self.check)
 
     def stop(self):
         if not self._timer.isActive():
@@ -57,6 +60,8 @@ class DesktopPinGuard(QObject):
         if not self._timer.isActive() or not self._widget.isVisible():
             return
         hwnd = self._hwnd()
+        if desktop_layer.ensure_desktop_owner(hwnd):   # ao mostrar, ou o Explorer reiniciou: o desktop vira o dono
+            desktop_layer.send_to_desktop_layer(hwnd)
         if desktop_layer.needs_replace(hwnd):
             desktop_layer.send_to_desktop_layer(hwnd)
             self.replacements += 1
