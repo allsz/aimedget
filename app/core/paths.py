@@ -75,6 +75,7 @@ VINYL_ASSETS_DIR = os.path.join(ASSETS_DIR, "files", "vinyl-widget", "assets")
 FISICAL_BUTTONS_DIR = os.path.join(ASSETS_DIR, "icons", "fisical_buttons")
 PROVIDER_ICONS_DIR = os.path.join(ASSETS_DIR, "icons", "providers")
 FONT_PATH = os.path.join(ASSETS_DIR, "fonts", "Inter-Variable.ttf")
+ROUNDED_FONT_PATH = os.path.join(ASSETS_DIR, "fonts", "Nunito-Variable.ttf")
 APP_ICON_WITH_BG_SVG = os.path.join(ASSETS_DIR, "icons", "aimedget_icon_with_bg.svg")
 APP_ICON_CLEAN_SVG = os.path.join(ASSETS_DIR, "icons", "aimedget_icon_clean.svg")
 APP_ICON_SVG = APP_ICON_CLEAN_SVG  # Ícone sem fundo (transparente) para uso interno do app

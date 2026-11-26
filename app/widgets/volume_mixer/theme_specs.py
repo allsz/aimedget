@@ -14,7 +14,7 @@ from PySide6.QtGui import QImage, QPainter, QRegion
 from PySide6.QtCore import Qt
 
 from app.core.preview_registry import SkinSpec
-from app.widgets.volume_mixer.theme import DEFAULT_THEME, MixerTheme
+from app.widgets.volume_mixer.theme import MixerTheme, default_theme
 from app.widgets.volume_mixer.theme_shape import art_overflow
 
 WIDGET_ID = "mixer_theme"
@@ -66,7 +66,7 @@ def _paint(p, rect: QRectF, theme: MixerTheme, _hub_theme=None):
         p.drawImage(QRectF(rect.x(), rect.y(), float(w), float(h)), buf)
         p.restore()
     finally:
-        flyout._apply_theme(DEFAULT_THEME)
+        flyout._apply_theme(default_theme())   # o mixer de miniaturas volta ao visual "Windows" do modo atual
 
 
 def _natural(theme: MixerTheme) -> QSizeF:

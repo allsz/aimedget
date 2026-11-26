@@ -63,6 +63,7 @@ class HubServiceBridge(QObject):
 
         # 2. Módulo de Caps / Num Lock
         self.keylock_flyout = KeyLockFlyout()
+        self.keylock_flyout.set_edge_offset(config_manager.get_keylock_edge_offset())
         self.keylock_service = KeyLockService()
         self.keylock_service.keylock_changed.connect(self._on_keylock_changed)
 
@@ -521,6 +522,26 @@ class HubServiceBridge(QObject):
         """Simula a exibição imediata do OSD na tela para testes visuais."""
         self.keylock_flyout.show_osd(key_name, is_on)
 
+    def get_keylock_edge_offset(self) -> int:
+        return config_manager.get_keylock_edge_offset()
+
+    def set_keylock_edge_offset(self, offset_px: int):
+        """Salva e aplica na hora a distância da borda do flyout de Caps/Num Lock."""
+        config_manager.set_keylock_edge_offset(offset_px)
+        self.keylock_flyout.set_edge_offset(config_manager.get_keylock_edge_offset())
+
+    def begin_keylock_live_offset(self):
+        """Começou o arraste do slider: o flyout aparece e fica até end_keylock_live_offset."""
+        self.keylock_flyout.begin_live_adjust()
+
+    def preview_keylock_edge_offset(self, offset_px: float):
+        """Distância ao vivo (a cada quadro do slider), sem gravar em disco."""
+        self.keylock_flyout.preview_edge_offset(offset_px)
+
+    def end_keylock_live_offset(self):
+        """Soltou o slider: o flyout sai."""
+        self.keylock_flyout.end_live_adjust()
+
     # --- Controles de Volume Mixer ---
 
     def set_volume_mixer_enabled(self, enabled: bool):
@@ -766,6 +787,19 @@ class HubServiceBridge(QObject):
             invalidate_card_theme()
             self.battery_controller.skin.update()
 
+    def on_windows_mode_changed(self):
+        """
+        O Windows trocou de claro/escuro: os flyouts com o visual "Windows" (Caps/Num Lock e Volume) seguem o sistema,
+        não o app, então trocam mesmo com o app fixo em claro ou escuro. Na tela, com a dissolvência de modo; os temas
+        de pasta e o "Aimedget" não mudam (o loader devolve o mesmo objeto e nada acontece).
+        """
+        from app.widgets.keylock_osd.theme import load_user_theme as keylock_theme
+        from app.widgets.volume_mixer.theme import load_user_theme as mixer_theme
+        if getattr(self, "keylock_flyout", None) is not None:
+            self.keylock_flyout.apply_mode_theme(keylock_theme())
+        if getattr(self, "volume_flyout", None) is not None:
+            self.volume_flyout._apply_theme(mixer_theme(), mode_switch=True)
+
     def cleanup_all(self):
         """Desinstala hooks e encerra recursos em background de forma segura."""
         if hasattr(self, "hotkey_service") and self.hotkey_service:
@@ -794,6 +828,7 @@ class HubServiceBridge(QObject):
         mgr = anchor_manager()
         if mgr.is_grouped(skin):
             mgr.detach(skin)
+        mgr.user_placed(skin)      # o lugar escolhido fica gravado no monitor (quando o deslize terminar)
 
     def _calc_coords(self, screen_geo: QRect, w: int, h: int, pos_key: str, margin: int) -> tuple[int, int]:
         sx = screen_geo.x()

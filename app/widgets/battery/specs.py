@@ -5,6 +5,7 @@ Miniatura do Battery Widget para o Hub: o mesmo `paint_battery_card` do widget v
 from PySide6.QtCore import QRectF, QSizeF
 from PySide6.QtGui import QColor, QPainter
 
+from app.core.i18n import t
 from app.core.preview_registry import WidgetSpec, get_widget_spec, register_widget
 from app.services.battery.models import KIND_CONTROLLER, KIND_KEYBOARD, KIND_MOUSE, BatteryDevice
 from app.widgets.battery import layout as lay
@@ -48,7 +49,7 @@ def init_battery_spec() -> WidgetSpec:
         return spec
     spec = WidgetSpec(
         id="battery",
-        title="Battery",
+        title=t("overview_card_battery"),
         subtitle="Aimedget",
         natural_size=QSizeF(*lay.DEFAULT_SIZE),
         paint=paint_battery,

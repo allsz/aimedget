@@ -56,6 +56,7 @@ SIZE_HEIGHT_RANGE = (30.0, 200.0)
 INDICATORS = ("bar", "none")
 LABEL_ALIGNS = ("left", "center")
 LABEL_CASES = ("none", "lower", "upper")
+STYLES = ("pill", "circle_sketch")
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,8 @@ class KeyLockTheme:
     background: Background | None = None   # imagem de fundo do card
     stickers: tuple[Sticker, ...] = ()      # figurinhas (até 12)
     # --- layout (o que aparece dentro do cartão) ---
+    style: str = "pill"                     # "pill" = cartão padrão; "circle_sketch" = circular com cadeado + arco LED
+    inherit_app: bool = False               # True: cores não definidas herdam modo (claro/escuro/OLED) e destaque do app
     indicator: str = "bar"                  # "bar" = barrinha de baixo; "none" = sem barrinha (o estado vai na arte)
     show_icon: bool = True                  # False = sem o cadeado
     label_align: str = "left"               # "left" (ao lado do cadeado) ou "center" (no meio do cartão)
@@ -85,7 +88,7 @@ class KeyLockTheme:
 
 DEFAULT_THEME = KeyLockTheme()
 
-# Versão clara do visual "Windows" (quando o app está no modo claro): fundo cinza claro do Windows, ícone e letra
+# Versão clara do visual "Windows" (quando o WINDOWS está no modo claro): fundo cinza claro do Windows, ícone e letra
 # escuros, barrinha azul do Windows. Só o visual embutido muda; temas de pasta partem sempre do DEFAULT_THEME.
 LIGHT_DEFAULT_THEME = KeyLockTheme(
     card_bg=QColor(243, 243, 243, 248),
@@ -98,12 +101,15 @@ LIGHT_DEFAULT_THEME = KeyLockTheme(
 
 
 def default_theme() -> KeyLockTheme:
-    """O visual embutido "Windows" para o modo do app: escuro ou claro."""
-    from app.core.app_theme import current_hub_theme   # tardio: app_theme importa este módulo
-    return DEFAULT_THEME if current_hub_theme().is_dark else LIGHT_DEFAULT_THEME
+    """
+    O visual embutido "Windows" no modo do WINDOWS (claro/escuro), não no do app: imita o flyout do sistema, então
+    acompanha o sistema mesmo com o app fixo em claro ou escuro. É a exceção; o resto segue o app.
+    """
+    from app.hub.theme import get_windows_system_theme
+    return DEFAULT_THEME if get_windows_system_theme() == "dark" else LIGHT_DEFAULT_THEME
 
 _COLOR_KEYS = ("card_bg", "border", "text", "text_off", "icon", "off_color", "on_color")
-_LAYOUT_KEYS = ("indicator", "show_icon", "label_align", "label_size", "label_case", "size")
+_LAYOUT_KEYS = ("style", "inherit_app", "indicator", "show_icon", "label_align", "label_size", "label_case", "size")
 
 
 def theme_from_dict(data: dict, base_dir: str | None = None) -> KeyLockTheme:
@@ -121,6 +127,8 @@ def theme_from_dict(data: dict, base_dir: str | None = None) -> KeyLockTheme:
     with issue_scope(label="keylock"):
         size = _parse_size(data.get("size")) if "size" in data else None
         layout = _parse_layout(data)
+    if layout.get("style") == "circle_sketch" and size is None:
+        size = (60.0, 60.0)
     radius_range = RADIUS_RANGE if size is None else (0.0, max(RADIUS_RANGE[1], size[1] / 2.0))
     changes = parse_tokens(data, base_dir, "keylock", _COLOR_KEYS, radius_range, SCALE_RANGE, render_boost=boost,
                            extra_numbers={"label_size": LABEL_SIZE_RANGE},
@@ -130,7 +138,10 @@ def theme_from_dict(data: dict, base_dir: str | None = None) -> KeyLockTheme:
     changes.update(layout)
     if size is not None:
         changes["size"] = size
-    return replace(DEFAULT_THEME, **changes)
+        if layout.get("style") == "circle_sketch" and "radius" not in changes:
+            changes["radius"] = size[1] / 2.0
+    base = _app_theme() if layout.get("inherit_app") else DEFAULT_THEME
+    return replace(base, **changes)
 
 
 def _parse_size(raw) -> tuple[float, float] | None:
@@ -149,19 +160,22 @@ def _parse_size(raw) -> tuple[float, float] | None:
 
 
 def _parse_layout(data: dict) -> dict:
-    """indicator, show_icon, label_align, label_case (valores válidos); label_size e size são tratados à parte."""
+    """style, inherit_app, indicator, show_icon, label_align, label_case; label_size e size são tratados à parte."""
     out: dict = {}
-    for key, options in (("indicator", INDICATORS), ("label_align", LABEL_ALIGNS), ("label_case", LABEL_CASES)):
+    for key, options in (("style", STYLES), ("indicator", INDICATORS),
+                         ("label_align", LABEL_ALIGNS), ("label_case", LABEL_CASES)):
         if key in data:
             if data[key] in options:
                 out[key] = data[key]
             else:
                 report_issue("'%s' inválido: %r (use %s; usando o padrão)", key, data[key], ", ".join(options))
-    if "show_icon" in data:
-        if isinstance(data["show_icon"], bool):
-            out["show_icon"] = data["show_icon"]
-        else:
-            report_issue("'show_icon' precisa ser true ou false, mas veio %r (usando true)", data["show_icon"])
+    for key, default in (("show_icon", True), ("inherit_app", False)):
+        if key in data:
+            if isinstance(data[key], bool):
+                out[key] = data[key]
+            else:
+                report_issue("'%s' precisa ser true ou false, mas veio %r (usando %s)",
+                             key, data[key], str(default).lower())
     return out
 
 
@@ -177,13 +191,18 @@ def effective_scale(theme: KeyLockTheme) -> float:
     return theme.scale * (screen_ratio() if theme.auto_scale else 1.0)
 
 
-# O cache também depende da tela: se a resolução muda, as figurinhas são preparadas de novo
+# O cache também depende da tela e do tema do app (para `inherit_app: true`)
 def _app_theme() -> KeyLockTheme:
     from app.core.app_theme import app_keylock_theme   # tardio: app_theme importa este módulo
     return app_keylock_theme()
 
 
-_loader = ThemeLoader("keylock", DEFAULT_THEME, theme_from_dict, "keylock", context=lambda: round(screen_ratio(), 2),
+def _cache_context() -> tuple:
+    from app.core.app_theme import current_hub_theme
+    return (round(screen_ratio(), 2), current_hub_theme())
+
+
+_loader = ThemeLoader("keylock", DEFAULT_THEME, theme_from_dict, "keylock", context=_cache_context,
                       app_theme=_app_theme, default_factory=default_theme)
 
 theme_path = _loader.path

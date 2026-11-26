@@ -28,7 +28,7 @@ from PySide6.QtCore import QEvent, QRectF, Qt, QTimer
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget
 
-from app.core import desktop_layer
+from app.core import desktop_layer, screen_watcher
 from app.core.desktop_pin_guard import DesktopPinGuard
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.widget_animator import animations_enabled
@@ -186,6 +186,7 @@ class DesktopPinMixin:
         self._pin_guard.stop()
 
     def desktop_pin_native_event(self, event_type, message):
+        screen_watcher.native_event(self, message)   # troca de monitor (e o diagnóstico, se ligado)
         if self._desktop_mode and desktop_layer.IS_WINDOWS:
             try:
                 msg = wintypes.MSG.from_address(int(message))

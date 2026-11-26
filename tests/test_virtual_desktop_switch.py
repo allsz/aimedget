@@ -1,4 +1,5 @@
-"""Trocar de área de trabalho virtual: widgets fixados saem com os apps e voltam do lado oposto (variação B)."""
+"""Trocar de área de trabalho virtual: widgets fixados ficam invisíveis enquanto o Windows desliza (ele não os desenha
+nesse tempo) e depois entram do lado da área nova com a mola SLIDE (variação B, "Depois do slide")."""
 
 import sys
 import time
@@ -78,30 +79,44 @@ class SweepMotionTests(unittest.TestCase):
             time.sleep(0.004)
         return samples
 
-    def test_slides_out_with_the_apps_and_back_from_the_other_side(self):
+    def test_waits_hidden_during_the_windows_slide_then_enters_from_the_new_side(self):
         with mock.patch.object(wa, "animations_enabled", return_value=True):
-            self.card.animator.sweep(1)   # para a direita: os apps saem pela esquerda
+            self.card.animator.sweep(1)   # para a direita: a área nova vem da direita
             self.assertTrue(self.card.animator.is_sweeping())
-            samples = self._record()
-        xs = [x for x, _, _ in samples]
-        self.assertGreater(len(set(xs)), 6)                       # anima (não pula)
-        self.assertLessEqual(min(xs), -wa.SWEEP_PX + 2)           # saiu pela esquerda
-        self.assertGreater(max(xs), wa.SWEEP_PX // 2)              # voltou pela direita
-        self.assertLess(xs.index(min(xs)), xs.index(max(xs)))     # primeiro sai, depois volta
-        self.assertLess(min(o for _, o, _ in samples), 0.2)       # some no meio
-        self.assertTrue(all(r == self.rest for _, _, r in samples))   # o repouso nunca muda (nada grava o desvio)
+            t0 = time.perf_counter()
+            samples = []
+            end = t0 + 2.5
+            while time.perf_counter() < end and self.card.animator.is_sweeping():
+                QCoreApplication.processEvents()
+                samples.append(((time.perf_counter() - t0) * 1000, (self.card.pos() - self.rest).x(),
+                                self.card.windowOpacity(), self.card.rest_pos()))
+                time.sleep(0.004)
+        hold = [(x, o) for t, x, o, _ in samples if t < wa.SWEEP_HOLD_MS - 30]
+        enter = [(x, o) for t, x, o, _ in samples if t > wa.SWEEP_HOLD_MS + 20]
+        # Enquanto o Windows desliza: invisível e parado no ponto de partida (nada a ver, nada gasto à toa)
+        self.assertTrue(hold)
+        self.assertTrue(all(o == 0.0 and x == wa.SWEEP_PX for x, o in hold))
+        # Depois: entra da direita até o lugar, ficando visível (anima, não pula)
+        xs = [x for x, _ in enter]
+        self.assertGreater(len(set(xs)), 6)
+        self.assertTrue(all(0 <= x <= wa.SWEEP_PX for x in xs))                       # só vem da direita, sem passar
+        self.assertTrue(all(b <= a for a, b in zip(xs, xs[1:])))                      # anda só num sentido
+        ops = [o for _, o in enter]
+        self.assertTrue(all(b >= a - 1e-6 for a, b in zip(ops, ops[1:])))             # o fade só cresce
+        self.assertTrue(all(r == self.rest for *_, r in samples))   # o repouso nunca muda (nada grava o desvio)
         # termina limpo
         self.assertFalse(self.card.animator.is_sweeping())
         self.assertEqual(self.card.pos(), self.rest)
         self.assertEqual(self.card.windowOpacity(), 1.0)
         self.assertFalse(self.card.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
 
-    def test_left_switch_mirrors(self):
+    def test_left_switch_enters_from_the_left(self):
         with mock.patch.object(wa, "animations_enabled", return_value=True):
             self.card.animator.sweep(-1)
-            xs = [x for x, _, _ in self._record()]
-        self.assertGreaterEqual(max(xs[:5] + [0]), 0)
-        self.assertGreater(max(xs[: len(xs) // 3]), wa.SWEEP_PX // 2)   # sai pela direita
+            _pump(0.05)
+            self.assertEqual((self.card.pos() - self.rest).x(), -wa.SWEEP_PX)
+            self.assertEqual(self.card.windowOpacity(), 0.0)
+            self._record(2.5)
         self.assertEqual(self.card.pos(), self.rest)
 
     def test_without_windows_animations_nothing_moves(self):
@@ -121,15 +136,18 @@ class SweepMotionTests(unittest.TestCase):
         self.assertEqual(self.card.pos(), self.rest)
         self.assertEqual(self.card.windowOpacity(), 1.0)
 
-    def test_second_switch_mid_way_continues_without_jump(self):
+    def test_second_switch_restarts_the_wait_while_hidden(self):
+        """Outra troca no meio da entrada: o Windows volta a esconder o widget, então ele recomeça invisível."""
         with mock.patch.object(wa, "animations_enabled", return_value=True):
             self.card.animator.sweep(1)
-            _pump(0.06)
-            before = self.card.pos().x()
-            self.card.animator.sweep(1)
-            self.assertLessEqual(abs(self.card.pos().x() - before), 3)
-            self._record()
+            _pump(wa.SWEEP_HOLD_MS / 1000.0 + 0.06)
+            self.assertGreater(self.card.windowOpacity(), 0.0)   # já entrando
+            self.card.animator.sweep(-1)
+            self.assertEqual(self.card.windowOpacity(), 0.0)     # o salto de lado acontece invisível
+            self.assertEqual((self.card.pos() - self.rest).x(), -wa.SWEEP_PX)
+            self._record(2.5)
         self.assertEqual(self.card.pos(), self.rest)
+        self.assertEqual(self.card.windowOpacity(), 1.0)
 
     def test_hide_mid_way_hides_from_rest(self):
         with mock.patch.object(wa, "animations_enabled", return_value=True):
@@ -171,7 +189,7 @@ class PinnedWidgetFollowsSwitchTests(unittest.TestCase):
         with mock.patch.object(wa, "animations_enabled", return_value=True):
             watcher.switched.emit(1)
             self.assertTrue(self.card.animator.is_sweeping())
-            _pump(1.0)
+            _pump(wa.SWEEP_HOLD_MS / 1000.0 + 1.0)
         self.assertFalse(self.card.animator.is_sweeping())
         self.card.hide()
         self.assertEqual(watcher._users, users)

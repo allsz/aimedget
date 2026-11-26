@@ -5,6 +5,7 @@ Renderiza a miniatura realista do controle de volume Master e por aplicativo.
 
 from PySide6.QtCore import QSizeF, QPoint, QRectF
 from PySide6.QtGui import QPainter, QImage, QColor
+from app.core.i18n import t
 from app.core.preview_registry import WidgetSpec, register_widget, get_widget_spec
 
 _cached_mixer = None
@@ -42,7 +43,10 @@ def _get_headless_volume_mixer():
 
 
 def paint_volume(p: QPainter, rect: QRectF, state, theme):
+    from app.widgets.volume_mixer.theme import MixerTheme, default_theme
     flyout = _get_headless_volume_mixer()
+    # O visual "Windows" no modo do Windows (não no do app); a Visão geral passa o tema como estado de exemplo
+    flyout._apply_theme(state if isinstance(state, MixerTheme) else default_theme())
     card_rect = flyout._card_rect()
     pad = 14
     p.save()
@@ -67,8 +71,8 @@ def init_volume_spec() -> WidgetSpec:
     h = float(card_rect.height() + pad * 2)
     spec = WidgetSpec(
         id="vol_mixer",
-        title="Per-App Volume",
-        subtitle="Minimal Sliders",
+        title=t("overview_card_volume"),
+        subtitle=t("overview_card_volume_skin"),
         natural_size=QSizeF(w, h),
         paint=paint_volume,
         mock_state=lambda: None,

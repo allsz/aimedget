@@ -44,7 +44,9 @@ def _fake_window(preference: str, current):
         shell=shell,
         _stop_wipe=lambda: None,
         winId=lambda: 0,
+        refreshed=[],
     )
+    win._refresh_windows_looks = lambda: win.refreshed.append(True)
 
     def _apply(theme, titlebar=True):
         win._current_theme = theme
@@ -75,12 +77,14 @@ def test_system_mode_follows_windows(qapp, env):
     assert env.notified == [THEME_LIGHT]   # widgets que seguem o app trocam juntos
     assert env.bars == [THEME_LIGHT.bg]    # sem animação: a barra vai direto à cor final
     assert env.frames == [False]
+    assert win.refreshed == [True]         # os visuais "Windows", dentro da mesma dissolvência
 
 
 def test_manual_mode_ignores_windows(qapp, env):
     win, applied = _fake_window("dark", THEME_DARK)
     hub_window.AimedgetHubWindow._on_system_color_scheme_changed(win)
     assert applied == [] and env.notified == []
+    assert win.refreshed == [True]   # mas os visuais "Windows" dos flyouts seguem o Windows mesmo assim
 
 
 def test_same_theme_does_nothing(qapp, env):

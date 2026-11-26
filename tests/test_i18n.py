@@ -52,10 +52,16 @@ class TestI18n(unittest.TestCase):
             self.assertEqual(t("keys_opt_num_title"), "Num Lock")
             self.assertEqual(t("overview_card_keys"), "Caps / Num Lock")
             self.assertEqual(t("overview_filter_widget"), "Widget")
-            self.assertEqual(t("overview_filter_flyout"), "Flyout")
-            self.assertEqual(t("tray_music_widget"), "Music Widget")
-            self.assertEqual(t("tray_keys_flyout"), "Caps Lock Flyout")
-            self.assertEqual(t("tray_vol_mixer"), "Volume Mixer")
+        i18n.set_language("en")
+        self.assertEqual(t("overview_filter_flyout"), "Flyout")
+        self.assertEqual(t("tray_music_widget"), "Music Widget")
+        self.assertEqual(t("tray_keys_flyout"), "Caps Lock Flyout")
+        self.assertEqual(t("tray_vol_mixer"), "Volume Mixer")
+        i18n.set_language("pt")
+        self.assertEqual(t("overview_filter_flyout"), "Painel flutuante")
+        self.assertEqual(t("tray_music_widget"), "Player de Música")
+        self.assertEqual(t("tray_keys_flyout"), "Aviso de Caps Lock")
+        self.assertEqual(t("tray_vol_mixer"), "Mixer de Volume")
 
     def test_switching_language_and_persistence(self):
         """Verifica se alternar idioma altera a tradução e persiste no ConfigManager."""
@@ -107,10 +113,10 @@ class TestI18n(unittest.TestCase):
             hub._change_language("pt")
             self.assertEqual(hub.sidebar._buttons["gen"].lbl_title.text(), "Geral")
             self.assertEqual(hub.page_overview.lbl_title.text(), "Personalização")
-            self.assertEqual(hub.page_music.lbl_title.text(), "Music Player")
-            self.assertEqual(hub.page_keys.lbl_title.text(), "Lock keys")
-            self.assertEqual(hub.page_vol.lbl_title.text(), "Volume & mixer")
-            self.assertEqual(hub.page_timer.lbl_title.text(), "Timer & Foco")
+            self.assertEqual(hub.page_music.lbl_title.text(), "Player de Música")
+            self.assertEqual(hub.page_keys.lbl_title.text(), "Teclas Lock")
+            self.assertEqual(hub.page_vol.lbl_title.text(), "Volume e mixer")
+            self.assertEqual(hub.page_timer.lbl_title.text(), "Temporizador e Foco")
             self.assertEqual(hub.page_gen.lbl_title.text(), "Geral")
 
             # Alterna para Inglês

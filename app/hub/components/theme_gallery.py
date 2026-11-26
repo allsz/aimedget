@@ -20,7 +20,7 @@ from app.core.config_manager import config_manager
 from app.core.i18n import t
 from app.core.preview_card import PreviewCard
 from app.core.preview_registry import SkinSpec
-from app.core.theme_loader import APP_ID, APP_NAME, DEFAULT_ID, ThemeLoader
+from app.core.theme_loader import APP_ID, APP_NAME, DEFAULT_ID, ThemeLoader, localized_theme_name
 from app.core.theme_validation import CONTAINERS
 from app.core.theme_package import (
     PACKAGE_EXT, PackageError, analyze_package, export_themes, has_theme, install_package, slugify,
@@ -198,7 +198,7 @@ class ThemeGalleryCard(QFrame):
         if theme_id == APP_ID:
             # o tema que herda a aparência do app é o "Padrão", salvo nas skins com visual próprio (Nothing Dot)
             return t("theme_app") if self._loader.app_is_default else APP_NAME
-        return name or t("theme_custom")
+        return localized_theme_name(theme_id, name) or t("theme_custom")
 
     def _current_active(self, ids: set[str]) -> str:
         active = self._loader.active_id()

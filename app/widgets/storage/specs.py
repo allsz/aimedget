@@ -6,6 +6,7 @@ Usa o mesmo `paint_storage_card` do widget vivo com estado estático de exemplo.
 from PySide6.QtCore import QRectF, QSizeF
 from PySide6.QtGui import QPainter
 
+from app.core.i18n import t
 from app.core.preview_registry import WidgetSpec, get_widget_spec, register_widget
 from app.services.storage_service import DriveUsage, FolderUsage, StorageSnapshot
 from app.widgets.storage.card_painter import paint_storage_card
@@ -58,7 +59,7 @@ def init_storage_spec() -> WidgetSpec:
         return spec
     spec = WidgetSpec(
         id="storage",
-        title="Storage",
+        title=t("overview_card_storage"),
         subtitle="Aimedget",
         natural_size=QSizeF(CARD_W, COMPACT_H),
         paint=paint_storage,

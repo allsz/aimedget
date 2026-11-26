@@ -97,6 +97,13 @@ class AppVolumeRow:
         c.setAlpha(22)
         return c
 
+    def _ink(self, alpha: int) -> QColor:
+        """A cor do texto do tema com transparência: realces e textos secundários da gaveta que aparecem tanto no
+        cartão escuro quanto no claro (no escuro dá os mesmos cinzas de antes)."""
+        c = QColor(self.theme.text)
+        c.setAlpha(alpha)
+        return c
+
     @classmethod
     def _prepare_icon(cls, icon: QImage) -> QImage:
         if icon.isNull():
@@ -522,7 +529,7 @@ class AppVolumeRow:
 
         # A) Cabeçalho: Nome do Aplicativo formatado (sem a palavra ROTEAMENTO)
         p.setFont(get_ui_font(12, QFont.Weight.DemiBold))
-        p.setPen(QColor(248, 248, 248))
+        p.setPen(self._ink(248))
         disp_name = self.display_name()
         title_rect = QRectF(drawer_x + 9.0, drawer_y + 4.0, drawer_w - 38.0, 20.0)
         p.drawText(
@@ -531,14 +538,14 @@ class AppVolumeRow:
             disp_name,
         )
 
-        # Botão de fechar (✕) no canto direito do cabeçalho (Branco nítido no tema escuro)
+        # Botão de fechar (✕) no canto direito do cabeçalho, na cor dos ícones do tema
         close_r = self._close_btn_rect(x0, y_top)
         if self._close_hovered:
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 32))
+            p.setBrush(self._ink(32))
             p.drawRoundedRect(close_r, 4.0, 4.0)
 
-        close_pen = QPen(QColor(255, 255, 255), 1.5)
+        close_pen = QPen(self.theme.icon, 1.5)
         close_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         close_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         p.setPen(close_pen)
@@ -569,13 +576,13 @@ class AppVolumeRow:
             p.setFont(get_ui_font(11, QFont.Weight.DemiBold))
             p.setPen(self.theme.on_accent)
         elif self._tab_out_hovered:
-            p.setBrush(QColor(255, 255, 255, 18))
+            p.setBrush(self._ink(18))
             p.drawRoundedRect(tab_out_r, 4.0, 4.0)
             p.setFont(get_ui_font(11, QFont.Weight.Normal))
-            p.setPen(QColor(240, 240, 240))
+            p.setPen(self._ink(240))
         else:
             p.setFont(get_ui_font(11, QFont.Weight.Normal))
-            p.setPen(QColor(165, 165, 165))
+            p.setPen(self._ink(150))
         p.drawText(tab_out_r, Qt.AlignmentFlag.AlignCenter, t("volume_tab_output"))
 
         # Aba Entrada
@@ -587,13 +594,13 @@ class AppVolumeRow:
             p.setFont(get_ui_font(11, QFont.Weight.DemiBold))
             p.setPen(self.theme.on_accent)
         elif self._tab_in_hovered:
-            p.setBrush(QColor(255, 255, 255, 18))
+            p.setBrush(self._ink(18))
             p.drawRoundedRect(tab_in_r, 4.0, 4.0)
             p.setFont(get_ui_font(11, QFont.Weight.Normal))
-            p.setPen(QColor(240, 240, 240))
+            p.setPen(self._ink(240))
         else:
             p.setFont(get_ui_font(11, QFont.Weight.Normal))
-            p.setPen(QColor(165, 165, 165))
+            p.setPen(self._ink(150))
         p.drawText(tab_in_r, Qt.AlignmentFlag.AlignCenter, t("volume_tab_input"))
 
         # C) Lista de Dispositivos com PillSwitch
@@ -614,12 +621,12 @@ class AppVolumeRow:
             # Efeito de hover na linha do dispositivo (transparente em repouso)
             if self._hovered_dev_id == ep.device_id:
                 p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(255, 255, 255, 14))
+                p.setBrush(self._ink(14))
                 p.drawRoundedRect(item_r, 4.0, 4.0)
 
             # Nome do dispositivo truncado com '...' se necessário
             p.setFont(get_ui_font(11, QFont.Weight.DemiBold if is_active else QFont.Weight.Normal))
-            p.setPen(QColor(255, 255, 255) if is_active else QColor(175, 175, 175))
+            p.setPen(self.theme.text if is_active else self._ink(160))
 
             avail_w = item_r.width() - 44.0
             elided_name = fm.elidedText(t("volume_windows_default") if ep.is_default and ep.device_id == "__default__" else ep.name,

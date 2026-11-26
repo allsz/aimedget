@@ -578,6 +578,15 @@ class WeatherPage(BaseHubPage):
         for badge, key in self._help_badges:
             badge.set_text(t(key))
         self.scale_card.retranslate()
+        for sid, key in (
+            (font_skins.DEFAULT_SKIN, "weather_skin_glass"),
+            (font_skins.MIDNIGHT_SKIN, "weather_skin_midnight"),
+        ):
+            card = self._skin_cards.get(sid)
+            if card is not None:
+                card._spec.title = t(key)
+                card._invalidate_cache()
+                card.update()
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         self._forecast_group.button("daily").setText(t("weather_mode_daily"))

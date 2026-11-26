@@ -458,14 +458,26 @@ class AimedgetHubWindow(QMainWindow):
 
     def _on_system_color_scheme_changed(self, *_args):
         """O Windows trocou de claro/escuro: no modo "Sistema", o Hub e os widgets que seguem o app trocam juntos,
-        com a mesma dissolvência da troca manual."""
-        if self._theme_preference != "system":
-            return
-        resolved = resolve_theme("system")
-        if resolved == self._current_theme:
-            return
-        self._stop_wipe()
-        self._switch_mode_animated(resolved)
+        com a mesma dissolvência da troca manual. Os visuais "Windows" dos flyouts (Caps/Num Lock e Volume) são a
+        exceção: seguem SEMPRE o Windows, então trocam (miniaturas e flyouts) mesmo com o app fixo em claro ou escuro."""
+        if self._theme_preference == "system":
+            resolved = resolve_theme("system")
+            if resolved != self._current_theme:
+                self._stop_wipe()
+                self._switch_mode_animated(resolved)   # já atualiza os visuais "Windows" dentro da dissolvência
+                return
+        with mode_crossfade(self.shell):
+            self._refresh_windows_looks()
+
+    def _refresh_windows_looks(self):
+        """Miniaturas (galerias e Visão geral) e flyouts com o visual "Windows" releem o modo do Windows. Barato quando
+        nada mudou: as galerias só recriam os cartões se o objeto do tema mudou."""
+        for page in (getattr(self, "page_keys", None), getattr(self, "page_vol", None)):
+            if page is not None:
+                page.theme_picker.refresh()
+        if getattr(self, "page_overview", None) is not None:
+            self.page_overview.refresh_flyout_cards()
+        get_service_bridge().on_windows_mode_changed()
 
     def _switch_mode_animated(self, resolved: HubTheme):
         """Claro/escuro: a janela dissolve em 300 ms (curva in-out) e a barra de título nativa muda de cor junto,
@@ -488,6 +500,7 @@ class AimedgetHubWindow(QMainWindow):
         with mode_crossfade(self.shell, on_progress=_titlebar):
             self._apply_theme(resolved, titlebar=False)
             get_service_bridge().on_theme_changed(resolved)
+            self._refresh_windows_looks()   # o Windows pode ter trocado de modo junto (app em "Sistema")
 
     def _change_accent(self, accent, committed: bool):
         """Cor de destaque (matiz, '#RRGGBB' ou None = laranja padrão). Ao vivo enquanto arrasta; salva e atualiza

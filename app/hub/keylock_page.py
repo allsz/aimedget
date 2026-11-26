@@ -14,6 +14,7 @@ from app.hub.theme import HubTheme, THEME_LIGHT
 from app.widgets.keylock_osd.theme import loader as keylock_theme_loader
 from app.hub.base_page import BaseHubPage
 from app.hub.ui_tokens import CARD_MARGINS, ROWS_GAP
+from app.ui_components.jelly_slider import JellySlider
 
 
 class LockKeysPage(BaseHubPage):
@@ -64,6 +65,39 @@ class LockKeysPage(BaseHubPage):
 
         # Card de Posição na tela (compartilhada com o Mixer de Volume)
         self._add_osd_position_card("keylock", "keys_pos_sub",lambda: self.bridge.trigger_test_keylock("Caps Lock", True))
+
+        # Card de Distância da borda (só para Lock Keys; vertical nos cantos, horizontal nas laterais ml/mr)
+        offset_card = QFrame()
+        offset_card.setProperty("class", "HubCard")
+        off_layout = QVBoxLayout(offset_card)
+        off_layout.setContentsMargins(*CARD_MARGINS)
+        off_layout.setSpacing(6)
+
+        self.offset_title = QLabel(t("keys_edge_offset_title"))
+        self.offset_title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        self.offset_desc = QLabel(t("keys_edge_offset_sub"))
+        self.offset_desc.setWordWrap(True)
+        self.offset_desc.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        off_layout.addWidget(self.offset_title)
+        off_layout.addWidget(self.offset_desc)
+
+        self.offset_slider = JellySlider(
+            minimum=0,
+            maximum=120,
+            value=self.bridge.get_keylock_edge_offset(),
+            step_minor=10,
+            step_major=30,
+            theme=self._theme,
+            parent=offset_card,
+            suffix="px",
+            headroom=34,
+        )
+        self._offset_live = False   # arrastando: o flyout está na tela acompanhando o slider
+        self.offset_slider.live_value_changed.connect(self._on_edge_offset_live)
+        self.offset_slider.value_changed.connect(self._on_edge_offset_stepped)
+        self.offset_slider.interaction_finished.connect(self._on_edge_offset_committed)
+        off_layout.addWidget(self.offset_slider)
+        self.content_layout.addWidget(offset_card)
 
         # Card de Tema visual (mostra o flyout ao escolher, para ver o resultado)
         self.theme_picker = ThemeGalleryCard(
@@ -154,11 +188,35 @@ class LockKeysPage(BaseHubPage):
     def _on_hotkey_changed(self, new_shortcut: str):
         self.bridge.update_keylock_hotkey(new_shortcut)
 
+    def _on_edge_offset_live(self, value: float):
+        """Arrastando: o flyout aparece no 1º quadro e segue o valor da mola, sem gravar."""
+        if not self._offset_live:
+            self._offset_live = True
+            self.bridge.begin_keylock_live_offset()
+        self.bridge.preview_keylock_edge_offset(value)
+
+    def _on_edge_offset_stepped(self, value: int):
+        """Setas/Home/End (sem arraste nem `interaction_finished`): grava e mostra o resultado como antes."""
+        if self._offset_live or self.offset_slider.is_busy():
+            return   # o arraste cuida disso
+        self.bridge.set_keylock_edge_offset(int(value))
+        self.bridge.trigger_test_keylock("Caps Lock", True)
+
+    def _on_edge_offset_committed(self):
+        """Soltou e a mola assentou: grava uma vez e o flyout sai."""
+        self.bridge.set_keylock_edge_offset(int(self.offset_slider.value()))
+        if self._offset_live:
+            self._offset_live = False
+            self.bridge.end_keylock_live_offset()
+
     def retranslate_ui(self):
         if hasattr(self, "theme_picker"):
             self.theme_picker.retranslate_ui()
         self.set_header(t("keys_title"), t("keys_subtitle"))
         self._retranslate_osd_position_card()
+        if hasattr(self, "offset_title"):
+            self.offset_title.setText(t("keys_edge_offset_title"))
+            self.offset_desc.setText(t("keys_edge_offset_sub"))
         if hasattr(self, "t_title"):
             self.t_title.setText(t("keys_test_title"))
         if hasattr(self, "t_desc"):
@@ -190,3 +248,6 @@ class LockKeysPage(BaseHubPage):
             self.theme_picker.set_theme(theme)
         if hasattr(self, "oem_help"):
             self.oem_help.set_theme(theme)
+        if hasattr(self, "offset_slider"):
+            self.offset_slider.set_theme(theme)
+            self.offset_desc.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")

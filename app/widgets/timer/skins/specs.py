@@ -70,7 +70,7 @@ def init_timer_skin_specs() -> list[SkinSpec]:
             id="windows",
             widget_id="timer",
             title=t("theme_default_timer"),
-            subtitle="PIP clássico",
+            subtitle=t("skin_windows_sub"),
             natural_size=QSizeF(164, 164),
             paint=_make_paint(paint_windows_timer),
             mock_state=lambda: TimerState(current_seconds=300.0, mode="timer"),
@@ -88,7 +88,7 @@ def init_timer_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="focus_ring",
             widget_id="timer",
-            title="Focus Ring",
+            title=t("skin_focus_ring_title"),
             subtitle=t("skin_focus_ring_timer_sub"),
             natural_size=QSizeF(164, 164),
             paint=_make_paint(paint_focus_ring_timer),

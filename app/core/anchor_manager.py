@@ -214,6 +214,8 @@ def move_cards(items):
         if target != w.pos():
             batch.append((w, x, y, target))
 
+    if len(batch) > 1 and desktop_layer.IS_WINDOWS and not _same_scale(w for w, *_ in batch):
+        batch, single = [], single + [(w, x, y) for w, x, y, _t in batch]   # escalas diferentes: uma por vez
     if len(batch) > 1 and desktop_layer.IS_WINDOWS:
         native = []
         for w, _x, _y, target in batch:
@@ -232,10 +234,24 @@ def move_cards(items):
         move_card(w, x, y)
 
 
+def _same_scale(ws) -> bool:
+    """Todas na mesma tela e escala? O lote converte o deslocamento com a escala da janela, e ela só vale se for a
+    mesma para todas (com telas de escalas diferentes os membros andavam quantias diferentes e o grupo se abria)."""
+    seen = set()
+    for w in ws:
+        handle = w.windowHandle()
+        seen.add((id(handle.screen()) if handle is not None else None, round(w.devicePixelRatioF(), 3)))
+        if len(seen) > 1:
+            return False
+    return True
+
+
 def _persist(w):
     fn = getattr(w, "anchor_position_committed", None)
     if fn is not None:
         fn()
+    if _manager is not None and shiboken6.isValid(_manager):
+        _manager._screens.remember(w)      # o lugar no monitor (ver screen_watcher.py)
 
 
 # --- Estado ------------------------------------------------------------------------------------------------------
@@ -297,6 +313,8 @@ class AnchorManager(QObject):
         self._clock.timeout.connect(self._tick)
         self._last = time.perf_counter()
         self._load()
+        from app.core.screen_watcher import ScreenWatcher
+        self._screens = ScreenWatcher(self)    # troca de monitores (TV no Big Picture): cada widget volta ao lugar
 
     # --- Persistência ---
 
@@ -379,6 +397,8 @@ class AnchorManager(QObject):
         returning = key in self._absent
         self._absent.discard(key)
         self._windows[key] = w
+        if first and not (self._drag and key in self._drag.start):
+            self._screens.adopt(w)              # o lugar guardado no monitor dele (ou passa a ter um)
         r = card_rect(w)
         self._sizes[key] = (r.w, r.h)
         g = self.group_of(key)
@@ -522,7 +542,7 @@ class AnchorManager(QObject):
     def _step_slide(self, dt: float) -> bool:
         """Um quadro das fileiras fechando/reabrindo. True enquanto há movimento."""
         sl = self._slide
-        kk, cc = CLOSE_SPRING
+        kk, cc = sl.get("spring", CLOSE_SPRING)
         sub = dt / ARRANGE_SUBSTEPS
         moves, settled = [], True
         for k, s in sl["st"].items():
@@ -564,6 +584,8 @@ class AnchorManager(QObject):
             return
         r = card_rect(w)
         self._sizes[key] = (r.w, r.h)
+        if self._screens.is_settling():
+            return          # monitores trocando: o grupo se refaz quando assentar
         g = self.group_of(key)
         if self._arranging(g):
             return          # o alinhamento em curso refaz o grupo a cada quadro com os tamanhos novos
@@ -623,6 +645,100 @@ class AnchorManager(QObject):
                 if abs(cur.l - x) > 0.5 or abs(cur.t - y) > 0.5:
                     moves.append((w, x, y))
         move_cards(moves)
+
+    # --- Troca de monitores (ver screen_watcher.py) ---
+
+    def screen_windows(self):
+        """(chave, janela) de todos os widgets abertos, visíveis ou não: o ScreenWatcher os devolve ao monitor."""
+        for k, w in list(self._windows.items()):
+            if _alive(w):
+                yield k, w
+
+    def user_placed(self, w):
+        """O usuário escolheu o lugar (quadrante no Hub): grava no monitor quando o deslize terminar."""
+        key = getattr(w, "ANCHOR_KEY", None)
+        if key is None:
+            return
+        self._screens.user_placed([key])
+
+        def done():
+            if _alive(w):
+                self._screens.remember(w)
+
+        def check():
+            glide = getattr(w, "_position_glide", None)
+            if glide is not None and glide.is_running():
+                glide.finished.connect(done, Qt.ConnectionType.SingleShotConnection)
+            else:
+                done()
+
+        QTimer.singleShot(0, check)
+
+    def screen_members(self):
+        """(chave, janela, retângulo do cartão) dos widgets visíveis e parados: o que o ScreenWatcher lembra."""
+        for k, w in list(self._windows.items()):
+            if not _alive(w) or not w.isVisible():
+                continue
+            animator = getattr(w, "animator", None)
+            if animator is not None and animator.is_animating():
+                continue
+            yield k, w, card_rect(w)
+
+    def relocate(self, target_of, screens, anchors=None):
+        """
+        As telas mudaram e assentaram. `target_of(chave, retângulo atual)` diz onde cada cartão deveria estar. Grupos
+        são refeitos a partir de um membro visível (todos de volta à fileira); o grupo inteiro, ou o cartão solto, é
+        trazido para dentro da área útil de uma tela. Quem está numa tela desliza (mola SLIDE); quem estava fora de
+        todas é posto no lugar e surge de novo ali. Janelas escondidas só mudam de lugar.
+        """
+        from app.core import screen_watcher as sw
+        from app.core.widget_animator import AnimatedVisibilityMixin
+
+        if self._drag is not None:
+            return                  # soltar o arraste já decide o lugar
+        self._finish_arrange()
+        self._finish_slide()
+        goals, pops = {}, set()
+        for g in self.groups():
+            solo = len(g.keys()) < 2
+            keys = [k for k in g.keys() if self.window(k) is not None and (solo or self._present(k))]
+            if not keys:
+                continue
+            rects = {k: card_rect(self.window(k)) for k in keys}
+            if solo:
+                targets = {k: target_of(k, rects[k]) for k in keys}
+            else:
+                sizes = self._sizes_of(g)
+                if sizes is None:
+                    continue
+                shown = [k for k in keys if self._visible(k)] or keys
+                root = next((k for k in shown if anchors and k in anchors), shown[0])   # quem tem lugar guardado
+                t = target_of(root, rects[root])
+                pos = geo.layout(g.tree, sizes, root, (t.l, t.t), self._absent_in(g))
+                targets = {k: Rect.of(pos[k][0], pos[k][1], *sizes[k]) for k in keys}
+            dx, dy = sw.fit_shift(geo.union(targets.values()), screens)
+            for k in keys:
+                goals[k] = (targets[k].l + dx, targets[k].t + dy)
+                if self._visible(k) and not sw.is_on_screens(rects[k], screens):
+                    pops.add(k)
+        anim = animations_enabled()
+        instant = {k: p for k, p in goals.items() if not anim or k in pops or not self._visible(k)}
+        move_cards([(self.window(k), x, y) for k, (x, y) in instant.items()])
+        for k in instant:
+            _persist(self.window(k))
+        if anim:
+            for k in pops:
+                animator = getattr(self.window(k), "animator", None)
+                if animator is not None and hasattr(animator, "replay_appear"):
+                    animator.replay_appear(AnimatedVisibilityMixin.APPEAR_MS)
+        slide = {k: p for k, p in goals.items() if k not in instant}
+        if slide:
+            st = {}
+            for k in slide:
+                r = card_rect(self.window(k))
+                st[k] = [r.l, r.t, 0.0, 0.0]
+            self._slide = {"group": None, "st": st, "goal": slide, "spring": ARRANGE_SPRING}
+            self._wake()
 
     # --- Menu ---
 
@@ -965,6 +1081,8 @@ class AnchorManager(QObject):
         if key is None:
             w.move(window_pos)
             return
+        if self._screens.is_settling():
+            return          # monitores trocando: as coordenadas do Qt estão velhas (ver screen_watcher.py)
         d = self._drag
         if d is None or d.key != key:
             d = self._begin(key)
@@ -1078,10 +1196,13 @@ class AnchorManager(QObject):
         self._drag = None
         for g in self.groups():
             g.prox = None
+        self._screens.user_placed(d.base)
         for k in d.base:
             ow = self.window(k)
             if k != key and ow is not None:
                 _persist(ow)
+        if self.window(key) is not None:
+            self._screens.remember(self.window(key))
         self._wake()
 
     def _join(self, dg: Group, og: Group, c: geo.Candidate):

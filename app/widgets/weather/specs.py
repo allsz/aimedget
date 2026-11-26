@@ -56,7 +56,7 @@ def init_weather_spec() -> WidgetSpec:
         return spec
     spec = WidgetSpec(
         id="weather",
-        title="Weather",
+        title=t("overview_card_weather"),
         subtitle="Aimedget",
         natural_size=QSizeF(CARD_W, CARD_H),
         paint=paint_weather,
@@ -74,10 +74,16 @@ def init_weather_skin_specs() -> list:
     for skin in skins:
         family = skin.family
         sid = skin.id
+        if skin.id == font_skins.DEFAULT_SKIN:
+            title = t("weather_skin_glass")
+        elif skin.id == font_skins.MIDNIGHT_SKIN:
+            title = t("weather_skin_midnight")
+        else:
+            title = skin.title
         specs.append(SkinSpec(
             id=skin.id,
             widget_id="weather",
-            title=t("weather_skin_glass") if skin.id == font_skins.DEFAULT_SKIN else skin.title,
+            title=title,
             subtitle="",
             natural_size=QSizeF(CARD_W, CARD_H),
             paint=paint_weather,

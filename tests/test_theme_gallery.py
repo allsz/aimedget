@@ -402,29 +402,30 @@ class OverviewFollowsActiveTheme(_Isolated):
         from app.widgets.volume_mixer.specs import init_volume_spec
 
         page = OverviewPage(theme=THEME_DARK)
-        # Padrão: miniatura e rótulo originais
-        self.assertIs(page.keys_card._spec, KEYLOCK_SPEC)
-        self.assertIs(page.vol_card._spec, init_volume_spec())
+        # Padrão: miniatura e rótulo originais (com o visual "Windows" do modo atual do Windows)
+        self.assertIs(page.keys_card._spec.paint, KEYLOCK_SPEC.paint)
+        self.assertIs(page.vol_card._spec.paint, init_volume_spec().paint)
 
         self.make_theme(kl_theme.loader, "neon", {"name": "Neon", "card_bg": "#112233"})
         self.make_theme(mx_theme.loader, "areia", {"name": "Areia"})
         kl_theme.loader.set_active("neon")
         mx_theme.loader.set_active("areia")
-        page._refresh_flyout_cards()   # o que o showEvent faz ao voltar para a página
+        page.refresh_flyout_cards()   # o que o showEvent faz ao voltar para a página
         self.assertEqual((page.keys_card._spec.id, page.keys_card.skin_label), ("neon", "Neon"))
         self.assertEqual((page.vol_card._spec.id, page.vol_card.skin_label), ("areia", "Areia"))
         self.assertIn("Neon", page.keys_card.lbl_subtitle.text())
 
         # Nada mudou: a mesma spec (a miniatura não é redesenhada à toa)
         spec = page.keys_card._spec
-        page._refresh_flyout_cards()
+        page.refresh_flyout_cards()
         self.assertIs(page.keys_card._spec, spec)
 
         # Tema escolhido que sumiu da pasta: volta ao padrão, como o flyout
         import shutil
         shutil.rmtree(os.path.join(kl_theme.loader.themes_dir(), "neon"))
-        page._refresh_flyout_cards()
-        self.assertIs(page.keys_card._spec, KEYLOCK_SPEC)
+        page.refresh_flyout_cards()
+        self.assertEqual(page.keys_card._spec.id, KEYLOCK_SPEC.id)
+        self.assertIs(page.keys_card._spec.paint, KEYLOCK_SPEC.paint)
 
 
 if __name__ == "__main__":
