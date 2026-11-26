@@ -63,6 +63,7 @@ class HubServiceBridge(QObject):
 
         # 2. Módulo de Caps / Num Lock
         self.keylock_flyout = KeyLockFlyout()
+        self.keylock_flyout.set_edge_offset(config_manager.get_keylock_edge_offset())
         self.keylock_service = KeyLockService()
         self.keylock_service.keylock_changed.connect(self._on_keylock_changed)
 
@@ -520,6 +521,14 @@ class HubServiceBridge(QObject):
     def trigger_test_keylock(self, key_name: str = "Caps Lock", is_on: bool = True):
         """Simula a exibição imediata do OSD na tela para testes visuais."""
         self.keylock_flyout.show_osd(key_name, is_on)
+
+    def get_keylock_edge_offset(self) -> int:
+        return config_manager.get_keylock_edge_offset()
+
+    def set_keylock_edge_offset(self, offset_px: int):
+        """Salva e aplica na hora a distância da borda do flyout de Caps/Num Lock."""
+        config_manager.set_keylock_edge_offset(offset_px)
+        self.keylock_flyout.set_edge_offset(config_manager.get_keylock_edge_offset())
 
     # --- Controles de Volume Mixer ---
 

@@ -74,6 +74,7 @@ class KeyLockFlyout(QWidget):
         self._art_right = 0.0
         self._scale = 1.0   # escala efetiva (tema x tela); recalculada junto com o tamanho
         self._anchor = osd_anchor.DEFAULT_ANCHOR
+        self._edge_offset = 0.0        # distância extra da borda (px, 0..120), limitada para nunca ir ao centro
         self._column_provider = None   # ver set_column_provider (alinhamento com o mixer nas colunas laterais)
 
         # Estado da animação do cadeado e pílula:
@@ -198,6 +199,26 @@ class KeyLockFlyout(QWidget):
     def anchor(self) -> str:
         return self._anchor
 
+    def edge_offset(self) -> float:
+        return self._edge_offset
+
+    def set_edge_offset(self, offset_px: float):
+        """Define a distância extra (px, 0..120) a partir da borda da tela; reposiciona se estiver visível."""
+        clamped = max(0.0, min(120.0, float(offset_px)))
+        if clamped == self._edge_offset:
+            return
+        self._edge_offset = clamped
+        if self.isVisible():
+            self.position_on_screen()
+
+    def _effective_edge_offset_y(self, avail) -> float:
+        return min(self._edge_offset, max(0.0, avail.height() * 0.18))
+
+    def _effective_edge_offset_x(self, avail) -> float:
+        if osd_anchor.vertical(self._anchor) != "middle":
+            return 0.0   # nos cantos (tl/tr/bl/br) o deslocamento é só vertical
+        return min(self._edge_offset, max(0.0, avail.width() * 0.12))
+
     def visual_height(self) -> float:
         """Altura que o flyout ocupa na tela: card escalado + a arte que passa da borda de cima e de baixo."""
         return self.card_h * self._scale + self._art_top + self._art_bottom
@@ -214,6 +235,10 @@ class KeyLockFlyout(QWidget):
             card_x = column - card_px_w / 2.0   # alinhado pelo centro com o mixer da mesma coluna
         else:
             card_x = osd_anchor.card_left_x(self._anchor, avail, card_px_w, self._art_left, self._art_right)
+            off_x = self._effective_edge_offset_x(avail)
+            if off_x > 0.0:
+                side = osd_anchor.horizontal(self._anchor)
+                card_x += off_x if side == "left" else (-off_x if side == "right" else 0.0)
         # a arte que passa da lateral nunca sai da tela
         card_x = max(card_x, avail.x() + 4.0 + self._art_left)
         card_x = min(card_x, avail.x() + avail.width() - 4.0 - self._art_right - card_px_w)
@@ -226,15 +251,16 @@ class KeyLockFlyout(QWidget):
             return 0.0
         card_h_px = self.card_h * self._scale
         mt = self._margins[1]
+        off_y = self._effective_edge_offset_y(avail)
         v = osd_anchor.vertical(self._anchor)
         if v == "top":
             # a arte que passa do topo do card não pode sair da tela: o card desce o equivalente
-            return float(avail.y() + self.EDGE_GAP_Y + self._art_top - mt)
+            return float(avail.y() + self.EDGE_GAP_Y + off_y + self._art_top - mt)
         if v == "middle":
             return float(avail.y() + avail.height() / 2.0 - card_h_px / 2.0 - mt)
         card_bottom_in_win = mt + card_h_px
         # a arte que pende sob o card não pode invadir a barra de tarefas: o card sobe o equivalente
-        return float(avail.y() + avail.height() - card_bottom_in_win - self.EDGE_GAP_Y - self._art_bottom)
+        return float(avail.y() + avail.height() - card_bottom_in_win - self.EDGE_GAP_Y - off_y - self._art_bottom)
 
     def _compute_target_win_y(self) -> float:
         default_y = self._get_default_target_y()

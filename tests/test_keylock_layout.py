@@ -266,5 +266,94 @@ class KeycapDigitalTests(_Dir):
         self.assertEqual(count_color(off, (255, 0, 0)), 0)
 
 
+class CircleSketchTests(_Dir):
+    """Estilo nativo circular com herança do tema do app e animação vetorial."""
+
+    def test_circle_sketch_defaults_and_validation(self):
+        th = self.theme({"name": "Circular Sketch", "style": "circle_sketch", "inherit_app": True})
+        self.assertEqual(self.issues, [])
+        self.assertEqual(th.style, "circle_sketch")
+        self.assertTrue(th.inherit_app)
+        self.assertEqual(th.size, (60.0, 60.0))
+        self.assertEqual(th.radius, 30.0)
+
+    def test_inherit_app_follows_hub_theme_and_accent(self):
+        from app.core.app_theme import app_keylock_theme
+        app_th = app_keylock_theme()
+        th = self.theme({"style": "circle_sketch", "inherit_app": True})
+        self.assertEqual(th.card_bg, app_th.card_bg)
+        self.assertEqual(th.on_color, app_th.on_color)
+        self.assertEqual(th.icon, app_th.icon)
+
+    def test_circle_sketch_renders_accent_led_and_key_labels(self):
+        th = self.theme({
+            "style": "circle_sketch", "card_bg": "#181818", "border": "#303030",
+            "icon": "#ffffff", "off_color": "#383838", "on_color": "#ff6b1a",
+            "size": [60, 60], "radius": 30,
+        })
+        on_img = render(th, is_on=True, anim=1.0)
+        off_img = render(th, is_on=False, anim=0.0)
+        self.assertGreater(count_color(on_img, (255, 107, 26), tol=45), 25)
+        self.assertEqual(count_color(off_img, (255, 107, 26), tol=45), 0)
+
+        # Caps Lock ("caps") e Num Lock ("num") devem produzir frames distintos
+        sz = natural_size(KeyLockState(theme=th))
+        def _frame(label):
+            st = KeyLockState(label=label, is_on=True, anim_val=1.0, theme=th)
+            img = QImage(int(sz.width()) + 2, int(sz.height()) + 2, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            p = QPainter(img)
+            try:
+                paint_keylock(p, QRectF(1, 1, sz.width(), sz.height()), st)
+            finally:
+                p.end()
+            return img
+
+        self.assertNotEqual(md5(_frame("Caps Lock")), md5(_frame("Num Lock")))
+
+    def test_edge_offset_handles_all_anchor_groups_vertical_only_on_corners(self):
+        fly = KeyLockFlyout()
+        try:
+            fly.theme = theme_from_dict({"style": "circle_sketch", "size": [60, 60], "radius": 30, "scale": 1.0})
+            fly._recalculate_size()
+
+            # Bottom-left (corner): vertical only (Y moves up, X unchanged)
+            fly.set_anchor("bl", force=True)
+            fly.set_edge_offset(0)
+            x0, y0 = fly._get_centered_x(), fly._get_default_target_y()
+            fly.set_edge_offset(50)
+            self.assertEqual(fly._get_centered_x(), x0)
+            self.assertAlmostEqual(y0 - fly._get_default_target_y(), 50.0, places=1)
+
+            # Top-center: Y moves down
+            fly.set_anchor("tc", force=True)
+            fly.set_edge_offset(0)
+            y_top0 = fly._get_default_target_y()
+            fly.set_edge_offset(40)
+            self.assertAlmostEqual(fly._get_default_target_y() - y_top0, 40.0, places=1)
+
+            # Mid-left & Mid-right: horizontal inward, Y stays centered
+            fly.set_anchor("ml", force=True)
+            fly.set_edge_offset(0)
+            x_ml0, y_ml0 = fly._get_centered_x(), fly._get_default_target_y()
+            fly.set_edge_offset(45)
+            self.assertEqual(fly._get_centered_x() - x_ml0, 45)
+            self.assertAlmostEqual(fly._get_default_target_y(), y_ml0, places=1)
+
+            fly.set_anchor("mr", force=True)
+            fly.set_edge_offset(0)
+            x_mr0 = fly._get_centered_x()
+            fly.set_edge_offset(45)
+            self.assertEqual(x_mr0 - fly._get_centered_x(), 45)
+
+            # Clamped to [0, 120]
+            fly.set_edge_offset(999)
+            self.assertEqual(fly.edge_offset(), 120.0)
+            fly.set_edge_offset(-10)
+            self.assertEqual(fly.edge_offset(), 0.0)
+        finally:
+            fly.deleteLater()
+
+
 if __name__ == "__main__":
     unittest.main()

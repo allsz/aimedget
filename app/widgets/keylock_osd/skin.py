@@ -8,14 +8,14 @@ import math
 from dataclasses import dataclass
 from typing import Any
 from PySide6.QtCore import Qt, QRectF, QSizeF, QPointF
-from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from app.core.theme_art import (
     paint_background,
     paint_card_shadow,
     paint_stickers,
     paint_stickers_behind,
 )
-from app.core.typography import get_ui_font
+from app.core.typography import get_rounded_font, get_ui_font
 from app.widgets.keylock_osd.theme import DEFAULT_THEME, KeyLockTheme
 
 
@@ -116,21 +116,21 @@ def paint_keylock(p: QPainter, rect: QRectF, s: KeyLockState, theme: Any = None)
     if th.stickers:
         paint_stickers(p, card_rect, th.stickers, above=False, on_amount=on_amount)
 
+    # 3. Estilo circular nativo (cadeado vetorial + arco LED concêntrico, sem texto)
+    if th.style == "circle_sketch":
+        _draw_circle_sketch(p, card_rect, s, on_amount)
+        if th.stickers:
+            paint_stickers(p, card_rect, th.stickers, above=True, on_amount=on_amount)
+        p.restore()
+        return
+
     # 3. Cadeado Vetorial
     if th.show_icon:
         _draw_padlock(p, x0, cy0, s)
 
     # 4. Texto do Rótulo ("Caps Lock" / "Num Lock"): cor interpolada entre text_off e text se o tema definir text_off
-    t = max(0.0, min(1.0, s.anim_val))
-    text_color = th.text
-    if th.text_off is not None:
-        off, on = th.text_off, th.text
-        text_color = QColor(
-            int(round(off.red() + (on.red() - off.red()) * t)),
-            int(round(off.green() + (on.green() - off.green()) * t)),
-            int(round(off.blue() + (on.blue() - off.blue()) * t)),
-            int(round(off.alpha() + (on.alpha() - off.alpha()) * t)),
-        )
+    t = on_amount
+    text_color = _lerp_color(th.text_off, th.text, t) if th.text_off is not None else th.text
     p.setPen(text_color)
     p.setFont(get_label_font(th))
     label = display_label(s.label, th)
@@ -156,20 +156,87 @@ def paint_keylock(p: QPainter, rect: QRectF, s: KeyLockState, theme: Any = None)
         pill_x = x0 + (card_w - pill_w) * 0.5
         pill_y = cy0 + 41.0
 
-        off, on = th.off_color, th.on_color
-        pill_color = QColor(
-            int(round(off.red() + (on.red() - off.red()) * t)),
-            int(round(off.green() + (on.green() - off.green()) * t)),
-            int(round(off.blue() + (on.blue() - off.blue()) * t)),
-            int(round(off.alpha() + (on.alpha() - off.alpha()) * t)),
-        )
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(pill_color)
+        p.setBrush(_lerp_color(th.off_color, th.on_color, t))
         p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 1.5, 1.5)
 
     # 6. Figurinhas "above" (por cima de tudo)
     if th.stickers:
         paint_stickers(p, card_rect, th.stickers, above=True, on_amount=on_amount)
+
+    p.restore()
+
+
+def _lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    """Interpola linearmente entre duas QColor para t em [0.0, 1.0]."""
+    return QColor(
+        int(round(a.red() + (b.red() - a.red()) * t)),
+        int(round(a.green() + (b.green() - a.green()) * t)),
+        int(round(a.blue() + (b.blue() - a.blue()) * t)),
+        int(round(a.alpha() + (b.alpha() - a.alpha()) * t)),
+    )
+
+
+# --- Geometria concêntrica (diâmetro 184, centro em 0,0) do estilo `circle_sketch` ---
+# Rótulo arredondado espesso ("caps" / "num") em Nunito ExtraBold + arco LED curvo centralizados no círculo.
+_CS_R_OUTER = 92.0
+_CS_LOCK_SCALE = 0.76
+_CS_LED_GAP = 16.0
+_CS_LED_RADIUS = 75.0
+_CS_LED_SPAN_DEG = 58.0
+_CS_LED_THICK = 7.5
+_CS_OFFSET_Y = -3.0
+_CS_TEXT_SIZE = 50.0
+_CS_TEXT_TRACKING = -2.0
+
+
+def _draw_circle_sketch(p: QPainter, card_rect: QRectF, s: KeyLockState, on_amount: float):
+    """Desenha o rótulo ('caps' / 'num') em Nunito ExtraBold e o arco LED centralizados no círculo."""
+    th = s.theme
+    u = min(card_rect.width(), card_rect.height()) / (_CS_R_OUTER * 2.0)
+
+    lock_total_h = 107.5 * _CS_LOCK_SCALE
+    group_h = lock_total_h + _CS_LED_GAP + _CS_LED_THICK * 0.5
+    lock_top_edge = -group_h * 0.5 + _CS_OFFSET_Y
+    base_bottom = lock_top_edge + lock_total_h
+
+    # 1. Caminho do arco LED abaixo do rótulo
+    led_bottom_y = base_bottom + _CS_LED_GAP
+    led_cy = led_bottom_y - _CS_LED_RADIUS
+    led_rect = QRectF(-_CS_LED_RADIUS, led_cy - _CS_LED_RADIUS, _CS_LED_RADIUS * 2.0, _CS_LED_RADIUS * 2.0)
+    led_arc = QPainterPath()
+    led_start = 270.0 - _CS_LED_SPAN_DEG * 0.5
+    led_arc.arcMoveTo(led_rect, led_start)
+    led_arc.arcTo(led_rect, led_start, _CS_LED_SPAN_DEG)
+
+    # 2. Pintura vetorial centralizada no card
+    p.save()
+    p.translate(card_rect.center())
+    p.scale(u, u)
+
+    # Rótulo curto ("num" para Num Lock, "caps" para Caps Lock) desenhado como caminho vetorial
+    symbol = "num" if "num" in s.label.lower() else "caps"
+    text_cy = -(_CS_LED_GAP + _CS_LED_THICK * 0.5) * 0.5
+    font = get_rounded_font(_CS_TEXT_SIZE, QFont.Weight.ExtraBold, _CS_TEXT_TRACKING)
+    br = QFontMetricsF(font).tightBoundingRect(symbol)
+    text_path = QPainterPath()
+    text_path.addText(-br.center().x(), text_cy - br.center().y(), font, symbol)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(th.icon)
+    p.drawPath(text_path)
+
+    # Brilho suave + arco LED principal
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    if on_amount > 0.02:
+        glow = QColor(th.on_color)
+        for mult, alpha in ((2.1, 36), (1.5, 68)):
+            glow.setAlpha(int(alpha * on_amount))
+            p.setPen(QPen(glow, _CS_LED_THICK * mult, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            p.drawPath(led_arc)
+
+    led_color = _lerp_color(th.off_color, th.on_color, on_amount)
+    p.setPen(QPen(led_color, _CS_LED_THICK, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawPath(led_arc)
 
     p.restore()
 

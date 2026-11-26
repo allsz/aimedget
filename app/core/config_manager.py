@@ -724,6 +724,18 @@ class ConfigManager:
         keys[key_name] = bool(enabled)
         self._save()
 
+    def get_keylock_edge_offset(self) -> int:
+        """Distância extra (px, 0..120) entre o flyout de Caps/Num Lock e a borda da tela."""
+        raw = self._data.get("keylock_osd", {}).get("edge_offset", 0)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return 0
+        return max(0, min(120, int(round(raw))))
+
+    def set_keylock_edge_offset(self, offset_px: int):
+        cfg = self._data.setdefault("keylock_osd", {})
+        cfg["edge_offset"] = max(0, min(120, int(round(offset_px))))
+        self._save()
+
     def get_volume_hotkey(self, default: str = "Win+Alt+V") -> str:
         cfg = self._data.get("volume_mixer", {})
         return str(cfg.get("hotkey", default))
