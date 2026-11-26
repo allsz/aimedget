@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QWidget
 
 from app.core import desktop_layer
+from app.core.virtual_desktop_watcher import virtual_desktop_watcher
 
 POLL_MS = 250
 RECHECK_MS = (0, 40, 120, 300)   # depois de uma troca de primeiro plano
@@ -39,6 +40,9 @@ class DesktopPinGuard(QObject):
         desktop_layer.set_excluded_from_peek(hwnd, True)
         self._hook = desktop_layer.ForegroundHook(self._on_foreground_changed)
         self._timer.start()
+        watcher = virtual_desktop_watcher()
+        watcher.switched.connect(self._on_virtual_desktop_switched)
+        watcher.acquire()
         self.check()
         # Ao mostrar, o Qt reaplica a janela dona dele (nenhuma) depois do showEvent: refaz o vínculo com o desktop
         # logo em seguida, em vez de esperar a checagem de 250 ms.
@@ -48,6 +52,9 @@ class DesktopPinGuard(QObject):
         if not self._timer.isActive():
             return
         self._timer.stop()
+        watcher = virtual_desktop_watcher()
+        watcher.switched.disconnect(self._on_virtual_desktop_switched)
+        watcher.release()
         if self._hook is not None:
             self._hook.close()
             self._hook = None
@@ -65,6 +72,12 @@ class DesktopPinGuard(QObject):
         if desktop_layer.needs_replace(hwnd):
             desktop_layer.send_to_desktop_layer(hwnd)
             self.replacements += 1
+
+    def _on_virtual_desktop_switched(self, direction: int):
+        """Fixado, o widget está em todas as áreas de trabalho (o desktop é o dono): acompanha o deslize dos apps."""
+        animator = getattr(self._widget, "animator", None)
+        if animator is not None and self._widget.isVisible():
+            animator.sweep(direction)
 
     def _on_foreground_changed(self):
         for ms in RECHECK_MS:

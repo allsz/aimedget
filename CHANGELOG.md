@@ -9,6 +9,8 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 ### Adicionado
 - Bateria: **mouses Redragon** pelo dongle 2.4G ou pelo cabo. No cabo, mouse e dongle continuam sendo um cartão só,
   agora carregando.
+- Widgets fixados na área de trabalho aparecem em todas as áreas de trabalho virtuais e, ao trocar de área
+  (Ctrl+Win+←/→), saem junto com os apps e voltam do lado oposto.
 
 ### Corrigido
 - Widgets fixados na área de trabalho não piscam mais ao clicar no desktop, usar "Atualizar" ou o Win+D (acontecia
