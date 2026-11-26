@@ -98,6 +98,42 @@ class MixerTheme:
 
 DEFAULT_THEME = MixerTheme()
 
+# Versão clara do visual "Windows" (quando o WINDOWS está no modo claro), nos mesmos tons da versão clara do flyout
+# de Caps/Num Lock: cartão cinza claro, texto e ícones escuros, azul do Windows. Temas de pasta partem do DEFAULT_THEME.
+_WIN_BLUE = (0, 120, 212)
+LIGHT_DEFAULT_THEME = MixerTheme(
+    card_bg=QColor(243, 243, 243, 248),
+    border=QColor(214, 214, 214),
+    text=QColor(27, 27, 27),
+    muted_text=QColor(118, 118, 118),
+    icon=QColor(27, 27, 27),
+    accent=QColor(*_WIN_BLUE),
+    thumb=QColor(*_WIN_BLUE),
+    thumb_outer=QColor(255, 255, 255),
+    thumb_border=QColor(214, 214, 214),
+    track_inactive=QColor(138, 138, 138),
+    button_bg=QColor(251, 251, 251),
+    button_hover=QColor(246, 246, 246),
+    button_pressed=QColor(238, 238, 238),
+    button_border=QColor(222, 222, 222),
+    divider=QColor(224, 224, 224),
+    on_accent=QColor(255, 255, 255),
+    switch_on=QColor(*_WIN_BLUE),
+    drawer_bg=QColor(249, 249, 249, 250),
+    drawer_border=QColor(222, 222, 222),
+    tabs_bg=QColor(233, 233, 233, 220),
+    tabs_border=QColor(218, 218, 218),
+)
+
+
+def default_theme() -> MixerTheme:
+    """
+    O visual embutido "Windows" no modo do WINDOWS (claro/escuro), não no do app: imita o flyout do sistema, então
+    acompanha o sistema mesmo com o app fixo em claro ou escuro. É a exceção; o resto segue o app.
+    """
+    from app.hub.theme import get_windows_system_theme
+    return DEFAULT_THEME if get_windows_system_theme() == "dark" else LIGHT_DEFAULT_THEME
+
 _COLOR_KEYS = (
     "card_bg", "border", "text", "muted_text", "icon", "accent", "thumb",
     "thumb_outer", "thumb_border", "track_inactive",
@@ -138,7 +174,8 @@ def _app_theme() -> MixerTheme:
     return app_mixer_theme()
 
 
-_loader = ThemeLoader("mixer", DEFAULT_THEME, theme_from_dict, "mixer", app_theme=_app_theme)
+_loader = ThemeLoader("mixer", DEFAULT_THEME, theme_from_dict, "mixer", app_theme=_app_theme,
+                      default_factory=default_theme)
 
 theme_path = _loader.path
 load_user_theme = _loader.load

@@ -53,7 +53,7 @@ def init_performance_spec() -> WidgetSpec:
         return spec
     spec = WidgetSpec(
         id="performance",
-        title="Performance",
+        title=t("overview_card_performance"),
         subtitle="Aimedget",
         natural_size=QSizeF(CARD_W, CARD_H),
         paint=paint_performance,

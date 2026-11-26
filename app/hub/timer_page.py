@@ -55,7 +55,7 @@ class _NothingTimerThemeCard(QFrame):
 
         active = nothing_timer_theme_loader.active_id()
         for tid, title, th in (
-            (DEFAULT_ID, "Nothing Red", TIMER_DEFAULT_THEME),
+            (DEFAULT_ID, t("theme_default_nothing"), TIMER_DEFAULT_THEME),
             (APP_ID, APP_NAME, app_timer_theme()),
         ):
             spec = make_nothing_theme_spec(tid, title, th)
@@ -77,6 +77,11 @@ class _NothingTimerThemeCard(QFrame):
 
     def retranslate_ui(self):
         self._title.setText(t("theme_picker_title"))
+        card = self._cards.get(DEFAULT_ID)
+        if card is not None:
+            card._spec.title = t("theme_default_nothing")
+            card._invalidate_cache()
+            card.update()
 
 
 class TimerPage(BaseHubPage):
@@ -529,7 +534,7 @@ class TimerPage(BaseHubPage):
         timer_skin_texts = {
             "windows": (t("theme_default_timer"), t("skin_windows_sub")),
             "nothing_dot": ("Nothing Dot", t("skin_nothing_dot_timer_sub")),
-            "focus_ring": ("Focus Ring", t("skin_focus_ring_timer_sub")),
+            "focus_ring": (t("skin_focus_ring_title"), t("skin_focus_ring_timer_sub")),
         }
         for pack in discover_skin_packs("timer"):
             timer_skin_texts[pack.id] = pack.texts(i18n.current_language)

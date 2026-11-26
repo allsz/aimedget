@@ -5,6 +5,7 @@ com zero timers ativos e sem overhead de CPU.
 """
 
 from PySide6.QtCore import QSizeF, QPoint
+from app.core.i18n import t
 from app.core.preview_registry import SkinSpec, register_skin, get_skins_for_widget
 from app.widgets.music.skins.preview_media import preview_media
 
@@ -90,8 +91,8 @@ def init_music_skin_specs() -> list[SkinSpec]:
             id="vinyl",
             widget_id="music",
             supports_themes=False,
-            title="Vinil Retrô",
-            subtitle="Toca-discos analógico",
+            title=t("skin_vinyl_title"),
+            subtitle=t("skin_vinyl_sub"),
             natural_size=QSizeF(480, 270),
             paint=_make_skin_paint("vinyl", load_vinyl),
             mock_state=lambda: None,
@@ -100,8 +101,8 @@ def init_music_skin_specs() -> list[SkinSpec]:
             id="fullcover",
             widget_id="music",
             supports_themes=False,
-            title="Capa Completa",
-            subtitle="Capa imersiva",
+            title=t("skin_fullcover_title"),
+            subtitle=t("skin_fullcover_sub"),
             natural_size=QSizeF(480, 270),
             paint=_make_skin_paint("fullcover", load_fullcover),
             mock_state=lambda: None,
@@ -110,8 +111,8 @@ def init_music_skin_specs() -> list[SkinSpec]:
             id="ripple",
             widget_id="music",
             supports_themes=False,
-            title="Ecos da Capa",
-            subtitle="Ondas circulares da capa",
+            title=t("skin_ripple_title"),
+            subtitle=t("skin_ripple_sub"),
             natural_size=QSizeF(480, 270),
             paint=_make_skin_paint("ripple", load_ripple),
             mock_state=lambda: None,
@@ -119,8 +120,8 @@ def init_music_skin_specs() -> list[SkinSpec]:
         SkinSpec(
             id="capa_empilhada",
             widget_id="music",
-            title="Capa Empilhada",
-            subtitle="Envelopes 3D e pastel",
+            title=t("skin_stacked_title"),
+            subtitle=t("skin_stacked_sub"),
             natural_size=QSizeF(490, 240),
             paint=_make_skin_paint("capa_empilhada", load_capa_empilhada),
             mock_state=lambda: None,

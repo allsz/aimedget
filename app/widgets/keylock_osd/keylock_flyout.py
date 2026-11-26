@@ -7,6 +7,7 @@ from app.core import osd_anchor
 from app.core.position_glide import PositionGlide, reposition_with_glide
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.theme_art import overflow_margins
+from app.core.theme_crossfade import mode_crossfade
 from app.core.typography import get_ui_font
 from app.widgets.keylock_osd.skin import KeyLockState, card_size, paint_keylock
 from app.widgets.keylock_osd.theme import DEFAULT_THEME, effective_scale, load_user_theme
@@ -76,6 +77,7 @@ class KeyLockFlyout(QWidget):
         self._anchor = osd_anchor.DEFAULT_ANCHOR
         self._edge_offset = 0.0        # distância extra da borda (px, 0..120), limitada para nunca ir ao centro
         self._column_provider = None   # ver set_column_provider (alinhamento com o mixer nas colunas laterais)
+        self._live_adjust = False      # arrastando o slider de distância no Hub: fica na tela até soltar
 
         # Estado da animação do cadeado e pílula:
         # 0.0 = totalmente aberto (OFF), 1.0 = totalmente fechado (ON)
@@ -210,6 +212,60 @@ class KeyLockFlyout(QWidget):
         self._edge_offset = clamped
         if self.isVisible():
             self.position_on_screen()
+
+    def apply_mode_theme(self, theme):
+        """O Windows trocou de claro/escuro com o flyout na tela (visual "Windows"): troca com a dissolvência de modo.
+        Escondido, só guarda; a próxima tecla relê o tema de qualquer jeito."""
+        if theme is self.theme:
+            return
+        if self.isVisible():
+            with mode_crossfade(self):
+                self.theme = theme
+                self.update()
+        else:
+            self.theme = theme
+
+    # --- Ajuste ao vivo da distância da borda (slider do Hub) ---
+
+    def is_live_adjusting(self) -> bool:
+        return self._live_adjust
+
+    def begin_live_adjust(self):
+        """
+        O usuário começou a arrastar o slider: o flyout entra (se não estiver na tela) e fica enquanto durar o
+        arraste, sem o timer de sumir. Protótipo: mockups/keylock-live-offset.html (padrões escolhidos).
+        """
+        if self._live_adjust:
+            return
+        self._live_adjust = True
+        if not self.isVisible() or self._popup_target == 0.0:
+            self.show_osd(self.key_label, True)
+        self._hide_timer.stop()
+
+    def preview_edge_offset(self, offset_px: float):
+        """
+        Aplica a distância quadro a quadro, sem gravar. O flyout vai direto ao lugar: a mola do slider já suaviza, e
+        uma segunda suavização (a de _on_tick) daria atraso e "elástico duplo". Só chama move() quando o pixel muda.
+        """
+        self._edge_offset = max(0.0, min(120.0, float(offset_px)))
+        if not self.isVisible():
+            return
+        self._target_win_y = self._compute_target_win_y()
+        self._current_win_y = self._target_win_y
+        if self._glide.is_running():
+            return   # deslizando para a nova âncora: o fim do deslize põe no lugar exato
+        x, y = self._get_centered_x(), int(round(self._current_win_y))
+        if x != self.x() or y != self.y():
+            self.move(x, y)
+
+    def end_live_adjust(self):
+        """Soltou o slider (e a mola assentou): o flyout sai na hora, com a saída de sempre."""
+        if not self._live_adjust:
+            return
+        self._live_adjust = False
+        if self.isVisible() and self._popup_target == 1.0:
+            self._hide_timer.stop()
+            self._start_fade_out()
 
     def _effective_edge_offset_y(self, avail) -> float:
         return min(self._edge_offset, max(0.0, avail.height() * 0.18))
@@ -360,7 +416,8 @@ class KeyLockFlyout(QWidget):
 
         self._popup_target = 1.0
         self._last_tick_time = time.perf_counter()
-        self._hide_timer.start(self.HOLD_DURATION_MS)
+        if not self._live_adjust:   # uma tecla durante o arraste não pode fazer o flyout sumir antes de soltar
+            self._hide_timer.start(self.HOLD_DURATION_MS)
         self._sync_refresh_rate_interval()
         if not self._anim_timer.isActive():
             self._anim_timer.start()
@@ -376,6 +433,7 @@ class KeyLockFlyout(QWidget):
             self._anim_timer.start()
 
     def hideEvent(self, event):
+        self._live_adjust = False
         self._glide.stop(settle=True)   # escondido no meio do deslize: já fica no lugar final para a próxima vez
         # Garante que o mixer não fique reservando espaço para um Caps Lock que já sumiu (ex.: hide() direto)
         self.stack_presence_changed.emit(0.0, False)

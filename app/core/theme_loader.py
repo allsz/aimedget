@@ -48,6 +48,22 @@ APP_ID = "app"           # tema embutido "Aimedget": herda a aparência do app (
 APP_NAME = "Aimedget"    # nome próprio: não é traduzido
 MAX_NAME_LEN = 40
 
+# Temas embutidos cujo nome padrão no theme.json tem tradução na interface
+_BUNDLED_THEME_NAMES = {
+    ("circular-sketch", "Circular Sketch"): "theme_bundled_circular_sketch",
+    ("circular-sketch", "Bubble"): "theme_bundled_circular_sketch",
+    ("keycap-digital", "Keycap Digital"): "theme_bundled_keycap_digital",
+}
+
+
+def localized_theme_name(theme_id: str, name: str) -> str:
+    """Devolve o nome traduzido quando o tema é embutido e mantém o título original."""
+    key = _BUNDLED_THEME_NAMES.get((theme_id, name))
+    if key is not None:
+        from app.core.i18n import t
+        return t(key)
+    return name
+
 
 def color_field(r: int, g: int, b: int, a: int = 255):
     """Valor padrão de um campo de cor (QColor é mutável, então o dataclass exige uma fábrica)."""

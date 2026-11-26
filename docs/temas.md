@@ -126,6 +126,8 @@ Nomes de cor (`"red"`, `"purple"`) **não** funcionam: sempre use `#`.
 | `label_size` | número 8–40 | 14 | Tamanho da letra do nome da tecla |
 | `label_case` | `"none"`, `"lower"`, `"upper"` | `"none"` | `"lower"` = "caps lock"; `"upper"` = "CAPS LOCK"; `"none"` = como o app escreve |
 | `size` | `[largura, altura]` | automático | Tamanho fixo do cartão (largura 60–400, altura 30–200, em px antes de `scale`). Use quando a arte de fundo tem proporção própria |
+| `style` | `"pill"` ou `"circle_sketch"` | `"pill"` | `"pill"` = cartão de sempre; `"circle_sketch"` = círculo com o cadeado e um arco de LED (sem `size`, fica 60×60; sem `radius`, totalmente redondo) |
+| `inherit_app` | `true`/`false` | `false` | Com `true`, as cores que o tema não define seguem o modo do app (claro, escuro, OLED) e a cor de destaque |
 | `container` | texto | — | Só em pacote com `theme.json` solto (seção 5) |
 
 Medidas do cartão (em px, antes de `scale`): sem `size`, **altura 50** e largura ≈ 130–135 (depende do texto e do tamanho da

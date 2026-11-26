@@ -24,7 +24,7 @@ from app.widgets.volume_mixer.theme_shape import (
     DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, digits_overhang, hairline, paint_digits, paint_plates, pop_amount,
     tilt_transform,
 )
-from app.core.theme_crossfade import theme_crossfade
+from app.core.theme_crossfade import mode_crossfade, theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
 from app.core.frame_clock import FrameTimer
@@ -458,12 +458,13 @@ class VolumeMixerFlyout(QWidget):
         if abs(self._stack_offset - self._stack_offset_target) > 0.3:
             self._start_anim_timer()
 
-    def _apply_theme(self, theme: MixerTheme):
-        """Propaga o tema ao cabeçalho e a todas as linhas. Não faz nada se o tema não mudou."""
+    def _apply_theme(self, theme: MixerTheme, mode_switch: bool = False):
+        """Propaga o tema ao cabeçalho e a todas as linhas. Não faz nada se o tema não mudou.
+        `mode_switch`: o Windows trocou de claro/escuro (visual "Windows"): dissolvência de modo em vez da de tema."""
         if theme is self.theme:
             return
         if self.isVisible():   # já na tela (ex.: escolhendo temas em sequência): troca com a transição comum
-            with theme_crossfade(self):
+            with (mode_crossfade(self) if mode_switch else theme_crossfade(self)):
                 self._apply_theme_now(theme)
         else:
             self._apply_theme_now(theme)
@@ -996,8 +997,10 @@ class VolumeMixerFlyout(QWidget):
             p.setBrush(tint)
             p.drawRoundedRect(QRectF(cx - 12.0, cy - 12.0, 24.0, 24.0), 4.0, 4.0)
         elif self._speaker_hovered:
+            hover = QColor(self.theme.icon)   # claro no cartão escuro, escuro no claro
+            hover.setAlpha(20)
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 20))
+            p.setBrush(hover)
             p.drawRoundedRect(QRectF(cx - 12.0, cy - 12.0, 24.0, 24.0), 4.0, 4.0)
 
         pen = QPen(self.theme.icon, 1.45)
@@ -1163,10 +1166,12 @@ class VolumeMixerFlyout(QWidget):
         if thumb_rect.isEmpty():
             return
         is_active = self._scrollbar_hovered or self._dragging_scrollbar
+        light_card = self.theme.card_bg.lightness() > 128   # no cartão claro o cinza claro sumiria
+        active_gray, idle_gray = (90, 138) if light_card else (220, 160)
         color = (
-            QColor(220, 220, 220, int(255 * self._scrollbar_opacity))
+            QColor(active_gray, active_gray, active_gray, int(255 * self._scrollbar_opacity))
             if is_active
-            else QColor(160, 160, 160, int(210 * self._scrollbar_opacity))
+            else QColor(idle_gray, idle_gray, idle_gray, int(210 * self._scrollbar_opacity))
         )
         radius = thumb_rect.width() * 0.5
         p.setPen(Qt.PenStyle.NoPen)

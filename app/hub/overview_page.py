@@ -1,5 +1,7 @@
 """Hub: página Visão geral. Extraído de `pages.py` (mesmo código, só em arquivo próprio)."""
 
+from dataclasses import replace
+from functools import partial
 from typing import List
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QVBoxLayout, QWidget
@@ -11,7 +13,7 @@ from app.hub.components.widget_card import WidgetCard
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
 from app.widgets.music.skins import init_music_skin_specs
-from app.widgets.keylock_osd import KEYLOCK_SPEC
+from app.widgets.keylock_osd import KEYLOCK_SPEC, keylock_mock_state
 from app.widgets.timer import init_timer_spec, init_timer_skin_specs
 from app.widgets.volume_mixer import init_volume_spec
 from app.widgets.performance import init_performance_skin_specs
@@ -459,7 +461,7 @@ class OverviewPage(BaseHubPage):
         """(spec, rótulo) do tema em uso no flyout ("keylock"/"mixer"). O Padrão usa a miniatura original do
         flyout; um tema da pasta usa a mesma miniatura da galeria de temas. A spec só é recriada quando o tema
         ativo (ou o arquivo dele) muda, para a miniatura não ser redesenhada à toa."""
-        from app.core.theme_loader import DEFAULT_ID
+        from app.core.theme_loader import DEFAULT_ID, localized_theme_name
         from app.hub.components.theme_gallery import _loader_for
 
         loader = _loader_for(container)
@@ -468,7 +470,8 @@ class OverviewPage(BaseHubPage):
         if active not in names:   # escolha salva que sumiu: o flyout usa o padrão
             active = DEFAULT_ID
         if active == DEFAULT_ID:
-            key = (DEFAULT_ID,)
+            default = loader.default   # o visual "Windows" segue o modo do Windows: outro objeto = outra miniatura
+            key = (DEFAULT_ID, id(default))
         else:
             theme_obj = loader.theme_for(active)
             key = (active, id(theme_obj), names[active])
@@ -476,7 +479,11 @@ class OverviewPage(BaseHubPage):
         cached = self._flyout_specs.get(container)
         if cached is None or cached[0] != key:
             if active == DEFAULT_ID:
-                spec = KEYLOCK_SPEC if container == "keylock" else init_volume_spec()
+                # Spec nova a cada modo do Windows (o estado de exemplo leva o tema), para o cartão repintar
+                if container == "keylock":
+                    spec = replace(KEYLOCK_SPEC, mock_state=partial(keylock_mock_state, default))
+                else:
+                    spec = replace(init_volume_spec(), mock_state=lambda th=default: th)
                 label_key = "overview_card_keys_skin" if container == "keylock" else "overview_card_volume_skin"
                 cached = (key, spec, label_key)
             else:
@@ -490,9 +497,11 @@ class OverviewPage(BaseHubPage):
         _key, spec, label = cached
         if active == DEFAULT_ID:
             label = t(label)   # rótulo traduzido na hora (muda com o idioma)
+        else:
+            label = localized_theme_name(active, label)
         return spec, label
 
-    def _refresh_flyout_cards(self):
+    def refresh_flyout_cards(self):
         for container, card in (("keylock", getattr(self, "keys_card", None)),
                                 ("mixer", getattr(self, "vol_card", None))):
             if card is None:
@@ -505,7 +514,7 @@ class OverviewPage(BaseHubPage):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh_flyout_cards()
+        self.refresh_flyout_cards()
         if hasattr(self, "music_card"):
             active_skin = self.bridge.music_controller.active_skin_name
             music_specs = init_music_skin_specs()

@@ -530,6 +530,18 @@ class HubServiceBridge(QObject):
         config_manager.set_keylock_edge_offset(offset_px)
         self.keylock_flyout.set_edge_offset(config_manager.get_keylock_edge_offset())
 
+    def begin_keylock_live_offset(self):
+        """Começou o arraste do slider: o flyout aparece e fica até end_keylock_live_offset."""
+        self.keylock_flyout.begin_live_adjust()
+
+    def preview_keylock_edge_offset(self, offset_px: float):
+        """Distância ao vivo (a cada quadro do slider), sem gravar em disco."""
+        self.keylock_flyout.preview_edge_offset(offset_px)
+
+    def end_keylock_live_offset(self):
+        """Soltou o slider: o flyout sai."""
+        self.keylock_flyout.end_live_adjust()
+
     # --- Controles de Volume Mixer ---
 
     def set_volume_mixer_enabled(self, enabled: bool):
@@ -774,6 +786,19 @@ class HubServiceBridge(QObject):
             _fade_card(self.battery_controller.skin)
             invalidate_card_theme()
             self.battery_controller.skin.update()
+
+    def on_windows_mode_changed(self):
+        """
+        O Windows trocou de claro/escuro: os flyouts com o visual "Windows" (Caps/Num Lock e Volume) seguem o sistema,
+        não o app, então trocam mesmo com o app fixo em claro ou escuro. Na tela, com a dissolvência de modo; os temas
+        de pasta e o "Aimedget" não mudam (o loader devolve o mesmo objeto e nada acontece).
+        """
+        from app.widgets.keylock_osd.theme import load_user_theme as keylock_theme
+        from app.widgets.volume_mixer.theme import load_user_theme as mixer_theme
+        if getattr(self, "keylock_flyout", None) is not None:
+            self.keylock_flyout.apply_mode_theme(keylock_theme())
+        if getattr(self, "volume_flyout", None) is not None:
+            self.volume_flyout._apply_theme(mixer_theme(), mode_switch=True)
 
     def cleanup_all(self):
         """Desinstala hooks e encerra recursos em background de forma segura."""
