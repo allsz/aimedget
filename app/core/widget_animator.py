@@ -28,9 +28,12 @@ from app.core.refresh_rate import refresh_interval_ms
 SLIDE_PX = 8
 
 # Troca de área de trabalho virtual (variação B do protótipo mockups/virtual-desktop-switch.html, escolhida pelo
-# usuário): o widget sai junto com os apps e volta do lado oposto, como se viesse com a área nova.
+# usuário, no tempo "Depois do slide"): o widget entra do lado de onde vem a área nova, com a mola SLIDE.
+# Medido na tela (gravação de pixels + posição da janela): durante o deslize do Windows o widget fixado NÃO aparece;
+# ele volta a ser desenhado 383–404 ms depois do aviso da troca, sem nenhum sinal (a janela nem fica "cloaked").
+# Animar antes disso não se vê: o widget fica invisível e deslocado até lá e só então entra.
 SWEEP_PX = 24
-SWEEP_OUT_MS = 144          # 45% do deslize do Windows (~320 ms): sai junto com os apps
+SWEEP_HOLD_MS = 400         # espera o Windows voltar a desenhar o widget (ver acima)
 SWEEP_FADE_IN_MS = 160
 SWEEP_SPRING = (420.0, 34.0)  # mola SLIDE (CLAUDE.md)
 SWEEP_SETTLE_PX = 0.5
@@ -231,9 +234,10 @@ class SlideFadeAnimator(QObject):
 
     def sweep(self, direction: int):
         """
-        Troca de área de trabalho virtual: sai para o lado dos apps (-direction) enquanto eles deslizam e volta do
-        lado oposto com a mola SLIDE. Só com o widget parado na tela e com as animações do Windows ligadas (sem elas,
-        o widget fica onde está, como hoje). Outra troca no meio recomeça a partir de onde o widget está.
+        Troca de área de trabalho virtual: enquanto o Windows desliza (e não desenha o widget) ele fica invisível,
+        deslocado para o lado de onde vem a área nova (+direction); depois de SWEEP_HOLD_MS entra com a mola SLIDE e o
+        fade. Só com o widget parado na tela e com as animações do Windows ligadas (sem elas, fica onde está). Outra
+        troca no meio recomeça a espera: o Windows esconde o widget de novo, então o salto não aparece.
         """
         w = self._widget
         if not direction or not w.isVisible() or not animations_enabled():
@@ -245,11 +249,8 @@ class SlideFadeAnimator(QObject):
             return   # deslizando para outro lugar: a posição de repouso ainda não é a final
         if self._rest is None:
             self._rest = w.pos()
-        prev = self._sweep
-        offset = (w.pos() - self._rest).x() if prev else 0.0
-        opacity = w.windowOpacity() if prev else 1.0
-        self._sweep = {"dir": 1 if direction > 0 else -1, "t0": time.perf_counter(), "last": time.perf_counter(),
-                       "from_x": float(offset), "from_opacity": float(opacity), "spring": None, "in_t0": 0.0}
+        now = time.perf_counter()
+        self._sweep = {"dir": 1 if direction > 0 else -1, "t0": now, "last": now, "spring": None, "in_t0": 0.0}
         w.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         if not self._sweep_clock.isActive():
             self._sweep_clock.start(refresh_interval_ms(w))
@@ -265,10 +266,10 @@ class SlideFadeAnimator(QObject):
         elapsed_ms = (now - s["t0"]) * 1000.0
         dt = min(0.064, now - s["last"])
         s["last"] = now
-        if elapsed_ms < SWEEP_OUT_MS:
-            q = _ease_out_cubic(elapsed_ms / SWEEP_OUT_MS)
-            x = s["from_x"] + (-s["dir"] * SWEEP_PX - s["from_x"]) * q
-            opacity = s["from_opacity"] * (1.0 - q)
+        if elapsed_ms < SWEEP_HOLD_MS:
+            # O Windows ainda está deslizando: invisível, já no ponto de partida da entrada
+            x = s["dir"] * SWEEP_PX
+            opacity = 0.0
         else:
             spring = s["spring"]
             if spring is None:

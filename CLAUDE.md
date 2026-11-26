@@ -11,8 +11,9 @@ que estiverem secas.
   subpassos): veja `Spring` em `app/hub/components/city_list.py`. Valores já usados: MORPH 320/20, PRESS 520/20,
   LIFT 260/24, GAP 280/22, LIFT_UP 520/30, SLIDE 420/34, SETTLE 380/30, CLOSE 280/34 (fechar/reabrir fileiras de
   um grupo de ancoragem, sem passar do ponto; `app/core/anchor_manager.py`). Curvas: `app/widgets/weather/motion.py`.
-  Troca de área de trabalho virtual: `SlideFadeAnimator.sweep` (sai 24 px com os apps em 144 ms, volta do lado
-  oposto com a SLIDE; protótipo `mockups/virtual-desktop-switch.html`, variação B).
+  Troca de área de trabalho virtual: `SlideFadeAnimator.sweep` (fica invisível 400 ms enquanto o Windows desliza,
+  porque nesse tempo ele não desenha os widgets fixados; depois entra 24 px do lado da área nova com a SLIDE e fade;
+  protótipo `mockups/virtual-desktop-switch.html`, variação B, "Depois do slide").
 - **Troca de tema/aparência:** escolher um tema = `theme_crossfade` (160 ms, saída cúbica). Trocar o MODO claro/escuro
   (manual ou seguindo o Windows) = `mode_crossfade` (300 ms, in-out, sem encolher; cartões flutuantes:
   `begin_skin_crossfade(MODE_DURATION_MS, mode_switch=True)`), com a barra de título nativa do Hub mudando de cor
