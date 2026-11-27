@@ -66,7 +66,19 @@ class LockKeysPage(BaseHubPage):
         # Card de Posição na tela (compartilhada com o Mixer de Volume)
         self._add_osd_position_card("keylock", "keys_pos_sub",lambda: self.bridge.trigger_test_keylock("Caps Lock", True))
 
-        # Card de Distância da borda (só para Lock Keys; vertical nos cantos, horizontal nas laterais ml/mr)
+        # Card de Tema visual (mostra o flyout ao escolher, para ver o resultado)
+        self.theme_picker = ThemeGalleryCard(
+            keylock_theme_loader,
+            "keylock",
+            make_keylock_theme_spec,
+            lambda: self.bridge.trigger_test_keylock("Caps Lock", True),
+            self._theme,
+            appliers=self.bridge.theme_appliers(),
+            parent=self,
+        )
+        self.content_layout.addWidget(self.theme_picker)
+
+        # Card de Distância da borda (abaixo de Tema visual; vertical nos cantos, horizontal nas laterais ml/mr)
         offset_card = QFrame()
         offset_card.setProperty("class", "HubCard")
         off_layout = QVBoxLayout(offset_card)
@@ -98,18 +110,6 @@ class LockKeysPage(BaseHubPage):
         self.offset_slider.interaction_finished.connect(self._on_edge_offset_committed)
         off_layout.addWidget(self.offset_slider)
         self.content_layout.addWidget(offset_card)
-
-        # Card de Tema visual (mostra o flyout ao escolher, para ver o resultado)
-        self.theme_picker = ThemeGalleryCard(
-            keylock_theme_loader,
-            "keylock",
-            make_keylock_theme_spec,
-            lambda: self.bridge.trigger_test_keylock("Caps Lock", True),
-            self._theme,
-            appliers=self.bridge.theme_appliers(),
-            parent=self,
-        )
-        self.content_layout.addWidget(self.theme_picker)
 
         # Card de Opções
         card = QFrame()
