@@ -280,6 +280,9 @@ class _Drag:
     cur: tuple = (0.0, 0.0)
     best: Optional[geo.Candidate] = None
     best_group: Optional[Group] = None
+    cursor_phys: Optional[tuple] = None
+    start_phys: Dict[str, tuple] = field(default_factory=dict)
+    phys_base: Dict[str, tuple] = field(default_factory=dict)
 
 
 @dataclass
@@ -308,6 +311,7 @@ class AnchorManager(QObject):
         self._absent: set = set()              # escondidos pelo usuário: no grupo, mas sem ocupar espaço
         self._slide: Optional[dict] = None     # fileiras fechando/reabrindo: {group, st: {key: [x, y, vx, vy]}, goal}
         self._overflow_rest: Dict[int, Dict[str, tuple]] = {}   # posições de repouso antes de auto-overflow (para voltar)
+        self._scale_root: Dict[int, str] = {}                  # âncora fixa durante ajuste conjunto pós-arraste entre DPIs
         self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
@@ -595,7 +599,14 @@ class AnchorManager(QObject):
             self._finish_slide()
         if len(g.keys()) > 1 and not (self._drag and self._drag.group is g):
             self._overflow_rest.pop(id(g), None)
-            self._reflow(g, key)
+            root = self._scale_root.get(id(g))
+            if root is None or root not in g.keys() or not self._visible(root):
+                root = key
+            self._reflow(g, root)
+            if id(g) in self._scale_root and not any(
+                self._size_busy(mw) for mk in g.keys() if (mw := self.window(mk)) is not None
+            ):
+                self._scale_root.pop(id(g), None)
 
     @staticmethod
     def _reachable_bounds(box: Rect, allow_overflow: bool) -> Optional[tuple[float, float, float, float]]:
@@ -1265,10 +1276,23 @@ class AnchorManager(QObject):
         d = self._drag
         if d is None or d.key != key:
             d = self._begin(key)
-        r = _local_card(w)
-        sx, sy = d.start[key]
-        dx, dy = window_pos.x() + r.x() - sx, window_pos.y() + r.y() - sy
-        d.base = {k: (x + dx, y + dy) for k, (x, y) in d.start.items()}
+        if d.cursor_phys is not None:
+            from app.core import desktop_layer
+
+            cpos = desktop_layer.native_cursor_pos()
+            if cpos is not None:
+                pdx, pdy = cpos[0] - d.cursor_phys[0], cpos[1] - d.cursor_phys[1]
+                d.phys_base = {k: (sx + pdx, sy + pdy) for k, (sx, sy) in d.start_phys.items()}
+                # Atualiza `d.base` em coordenadas lógicas só para o ímã/rede (`_evaluate`)
+                dpr = max(0.25, float(w.devicePixelRatioF() or 1.0))
+                ldx, ldy = pdx / dpr, pdy / dpr
+                d.base = {k: (x + ldx, y + ldy) for k, (x, y) in d.start.items()}
+        if not d.phys_base:
+            r = _local_card(w)
+            card_x, card_y = window_pos.x() + r.x(), window_pos.y() + r.y()
+            sx, sy = d.start[key]
+            dx, dy = card_x - sx, card_y - sy
+            d.base = {k: (x + dx, y + dy) for k, (x, y) in d.start.items()}
         self._evaluate()
         if not animations_enabled():
             d.cur = d.target
@@ -1279,16 +1303,34 @@ class AnchorManager(QObject):
             self._wake()
 
     def _begin(self, key: str) -> _Drag:
+        from PySide6.QtWidgets import QApplication
+        from app.core import desktop_layer
+
         self._finish_arrange()      # pegar um widget no meio do deslize do alinhamento: ele assenta e o arraste segue
         self._finish_slide()
         g = self.group_of(key)
+        self._scale_root.pop(id(g), None)
         start = {}
+        start_phys = {}
+        use_phys = desktop_layer.IS_WINDOWS and bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        cpos = desktop_layer.native_cursor_pos() if use_phys else None
         for k in g.keys():
             w = self.window(k)
             if w is not None and self._present(k):
+                lock_fn = getattr(w, "begin_dpi_drag", None)
+                if callable(lock_fn):
+                    lock_fn()
                 r = card_rect(w)
                 start[k] = (r.l, r.t)
-        self._drag = _Drag(key=key, group=g, start=start)
+                if cpos is not None:
+                    nr = desktop_layer.native_window_rect(int(w.winId()))
+                    if nr is not None:
+                        start_phys[k] = nr
+                    else:
+                        cpos = None
+        if cpos is None:
+            start_phys = {}
+        self._drag = _Drag(key=key, group=g, start=start, cursor_phys=cpos, start_phys=start_phys)
         return self._drag
 
     @staticmethod
@@ -1358,6 +1400,20 @@ class AnchorManager(QObject):
 
     def _apply_drag(self):
         d = self._drag
+        if d.phys_base:
+            from app.core import desktop_layer
+
+            native = []
+            for k, (px, py) in d.phys_base.items():
+                w = self.window(k)
+                if w is None:
+                    continue
+                dpr = max(0.25, float(w.devicePixelRatioF() or 1.0))
+                tx = px + int(round(d.cur[0] * dpr))
+                ty = py + int(round(d.cur[1] * dpr))
+                native.append((int(w.winId()), tx, ty))
+            if native and desktop_layer.defer_move(native):
+                return
         move_cards([(w, x + d.cur[0], y + d.cur[1]) for k, (x, y) in d.base.items()
                     if (w := self.window(k)) is not None])
 
@@ -1379,12 +1435,29 @@ class AnchorManager(QObject):
         for g in self.groups():
             g.prox = None
         self._screens.user_placed(d.base)
-        for k in d.base:
+        final_group = self.group_of(key)
+        if len(final_group.keys()) > 1:
+            self._scale_root[id(final_group)] = key
+        anim = animations_enabled()
+        for k in final_group.keys():
             ow = self.window(k)
-            if k != key and ow is not None:
+            if ow is None:
+                continue
+            end_dpi = getattr(ow, "end_dpi_drag", None)
+            if callable(end_dpi):
+                end_dpi(animate=anim)
+            if k != key:
+                retarget = getattr(ow, "_retarget_auto_scale", None)
+                if callable(retarget):
+                    retarget()
                 _persist(ow)
         if self.window(key) is not None:
             self._screens.remember(self.window(key))
+        if len(final_group.keys()) > 1:
+            def _post_drag_reflow(fg=final_group, rk=key):
+                if self._drag is None and not self._arranging(fg) and self.group_of(rk) is fg:
+                    self._reflow(fg, rk)
+            QTimer.singleShot(0, _post_drag_reflow)
         self._wake()
 
     def _join(self, dg: Group, og: Group, c: geo.Candidate):

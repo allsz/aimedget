@@ -200,6 +200,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._init_animator()
 
         self._scale = 1.0
+        self._dpi_factor = 1.0         # compensação temporária ao arrastar entre monitores de DPIs diferentes
+        self._dpi_drag_lock: Optional[tuple[float, int, int]] = None
         self._shadows: dict = {}
         self._wave_t0: Optional[float] = None
         self._wave_target: Optional[bool] = None
@@ -216,6 +218,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._hovered = False
         self.scale_auto = False        # True: o tamanho acompanha a resolução da tela (o controlador liga)
         self._scale_animator = ScaleAnimator(self, self.set_scale, tolerance=0.003)
+        self._dpi_animator = ScaleAnimator(self, self._set_dpi_factor, tolerance=0.003)
         self.set_scale(scale)
 
         self._pin_guard = DesktopPinGuard(self)
@@ -230,19 +233,25 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     def scale(self) -> float:
         return self._scale
 
+    def _render_scale(self) -> float:
+        """Escala efetiva de desenho (escala do usuário * compensação de DPI durante arraste entre telas)."""
+        return self._scale * self._dpi_factor
+
     def margin(self) -> float:
-        return SHADOW * self._scale
+        return SHADOW * self._render_scale()
 
     def card_rect(self) -> QRectF:
         m = self.margin()
-        return QRectF(m, m, self._card_w * self._scale, self._card_h * self._scale)
+        s = self._render_scale()
+        return QRectF(m, m, self._card_w * s, self._card_h * s)
 
     def anchor_card_radius(self) -> float:
         """Raio dos cantos na tela: o mesmo de `card_path`, que pinta o cartão (contrato do brilho/rede)."""
-        return self._card_radius * self._scale
+        return self._card_radius * self._render_scale()
 
     def card_size(self) -> tuple[int, int]:
-        return int(round(self._card_w * self._scale)), int(round(self._card_h * self._scale))
+        s = self._render_scale()
+        return int(round(self._card_w * s)), int(round(self._card_h * s))
 
     def card_origin(self) -> QPoint:
         """Canto do CARTÃO na tela (sem a folga da sombra e sem o deslocamento da animação de surgir)."""
@@ -260,10 +269,11 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
     def set_scale(self, scale: float):
         origin = self.card_origin() if self.isVisible() else None
         self._scale = max(MIN_SCALE, min(MAX_SCALE, float(scale)))
+        s = self._render_scale()
         m = 2.0 * self.margin()
         self.setFixedSize(
-            int(round(self._card_w * self._scale + m)),
-            int(round(self._card_h * self._scale + m)),
+            int(round(self._card_w * s + m)),
+            int(round(self._card_h * s + m)),
         )
         self._shadows = {}
         if origin is not None:
@@ -271,6 +281,60 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
         self.update()
         self.scale_applied.emit(self._scale)
+
+    def _set_dpi_factor(self, factor: float):
+        origin = self.card_origin() if self.isVisible() else None
+        self._dpi_factor = max(0.25, min(4.0, float(factor)))
+        s = self._render_scale()
+        m = 2.0 * self.margin()
+        self.setFixedSize(
+            int(round(self._card_w * s + m)),
+            int(round(self._card_h * s + m)),
+        )
+        self._shadows = {}
+        if origin is not None:
+            self.move_card_to(origin.x(), origin.y())
+            anchor_manager().member_resized(self)
+        self.update()
+
+    def begin_dpi_drag(self):
+        """Trava o tamanho físico atual durante o arraste entre monitores de DPIs diferentes."""
+        if not desktop_layer.IS_WINDOWS or not self.isVisible():
+            return
+        self._dpi_animator.stop()
+        box = desktop_layer.native_window_box(int(self.winId()))
+        if box is None:
+            return
+        _x, _y, pw, ph = box
+        cur_dpr = max(0.25, float(self.devicePixelRatioF() or 1.0))
+        self._dpi_drag_lock = (cur_dpr * self._dpi_factor, pw, ph)
+
+    def end_dpi_drag(self, animate: bool = True):
+        """Soltou o cartão: se cruzou para outro DPI, anima suavemente o ajuste final de tamanho."""
+        self._dpi_drag_lock = None
+        if abs(self._dpi_factor - 1.0) <= 0.004:
+            self._dpi_factor = 1.0
+            return
+        if not animate or not animations_enabled() or not self.isVisible():
+            self._dpi_animator.stop()
+            self._set_dpi_factor(1.0)
+            return
+        self._dpi_animator.start(self._dpi_factor, 1.0)
+
+    def _on_dpi_changed_during_drag(self, msg):
+        """Mantém o tamanho físico exato ao cruzar a emenda de monitores de DPIs diferentes (sem explodir)."""
+        dpi = int(msg.wParam) & 0xFFFF
+        if dpi <= 0 or not msg.lParam or self._dpi_drag_lock is None:
+            return
+        new_dpr = dpi / 96.0
+        lock_dpr, phys_w, phys_h = self._dpi_drag_lock
+        rc = wintypes.RECT.from_address(msg.lParam)
+        rc.right = rc.left + phys_w
+        rc.bottom = rc.top + phys_h
+        self._dpi_factor = lock_dpr / new_dpr
+        self._shadows = {}
+        self.setFixedSize(max(1, int(round(phys_w / new_dpr))), max(1, int(round(phys_h / new_dpr))))
+        self.update()
 
     def animate_scale_to(self, target: float):
         """Leva o tamanho até `target` com mola; sem animações do Windows ou com o cartão oculto, vale na hora."""
@@ -282,10 +346,11 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._scale_animator.start(self._scale, target)
 
     def is_scale_animating(self) -> bool:
-        return self._scale_animator.is_active()
+        return self._scale_animator.is_active() or self._dpi_animator.is_active()
 
     def stop_scale_animation(self):
         self._scale_animator.stop()
+        self._dpi_animator.stop()
 
     def auto_scale_target(self) -> float:
         """Tamanho proporcional à tela onde o cartão está (1440p = 100%), dentro dos limites do cartão."""
@@ -300,7 +365,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
 
     def _to_card(self, pos) -> QPointF:
         r = self.card_rect()
-        return QPointF((pos.x() - r.x()) / self._scale, (pos.y() - r.y()) / self._scale)
+        s = self._render_scale()
+        return QPointF((pos.x() - r.x()) / s, (pos.y() - r.y()) / s)
 
     # --- Relógio ---
 
@@ -508,10 +574,12 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
 
     def nativeEvent(self, event_type, message):
         screen_watcher.native_event(self, message)   # troca de monitor (e o diagnóstico, se ligado)
-        if self._desktop_mode and desktop_layer.IS_WINDOWS:
+        if desktop_layer.IS_WINDOWS:
             try:
                 msg = wintypes.MSG.from_address(int(message))
-                if msg.message == desktop_layer.WM_WINDOWPOSCHANGING:
+                if msg.message == desktop_layer.WM_DPICHANGED and self._dpi_drag_lock is not None:
+                    self._on_dpi_changed_during_drag(msg)
+                elif self._desktop_mode and msg.message == desktop_layer.WM_WINDOWPOSCHANGING:
                     desktop_layer.on_window_pos_changing(msg.lParam, int(msg.hWnd or 0))
             except (TypeError, ValueError, OSError):
                 pass
@@ -539,15 +607,16 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         r = self.card_rect()
         steps = 14
+        s = self._render_scale()
         spread = self.margin() * (0.38 if settled else 0.9)
-        offset = (2.5 if settled else 6.0) * self._scale
+        offset = (2.5 if settled else 6.0) * s
         strength = 0.8 if settled else 1.0
         for i in range(steps):
             f = i / (steps - 1)
-            grow = spread * (1.0 - f) - 4.0 * self._scale
+            grow = spread * (1.0 - f) - 4.0 * s
             alpha = (0.012 + 0.03 * f * f) * strength
             p.setBrush(QColor(0, 0, 0, int(alpha * 255)))
-            rad = self._card_radius * self._scale + grow
+            rad = self._card_radius * s + grow
             p.drawRoundedRect(r.adjusted(-grow, -grow + offset, grow, grow + offset), rad, rad)
         p.end()
         self._shadows[key] = pm
@@ -611,7 +680,7 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         p.end()
 
     def _paint_grip(self, p: QPainter, rect: QRectF):
-        s = self._scale
+        s = self._render_scale()
         alpha = 0.85 if (self._grip_hovered or self._resize_start is not None) else 0.45
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)

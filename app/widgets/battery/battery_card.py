@@ -166,9 +166,10 @@ class BatteryCard(FloatingCard):
         if not size_changed and not force_reposition:
             return
         self._card_w, self._card_h = w, h
+        s = self._render_scale() or 1.0
         m = 2.0 * self.margin()
-        new_w = int(round(w * self._scale + m))
-        new_h = int(round(h * self._scale + m))
+        new_w = int(round(w * s + m))
+        new_h = int(round(h * s + m))
         win_size_changed = (self.width() != new_w or self.height() != new_h)
 
         # Arraste manual do canto: mantém canto superior esquerdo fixo (sem empurrão de borda)
@@ -179,7 +180,6 @@ class BatteryCard(FloatingCard):
                     anchor_manager().member_resized(self)
             return
 
-        s = self._scale or 1.0
         base_w_px = self.state.base_w * s
         base_h_px = self.state.base_h * s
         cur_w_px = w * s
@@ -281,7 +281,7 @@ class BatteryCard(FloatingCard):
         """Para o alinhador do anchor: o TAMANHO do cartão ainda está assentando. Só as molas de largura/altura contam;
         o arco enchendo, a face do hover ou a bolinha de carregando não seguram o alinhamento. A escala (controle de
         Tamanho do Hub) também conta enquanto a mola dela anda."""
-        return self._scale_animator.is_active() or not (self.state.W.settled() and self.state.H.settled())
+        return super().is_scale_animating() or not (self.state.W.settled() and self.state.H.settled())
 
     def match_card_size(self, target_w: Optional[float] = None, target_h: Optional[float] = None,
                         animate: bool = False):
