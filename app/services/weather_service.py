@@ -20,25 +20,35 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from app.core.config_manager import config_manager
+from app.core.i18n import i18n
 from app.core.version import __version__
 
 logger = logging.getLogger(__name__)
 
 FORECAST_DAYS = 5
 REFRESH_S = 30 * 60            # previsão "velha" depois de 30 min
-AUTO_PLACE_TTL_S = 12 * 60 * 60   # o local pelo IP é refeito no máximo a cada 12 h
+AUTO_PLACE_TTL_S = 12 * 60 * 60   # o local automático é refeito no máximo a cada 12 h
 HTTP_TIMEOUT_S = 15   # uma requisição pode trazer até 5 cidades (houve resposta lenta com 8 s)
 METAR_TIMEOUT_S = 4   # observação real (METAR) nunca pode atrasar a previsão principal
+WINDOWS_LOCATION_TIMEOUT_MS = 5000   # fixo Wi-Fi frio no Windows pode levar alguns segundos
+NOMINATIM_MIN_INTERVAL_S = 1.0       # política de uso da Nominatim: no máximo 1 req/s
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 IP_LOCATION_URL = "https://ipapi.co/json/"
 IP_FALLBACK_URL = "https://ipwho.is/"
 METAR_URL = "https://aviationweather.gov/api/data/metar"
+
+AUTO_SOURCE_WINDOWS = "windows"
+AUTO_SOURCE_IP = "ip"
+
+_nominatim_lock = threading.Lock()
+_last_nominatim_ts = 0.0
 
 METAR_MAX_DIST_KM = 85.0
 METAR_MAX_AGE_S = 90 * 60
@@ -482,6 +492,118 @@ def parse_nominatim(data) -> list:
     return places
 
 
+def round_coords(lat: float, lon: float) -> tuple[float, float]:
+    """Arredonda coordenadas para 2 casas (~1 km) antes de enviar ou salvar (só precisamos da cidade)."""
+    return (round(float(lat), 2), round(float(lon), 2))
+
+
+def nominatim_reverse_url(lat: float, lon: float, language: str = "pt") -> str:
+    rlat, rlon = round_coords(lat, lon)
+    lang = "pt-BR,pt" if language.startswith("pt") else "en"
+    params = urllib.parse.urlencode({
+        "lat": f"{rlat:.2f}",
+        "lon": f"{rlon:.2f}",
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "zoom": 10,
+        "accept-language": lang,
+    })
+    return f"{NOMINATIM_REVERSE_URL}?{params}"
+
+
+def parse_nominatim_reverse(data: dict, lat: float, lon: float) -> Optional[Place]:
+    """Extrai cidade/município da geocodificação reversa da Nominatim usando coordenadas arredondadas."""
+    if not isinstance(data, dict) or data.get("error"):
+        return None
+    addr = data.get("address") or {}
+    if not isinstance(addr, dict):
+        addr = {}
+    name = (
+        addr.get("city")
+        or addr.get("town")
+        or addr.get("village")
+        or addr.get("municipality")
+        or addr.get("county")
+        or data.get("name")
+    )
+    if not name:
+        return None
+    rlat, rlon = round_coords(lat, lon)
+    detail = ", ".join(x for x in (addr.get("state"), addr.get("country")) if x)
+    return Place(str(name), rlat, rlon, detail)
+
+
+def _nominatim_throttle() -> None:
+    """Respeita o limite da política da Nominatim (no máximo 1 requisição por segundo)."""
+    global _last_nominatim_ts
+    with _nominatim_lock:
+        wait = NOMINATIM_MIN_INTERVAL_S - (time.monotonic() - _last_nominatim_ts)
+        if wait > 0:
+            time.sleep(wait)
+        _last_nominatim_ts = time.monotonic()
+
+
+def _request_windows_location(parent: QObject, on_done: Callable[[Optional[tuple[float, float]]], None],
+                              timeout_ms: int = WINDOWS_LOCATION_TIMEOUT_MS) -> None:
+    """Consulta a localização do Windows via QtPositioning (WinRT) sem travar a UI.
+    Devolve `(lat, lon)` arredondados para 2 casas (~1 km) ou `None` se desligada/negada/timeout."""
+    try:
+        from PySide6.QtPositioning import QGeoPositionInfoSource
+    except Exception:
+        on_done(None)
+        return
+
+    try:
+        source = QGeoPositionInfoSource.createSource("winrt", parent)
+    except Exception:
+        source = None
+    if source is None:
+        on_done(None)
+        return
+
+    finished = [False]
+    guard = QTimer(parent)
+    guard.setSingleShot(True)
+
+    def finish(coords: Optional[tuple[float, float]]):
+        if finished[0]:
+            return
+        finished[0] = True
+        guard.stop()
+        try:
+            source.positionUpdated.disconnect(on_pos)
+        except Exception:
+            pass
+        try:
+            source.errorOccurred.disconnect(on_err)
+        except Exception:
+            pass
+        source.deleteLater()
+        on_done(coords)
+
+    def on_pos(info):
+        try:
+            coord = info.coordinate()
+            if coord.isValid():
+                finish(round_coords(coord.latitude(), coord.longitude()))
+                return
+        except Exception:
+            pass
+        finish(None)
+
+    def on_err(_err):
+        finish(None)
+
+    source.positionUpdated.connect(on_pos)
+    source.errorOccurred.connect(on_err)
+    guard.timeout.connect(lambda: finish(None))
+    guard.start(timeout_ms + 500)
+    try:
+        source.requestUpdate(timeout_ms)
+    except Exception:
+        finish(None)
+
+
 def parse_ip_location(data: dict) -> Optional[Place]:
     try:
         if data.get("error"):
@@ -540,6 +662,7 @@ class WeatherService(QObject):
         self._busy = False
         self._pending = False   # pediram outra consulta enquanto a atual rodava (ex.: trocou a cidade)
         self._search_seq = 0
+        self._windows_loc_failed = False
 
     # --- Cidades (até MAX_CITIES, na ordem do cartão) ---
     # Configuração "cities": [{"kind": "auto"} | {"kind": "place", name, lat, lon, detail}], "current_city": índice
@@ -691,6 +814,29 @@ class WeatherService(QObject):
         config_manager.set_weather("forecast_model", normalized)
         self.refresh(force=True)
 
+    @staticmethod
+    def windows_location_consent() -> Optional[bool]:
+        """None = ainda não perguntado; True = permitido; False = recusado (usa só IP)."""
+        val = config_manager.get_weather("windows_location_consent", None)
+        return val if isinstance(val, bool) else None
+
+    def set_windows_location_consent(self, allowed: bool) -> None:
+        config_manager.set_weather("windows_location_consent", bool(allowed))
+        config_manager.set_weather("auto_location_at", 0.0)
+        self._windows_loc_failed = False
+        if self.has_auto():
+            self.refresh(force=True)
+        else:
+            self.cities_changed.emit()
+
+    @staticmethod
+    def auto_location_source() -> str:
+        val = config_manager.get_weather("auto_location_source", AUTO_SOURCE_IP)
+        return val if val in (AUTO_SOURCE_WINDOWS, AUTO_SOURCE_IP) else AUTO_SOURCE_IP
+
+    def windows_location_failed(self) -> bool:
+        return self._windows_loc_failed
+
     # --- Consulta (uma requisição para todas as cidades) ---
 
     def refresh(self, force: bool = False):
@@ -707,23 +853,56 @@ class WeatherService(QObject):
 
         auto = self.auto_place()
         auto_at = float(config_manager.get_weather("auto_location_at", 0.0) or 0.0)
-        need_ip = any(c.get("kind") == AUTO for c in cities) and (
+        need_auto = any(c.get("kind") == AUTO for c in cities) and (
             auto is None or not (0 <= time.time() - auto_at < AUTO_PLACE_TTL_S))
-
+        want_windows = need_auto and self.windows_location_consent() is True
         model = self.forecast_model()
+        lang = i18n.current_language
 
+        self._set_busy(True)
+        if want_windows:
+            _request_windows_location(
+                self,
+                lambda coords: self._start_refresh_worker(
+                    cities, auto, need_auto, True, model, lang, win_coords=coords
+                ),
+            )
+        else:
+            self._start_refresh_worker(cities, auto, need_auto, False, model, lang, win_coords=None)
+
+    def _start_refresh_worker(self, cities: list, auto: Optional[Place], need_auto: bool,
+                              tried_windows: bool, model: str, lang: str,
+                              win_coords: Optional[tuple[float, float]]):
         def work():
             new_auto = None
-            if need_ip:
-                try:
-                    new_auto = parse_ip_location(_http_get_json(IP_LOCATION_URL))
-                except Exception as e:   # sem rede ou serviço fora: tenta fallback gratuito
-                    logger.info("Local pelo IP (ipapi) indisponível: %s", e)
+            new_source = None
+            win_failed = False
+            if need_auto:
+                if win_coords is not None:
+                    try:
+                        _nominatim_throttle()
+                        new_auto = parse_nominatim_reverse(
+                            _http_get_json(nominatim_reverse_url(win_coords[0], win_coords[1], lang)),
+                            win_coords[0], win_coords[1],
+                        )
+                        if new_auto is not None:
+                            new_source = AUTO_SOURCE_WINDOWS
+                    except Exception as e:
+                        logger.info("Geocodificação reversa (Nominatim) indisponível: %s", e)
+                elif tried_windows:
+                    win_failed = True
                 if new_auto is None:
                     try:
-                        new_auto = parse_ipwho_location(_metar_get_json(IP_FALLBACK_URL))
-                    except Exception as e:
-                        logger.info("Local pelo IP (fallback) indisponível: %s", e)
+                        new_auto = parse_ip_location(_http_get_json(IP_LOCATION_URL))
+                    except Exception as e:   # sem rede ou serviço fora: tenta fallback gratuito
+                        logger.info("Local pelo IP (ipapi) indisponível: %s", e)
+                    if new_auto is None:
+                        try:
+                            new_auto = parse_ipwho_location(_metar_get_json(IP_FALLBACK_URL))
+                        except Exception as e:
+                            logger.info("Local pelo IP (fallback) indisponível: %s", e)
+                    if new_auto is not None:
+                        new_source = AUTO_SOURCE_IP
             auto_now = new_auto or auto
             targets = []   # (chave, Place)
             for c in cities:
@@ -733,14 +912,14 @@ class WeatherService(QObject):
                 else:
                     targets.append((city_key(c), Place.from_dict(c)))
             if not targets:   # só o automático, e o IP não respondeu: quase sempre sem rede
-                return ("fail", FAIL_OFFLINE, new_auto)
+                return ("fail", FAIL_OFFLINE, new_auto, new_source, win_failed)
             try:
                 now_ts = time.time()
                 data = _http_get_json(forecast_url_multi([pl for _k, pl in targets], model=model))
                 reports = parse_forecast_multi(data, [pl.name for _k, pl in targets], now_ts)
             except Exception as e:
                 logger.info("Previsão indisponível: %s", e)
-                return ("fail", FAIL_OFFLINE, new_auto)
+                return ("fail", FAIL_OFFLINE, new_auto, new_source, win_failed)
 
             if model == FORECAST_MODEL_AUTO:
                 raw_items = data if isinstance(data, list) else [data]
@@ -754,9 +933,8 @@ class WeatherService(QObject):
                     except Exception as e:
                         logger.debug("METAR indisponível para %s: %s", pl.name, e)
 
-            return ("ok", {k: r for (k, _pl), r in zip(targets, reports)}, new_auto)
+            return ("ok", {k: r for (k, _pl), r in zip(targets, reports)}, new_auto, new_source, win_failed)
 
-        self._set_busy(True)
         self._run(work, self._on_refresh_done)
 
     def search(self, query: str, language: str = "pt"):
@@ -805,16 +983,23 @@ class WeatherService(QObject):
                 result = work()
             except Exception as e:   # nunca deixa a thread morrer sem responder
                 logger.warning("Erro inesperado no WeatherService: %s", e)
-                result = ("fail", FAIL_OFFLINE, None) if callback == self._on_refresh_done else []
+                result = ("fail", FAIL_OFFLINE, None, None, False) if callback == self._on_refresh_done else []
             relay.done.emit(callback, result)
 
         threading.Thread(target=target, name="aimedget-weather", daemon=True).start()
 
     def _on_refresh_done(self, result):
-        status, payload, new_auto = result
+        status, payload, new_auto, new_source, win_failed = result
+        meta_changed = False
         if new_auto is not None:
             config_manager.set_weather("auto_location", asdict(new_auto))
             config_manager.set_weather("auto_location_at", time.time())
+            if new_source is not None:
+                config_manager.set_weather("auto_location_source", new_source)
+            meta_changed = True
+        if bool(win_failed) != self._windows_loc_failed:
+            self._windows_loc_failed = bool(win_failed)
+            meta_changed = True
         if status == "ok":
             keys = {city_key(c) for c in self.cities()}
             cache = config_manager.get_weather("cache_by_city", None) or {}
@@ -824,6 +1009,8 @@ class WeatherService(QObject):
             self.reports_ready.emit(payload)
         else:
             self.failed.emit(payload)
+        if meta_changed:
+            self.cities_changed.emit()
         self._set_busy(False)
         if self._pending:
             self._pending = False

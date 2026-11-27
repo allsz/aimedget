@@ -6,18 +6,63 @@ Suporta múltiplas resoluções nítidas para qualquer escala de DPI do Windows.
 
 import colorsys
 import os
-from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtGui import QIcon, QImage, QPainter, QPixmap
+import sys
+from PySide6.QtCore import QByteArray, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from app.core.paths import APP_ICON_CLEAN_SVG, APP_ICON_ICO, APP_ICON_PNG
 
 BRAND_FILL = "#FFA13D"   # única cor do SVG oficial; é ela que acompanha a cor de destaque escolhida
+_DEV_BADGE_BG = QColor("#D92B2B")
+_DEV_BADGE_BORDER = QColor("#1A1A1A")
+_DEV_BADGE_FG = QColor("#FFFFFF")
 _ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 _cached_icon: QIcon | None = None
+_cached_dev: bool | None = None
 _hue_loaded = False
 _accent = None   # None = âmbar oficial; int = matiz; str = '#RRGGBB'
+
+
+def is_dev_build() -> bool:
+    """True somente quando rodando direto pelo Python (nunca no .exe gerado pelo PyInstaller)."""
+    return not getattr(sys, "frozen", False)
+
+
+def _draw_dev_badge(painter: QPainter, size: int) -> None:
+    """Pinta uma etiqueta vermelha 'DEV' no canto inferior direito (somente em desenvolvimento)."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+    if size < 24:
+        # Em 16px/20px (bandeja/título pequeno), texto de 3 letras vira borrão: usa uma pílula vermelha nítida.
+        d = max(5.0, size * 0.36)
+        rect = QRectF(size - d - 0.5, size - d - 0.5, d, d)
+        painter.setPen(QPen(_DEV_BADGE_BORDER, max(0.8, size * 0.05)))
+        painter.setBrush(_DEV_BADGE_BG)
+        painter.drawRoundedRect(rect, d * 0.45, d * 0.45)
+        painter.restore()
+        return
+
+    badge_h = max(11.0, size * 0.36)
+    badge_w = min(float(size), max(badge_h * 2.1, size * 0.78))
+    margin = max(0.5, size * 0.02)
+    rect = QRectF(size - badge_w - margin, size - badge_h - margin, badge_w, badge_h)
+    radius = badge_h * 0.28
+
+    painter.setPen(QPen(_DEV_BADGE_BORDER, max(1.0, size * 0.03)))
+    painter.setBrush(_DEV_BADGE_BG)
+    painter.drawRoundedRect(rect, radius, radius)
+
+    font = QFont("Segoe UI")
+    font.setBold(True)
+    font.setPixelSize(max(7, round(badge_h * 0.66)))
+    painter.setFont(font)
+    painter.setPen(_DEV_BADGE_FG)
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "DEV")
+    painter.restore()
 
 
 def _current_accent():
@@ -32,12 +77,13 @@ def _current_accent():
 def set_icon_accent(accent) -> None:
     """Define a cor do ícone (None = âmbar oficial, int = matiz, str = '#RRGGBB') e descarta o cache;
     quem usa o ícone deve pedi-lo de novo."""
-    global _cached_icon, _hue_loaded, _accent
+    global _cached_icon, _cached_dev, _hue_loaded, _accent
     _hue_loaded = True
-    if accent == _accent and _cached_icon is not None:
+    if accent == _accent and _cached_icon is not None and _cached_dev == is_dev_build():
         return
     _accent = accent
     _cached_icon = None
+    _cached_dev = None
 
 
 def _tinted_svg(accent) -> QByteArray | None:
@@ -67,9 +113,11 @@ def create_aimedget_icon(size: int = 64) -> QIcon:
     Retorna o QIcon oficial do Aimedget (sem fundo / transparente).
     Renderiza o SVG oficial em múltiplas resoluções (16, 20, 24, 32, 40, 48, 64, 128, 256)
     para nitidez perfeita em qualquer escala de DPI do Windows.
+    Em desenvolvimento (não congelado pelo PyInstaller), adiciona um selo vermelho 'DEV'.
     """
-    global _cached_icon
-    if _cached_icon is not None and not _cached_icon.isNull():
+    global _cached_icon, _cached_dev
+    dev = is_dev_build()
+    if _cached_icon is not None and not _cached_icon.isNull() and _cached_dev == dev:
         return _cached_icon
 
     icon = QIcon()
@@ -84,19 +132,24 @@ def create_aimedget_icon(size: int = 64) -> QIcon:
                 p.setRenderHint(QPainter.RenderHint.Antialiasing)
                 p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
                 renderer.render(p)
+                if dev:
+                    _draw_dev_badge(p, s)
                 p.end()
                 icon.addPixmap(pm)
 
             _cached_icon = icon
+            _cached_dev = dev
             return icon
 
     # Fallbacks caso o SVG não esteja disponível
     if os.path.exists(APP_ICON_ICO):
         _cached_icon = QIcon(APP_ICON_ICO)
+        _cached_dev = dev
         return _cached_icon
 
     if os.path.exists(APP_ICON_PNG):
         _cached_icon = QIcon(APP_ICON_PNG)
+        _cached_dev = dev
         return _cached_icon
 
     return icon
