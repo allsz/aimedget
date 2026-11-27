@@ -103,6 +103,26 @@ class BatteryWidgetController(AnimatedVisibilityMixin, QObject):
         self.skin.set_options(self.options)
         self.options_changed.emit(self.options)
 
+    def set_expand(self, value: str):
+        """Define as direções ativas do D-pad ('l','r','u','d') para expansão automática."""
+        norm = lay.normalize_expand(value)
+        if self.options.expand == norm:
+            return
+        self.options = replace(self.options, expand=norm)
+        config_manager.set_battery("expand", norm)
+        self.skin.set_options(self.options)
+        self.options_changed.emit(self.options)
+
+    def set_overflow(self, enabled: bool):
+        """Liga/desliga o overflow entre monitores conectados."""
+        enabled = bool(enabled)
+        if self.options.overflow == enabled:
+            return
+        self.options = replace(self.options, overflow=enabled)
+        config_manager.set_battery("overflow", enabled)
+        self.skin.set_options(self.options)
+        self.options_changed.emit(self.options)
+
     def _on_option_requested(self, key: str, value: str):
         if key == "follow_accent":
             self.set_follow_accent(value == "on")

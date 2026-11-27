@@ -11,8 +11,8 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QPainter
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QPainter
 
 from app.core.anchor_manager import anchor_bar_items, anchor_manager
 from app.core.config_manager import config_manager
@@ -26,6 +26,7 @@ from app.ui_components.menu_action_bar import ActionBarItem
 from app.widgets.battery import layout as lay
 from app.widgets.battery.card_painter import THEME_BLACK, THEME_DARK, THEME_LIGHT, paint_battery_card
 from app.widgets.battery.card_state import (
+    CHARGE_SPRING,
     FACE_BOTH,
     FACE_HOVER,
     FACE_ICON,
@@ -38,6 +39,7 @@ from app.widgets.battery.card_state import (
     SHOW_NONE,
     BatteryState,
     Options,
+    Spring,
 )
 
 
@@ -85,6 +87,9 @@ class BatteryCard(FloatingCard):
         self.state = BatteryState(base_w=w, base_h=h, options=options or Options(), animated=animations_enabled())
         self._last_tick = 0.0
         self._free_resize: Optional[tuple] = None
+        self._rest_origin: Optional[tuple[float, float]] = None   # canto do cartão sem overflow (px de tela)
+        self._glide_x: Optional[Spring] = None
+        self._glide_y: Optional[Spring] = None
         cw, ch = self.state.card_size()
         super().__init__(scale=scale, desktop_mode=desktop_mode, card_w=cw, card_h=ch)
 
@@ -107,25 +112,132 @@ class BatteryCard(FloatingCard):
         self._last_tick = now
         busy = self.state.step(dt)
         self._sync_size()
-        return busy
+        gliding = False
+        if self._glide_x is not None and self._glide_y is not None:
+            self._glide_x.step(dt)
+            self._glide_y.step(dt)
+            if self._glide_x.settled() and self._glide_y.settled():
+                self._glide_x.snap()
+                self._glide_y.snap()
+                self._apply_window_size(self.width(), self.height(), card_l=self._glide_x.x, card_t=self._glide_y.x)
+                self._glide_x = self._glide_y = None
+            else:
+                self._apply_window_size(self.width(), self.height(), card_l=self._glide_x.x, card_t=self._glide_y.x)
+                gliding = True
+        return busy or gliding
 
     def _card_needs_frames(self, now: float) -> bool:
         # A bolinha de carregando pulsa: só enquanto algum carrega e com animações ligadas (quadros de 33 ms)
         return self.state.animated and self.state.any_charging()
 
-    def _sync_size(self):
+    def _apply_window_size(self, new_w: int, new_h: int, card_l: Optional[float] = None, card_t: Optional[float] = None):
+        """Aplica tamanho (e posição, se dada) de uma vez só para evitar tremulação de 1 quadro ao crescer p/ esquerda/cima."""
+        if card_l is not None and card_t is not None:
+            r = self.card_rect()
+            wx = int(round(card_l - r.x()))
+            wy = int(round(card_t - r.y()))
+            self.setMinimumSize(new_w, new_h)
+            self.setMaximumSize(new_w, new_h)
+            self.setGeometry(wx, wy, new_w, new_h)
+            animator = getattr(self, "animator", None)
+            if animator is not None:
+                animator.move_rest(QPoint(wx, wy))
+        else:
+            self.setFixedSize(new_w, new_h)
+        self._shadows = {}
+
+    @staticmethod
+    def _reachable_bounds(box: tuple[float, float, float, float], allow_overflow: bool) -> Optional[tuple[float, float, float, float]]:
+        cx, cy = int((box[0] + box[2]) / 2), int((box[1] + box[3]) / 2)
+        screen = QGuiApplication.screenAt(QPoint(cx, cy)) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return None
+        a = screen.availableGeometry()
+        cur = (float(a.x()), float(a.y()), float(a.x() + a.width()), float(a.y() + a.height()))
+        screens = []
+        for s in QGuiApplication.screens():
+            g = s.availableGeometry()
+            screens.append((float(g.x()), float(g.y()), float(g.x() + g.width()), float(g.y() + g.height())))
+        return lay.reachable_bounds(box, cur, screens, allow_overflow=allow_overflow)
+
+    def _sync_size(self, force_reposition: bool = False):
         w, h = self.state.card_size()
-        if abs(w - self._card_w) < 0.35 and abs(h - self._card_h) < 0.35:
+        size_changed = not (abs(w - self._card_w) < 0.35 and abs(h - self._card_h) < 0.35)
+        if not size_changed and not force_reposition:
             return
         self._card_w, self._card_h = w, h
         m = 2.0 * self.margin()
         new_w = int(round(w * self._scale + m))
         new_h = int(round(h * self._scale + m))
-        if self.width() != new_w or self.height() != new_h:
-            self.setFixedSize(new_w, new_h)
-            self._shadows = {}
-            if self.isVisible():
-                anchor_manager().member_resized(self)   # num grupo, os vizinhos acompanham o tamanho novo
+        win_size_changed = (self.width() != new_w or self.height() != new_h)
+
+        # Arraste manual do canto: mantém canto superior esquerdo fixo (sem empurrão de borda)
+        if self._free_resize is not None or not self.isVisible():
+            if win_size_changed:
+                self._apply_window_size(new_w, new_h)
+                if self.isVisible():
+                    anchor_manager().member_resized(self)
+            return
+
+        s = self._scale or 1.0
+        base_w_px = self.state.base_w * s
+        base_h_px = self.state.base_h * s
+        cur_w_px = w * s
+        cur_h_px = h * s
+        dw = max(0.0, cur_w_px - base_w_px)
+        dh = max(0.0, cur_h_px - base_h_px)
+        pivot = lay.expand_pivot(self.state.options.expand)
+        allow_overflow = bool(self.state.options.overflow)
+
+        mgr = anchor_manager()
+        if mgr.is_grouped(self):
+            self._rest_origin = None
+            self._glide_x = self._glide_y = None
+            if win_size_changed:
+                self._apply_window_size(new_w, new_h)
+            mgr.member_auto_resized(self, base_w_px, base_h_px, pivot, allow_overflow=allow_overflow)
+            return
+
+        # Cartão solto (sem grupo): pivô do D-pad + limite de borda/vazio + deslize suave (mola crítica)
+        if self._rest_origin is None and (dw > 0.5 or dh > 0.5):
+            r = self.card_rect()
+            p = self.rest_pos()
+            self._rest_origin = (float(p.x() + r.x()), float(p.y() + r.y()))
+
+        if self._rest_origin is not None:
+            rest_l, rest_t = self._rest_origin
+            tl = rest_l + dw * pivot[0]
+            tt = rest_t + dh * pivot[1]
+            cand = (tl, tt, tl + cur_w_px, tt + cur_h_px)
+            bounds = self._reachable_bounds(cand, allow_overflow=allow_overflow)
+            if bounds is not None:
+                al, at, ar_b, ab = bounds
+                pad_l = min(12.0, max(0.0, rest_l - al))
+                pad_t = min(12.0, max(0.0, rest_t - at))
+                pad_r = min(12.0, max(0.0, ar_b - (rest_l + base_w_px)))
+                pad_b = min(12.0, max(0.0, ab - (rest_t + base_h_px)))
+                padded = (al + pad_l, at + pad_t, ar_b - pad_r, ab - pad_b)
+                cdx, cdy = lay.clamp_shift(cand, padded)
+                tl += cdx
+                tt += cdy
+            r = self.card_rect()
+            p = self.rest_pos()
+            cur_l, cur_t = float(p.x() + r.x()), float(p.y() + r.y())
+            if self._live() and (abs(cur_l - tl) > 0.5 or abs(cur_t - tt) > 0.5):
+                if self._glide_x is None or self._glide_y is None:
+                    self._glide_x = Spring(cur_l, CHARGE_SPRING, tol=0.35)
+                    self._glide_y = Spring(cur_t, CHARGE_SPRING, tol=0.35)
+                self._glide_x.t, self._glide_y.t = tl, tt
+                if win_size_changed:
+                    self._apply_window_size(new_w, new_h, card_l=self._glide_x.x, card_t=self._glide_y.x)
+                self.kick()
+            else:
+                self._glide_x = self._glide_y = None
+                self._apply_window_size(new_w, new_h, card_l=tl, card_t=tt)
+            if dw <= 0.5 and dh <= 0.5 and self.state.W.settled() and self.state.H.settled() and self._glide_x is None:
+                self._rest_origin = None
+        elif win_size_changed:
+            self._apply_window_size(new_w, new_h)
 
     def _live(self) -> bool:
         """Anima só com o cartão na tela e as animações do Windows ligadas; oculto, vai direto ao alvo."""
@@ -150,7 +262,12 @@ class BatteryCard(FloatingCard):
         if options.face != self.state.options.face or options != self.state.options:
             self.state.animated = self._live()
             self.state.set_options(options)
-            self._refresh()
+            self._last_tick = self.now()
+            if not self.state.animated:
+                self.state.step(0.0)
+            self._sync_size(force_reposition=True)
+            self.kick()
+            self.update()
 
     def set_base_size(self, w: float, h: float):
         self.state.animated = self._live()
@@ -187,9 +304,14 @@ class BatteryCard(FloatingCard):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._on_grip(self._to_card(event.position())):
+            self._rest_origin = None
+            self._glide_x = self._glide_y = None
             self._free_resize = (event.globalPosition(), self.state.base_w, self.state.base_h)
             self._resize_start = ("free",)      # a alça fica acesa enquanto arrasta
             return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._rest_origin = None
+            self._glide_x = self._glide_y = None
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):

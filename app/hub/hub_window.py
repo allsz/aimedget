@@ -25,17 +25,9 @@ from app.core.i18n import t
 from app.core.theme_crossfade import mode_crossfade, theme_crossfade
 from app.core.widget_animator import animations_enabled
 from app.core.version import __version__
-from app.hub.components.accent_wipe import AccentWipe
-from app.hub.components.page_transition import PageTransition
 from app.hub.components.message_dialog import confirm
-from app.hub.components.sidebar import HubSidebar
 from app.hub.dwm_helper import apply_windows_dwm_titlebar, mix_hex, set_dark_frame, set_titlebar_colors
 from app.hub.hub_icon import create_aimedget_icon, create_aimedget_clean_icon, set_icon_accent
-from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
-from app.hub.performance_page import PerformancePage
-from app.hub.storage_page import StoragePage
-from app.hub.battery_page import BatteryPage
-from app.hub.weather_page import WeatherPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, get_hub_stylesheet, resolve_theme
 from app.hub.tray_manager import AimedgetTrayIcon
@@ -46,12 +38,19 @@ from app.hub.tray_manager import AimedgetTrayIcon
 # seletor já mostra a cor escolhida durante o arrasto. True volta ao comportamento antigo (ao vivo, com travadas).
 LIVE_APPLY_WHILE_DRAGGING = False
 
+# Partida minimizada (arranque do Windows): o Hub não é montado na hora. Sobem só a bandeja, os serviços e os atalhos;
+# as páginas são montadas na 1ª vez que o Hub abre OU, antes disso, quando a CPU do sistema se acalma (app/core/idle_gate.py). Assim
+# o app fica pronto antes e a abertura do Hub pela bandeja continua instantânea.
+PREBUILD_STEP_GAP_MS = 150   # respiro entre importar as páginas e montá-las
+
 
 class AimedgetHubWindow(QMainWindow):
     """Janela Shell principal do Aimedget Hub."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, defer_ui: bool = False):
+        """`defer_ui=True`: não monta sidebar e páginas agora (ver app/core/idle_gate.py); `_ensure_ui()` monta."""
         super().__init__(parent)
+        self._ui_built = False
         self.setWindowTitle("Aimedget")   # aparece no preview da taskbar; na janela fica invisível (texto da barra pintado com a cor do fundo, ver _apply_theme)
         # Ícone sem fundo (transparente) para o cabeçalho e barra da janela do app
         self.setWindowIcon(create_aimedget_clean_icon(64))
@@ -96,11 +95,12 @@ class AimedgetHubWindow(QMainWindow):
         self._offering_update = False
         self.tray_icon.messageClicked.connect(self._on_tray_message_clicked)
 
-        self._build_ui()
-        self._accent_wipe = AccentWipe(self.shell)
-        self._apply_theme(self._current_theme)
-        self.retranslate_ui()
-        self._apply_asymmetric_windows_icons()
+        if defer_ui:
+            # Só a bandeja já precisa do tema e do idioma
+            self.tray_icon.update_theme(self._current_theme)
+            self.tray_icon.retranslate_ui()
+        else:
+            self._ensure_ui()
 
         # Modo "Sistema": acompanha o Windows ao vivo (claro/escuro), não só ao abrir o app
         hints = QApplication.styleHints()
@@ -110,31 +110,88 @@ class AimedgetHubWindow(QMainWindow):
         # Verificação discreta de atualizações em segundo plano após 5 segundos
         QTimer.singleShot(5000, self._check_background_update)
 
+    def _ensure_ui(self):
+        """Monta sidebar e páginas (uma vez). Chamado antes de qualquer coisa que precise delas."""
+        if self._ui_built:
+            return
+        self._ui_built = True
+        from app.core import startup_trace
+        from app.hub.components.accent_wipe import AccentWipe
+        t0 = time.perf_counter()
+        self._build_ui()
+        self._accent_wipe = AccentWipe(self.shell)
+        self._apply_theme(self._current_theme)
+        self.retranslate_ui()
+        self._apply_asymmetric_windows_icons()
+        startup_trace.amend("hub_ui_cost", (time.perf_counter() - t0) * 1000)
+
+    def prebuild_ui(self):
+        """Monta o Hub escondido, em duas etapas com respiro entre elas (imports, depois as páginas), para a primeira
+        abertura pela bandeja não esperar sem congelar de uma vez os widgets que já estão na tela."""
+        if self._quitting or self._ui_built:
+            return
+        self._import_pages()
+        QTimer.singleShot(PREBUILD_STEP_GAP_MS, lambda: None if self._quitting else self._ensure_ui())
+
+    @staticmethod
+    def _import_pages():
+        """Só carrega os módulos das páginas (a parte mais cara do 1º Hub); `_build_ui` os reencontra em cache."""
+        from app.hub.components import page_transition, sidebar   # noqa: F401
+        from app.hub import battery_page, pages, performance_page, storage_page, weather_page   # noqa: F401
+
     def _apply_asymmetric_windows_icons(self):
         """
         Garante assimetria visual no Windows:
         - ICON_SMALL (Barra de título da janela) -> Ícone limpo sem fundo (transparente)
         - ICON_BIG (Alt+Tab / Task Switcher)     -> Ícone limpo sem fundo (transparente)
-        - Barra de Tarefas e Executável (.exe)   -> Ícone oficial com fundo branco (AppUserModelID e PE Resource)
+        - Barra de Tarefas e Executável (.exe)   -> Ícone oficial com fundo branco (AppUserModelID e PE Resource);
+          em desenvolvimento (Aimedget.Hub.Dev), usa o HICON da janela com o selo vermelho DEV.
         """
         if sys.platform != "win32":
             return
         try:
             import ctypes
+            from ctypes import wintypes
+
             hwnd = int(self.winId())
             WM_SETICON = 0x0080
             ICON_SMALL = 0
             ICON_BIG = 1
+            GCLP_HICON = -14
+            GCLP_HICONSM = -34
 
             clean_small_img = create_aimedget_clean_icon(32).pixmap(32, 32).toImage()
-            hicon_small = clean_small_img.toHICON()
+            hicon_small = int(clean_small_img.toHICON())
 
             clean_big_img = create_aimedget_clean_icon(64).pixmap(64, 64).toImage()
-            hicon_big = clean_big_img.toHICON()
+            hicon_big = int(clean_big_img.toHICON())
 
             user32 = ctypes.windll.user32
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
-            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+            send_msg = user32.SendMessageW
+            send_msg.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            send_msg.restype = wintypes.LPARAM
+
+            send_msg(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+            send_msg(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+
+            # Atualiza também os ícones da classe da janela para que a barra de tarefas em modo DEV
+            # (sem atalho no Menu Iniciar para Aimedget.Hub.Dev) não volte para o ícone do python.exe.
+            set_class_long = getattr(user32, "SetClassLongPtrW", user32.SetClassLongW)
+            set_class_long.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.LPARAM]
+            set_class_long.restype = wintypes.LPARAM
+            set_class_long(hwnd, GCLP_HICONSM, hicon_small)
+            set_class_long(hwnd, GCLP_HICON, hicon_big)
+
+            # Libera os HICONs antigos criados por nós (evita vazamento de handles GDI)
+            old_hicons = getattr(self, "_win_hicons", ())
+            self._win_hicons = (hicon_small, hicon_big)
+            if old_hicons:
+                destroy_icon = user32.DestroyIcon
+                destroy_icon.argtypes = [wintypes.HICON]
+                destroy_icon.restype = wintypes.BOOL
+                for old in old_hicons:
+                    if old and old not in self._win_hicons:
+                        destroy_icon(old)
         except Exception:
             pass
 
@@ -193,6 +250,7 @@ class AimedgetHubWindow(QMainWindow):
             self._offering_update = False
         self._offered_update = None
         if wants:
+            self._ensure_ui()
             self.sidebar.select_page("gen")
             self.page_gen.start_update(info)
         else:
@@ -237,6 +295,7 @@ class AimedgetHubWindow(QMainWindow):
 
     def show_and_activate(self):
         """Traz a janela do Hub para o primeiro plano com fade-in suave (sem flash branco do Windows)."""
+        self._ensure_ui()
         needs_reveal = (not self.isVisible()) or self.isMinimized()
         self._reveal_timer.stop()
         self._reveal_anim.stop()
@@ -257,22 +316,26 @@ class AimedgetHubWindow(QMainWindow):
 
     def show_music_skins(self):
         """Abre o Hub direto na seção de skins da página do Music Player."""
+        self._ensure_ui()
         self.sidebar.select_page("music")
         self.show_and_activate()
         self.page_music.focus_skins()
 
     def show_weather_cities(self):
         """Abre o Hub direto na seção de cidades da página do Clima (pelo menu do cartão)."""
+        self._ensure_ui()
         self.sidebar.select_page("weather")
         self.show_and_activate()
         self.page_weather.focus_cities()
 
     def show_widget_page(self, page_id: str):
         """Abre o Hub na página de configuração de um widget ("Configurar" no menu do widget)."""
+        self._ensure_ui()
         self.sidebar.select_page(page_id)
         self.show_and_activate()
 
     def showEvent(self, event):
+        self._ensure_ui()   # quem chama show() direto (sem show_and_activate) também recebe o Hub montado
         super().showEvent(event)
         self._apply_asymmetric_windows_icons()
         # Depois do fade-in, monta as miniaturas da página Música em segundo plano (a 1ª visita não trava mais).
@@ -323,6 +386,16 @@ class AimedgetHubWindow(QMainWindow):
         super().hideEvent(event)
 
     def _build_ui(self):
+        # Importados aqui (e não no topo): na partida minimizada o Hub só é montado depois, e estes módulos pesam
+        # cerca de 0,4 s de import
+        from app.hub.components.page_transition import PageTransition
+        from app.hub.components.sidebar import HubSidebar
+        from app.hub.pages import GeneralPage, LockKeysPage, MusicPage, OverviewPage, TimerPage, VolumePage
+        from app.hub.performance_page import PerformancePage
+        from app.hub.storage_page import StoragePage
+        from app.hub.battery_page import BatteryPage
+        from app.hub.weather_page import WeatherPage
+
         self.shell = QWidget(self)
         self.shell.setObjectName("HubShell")
         self.setCentralWidget(self.shell)
@@ -435,6 +508,10 @@ class AimedgetHubWindow(QMainWindow):
         self.retranslate_ui()
 
     def retranslate_ui(self):
+        if not getattr(self, "_ui_built", True):
+            if self.tray_icon:
+                self.tray_icon.retranslate_ui()
+            return
         self._stop_wipe()
         self.sidebar.retranslate_ui()
         self.page_overview.retranslate_ui()
@@ -460,6 +537,17 @@ class AimedgetHubWindow(QMainWindow):
         """O Windows trocou de claro/escuro: no modo "Sistema", o Hub e os widgets que seguem o app trocam juntos,
         com a mesma dissolvência da troca manual. Os visuais "Windows" dos flyouts (Caps/Num Lock e Volume) são a
         exceção: seguem SEMPRE o Windows, então trocam (miniaturas e flyouts) mesmo com o app fixo em claro ou escuro."""
+        if not getattr(self, "_ui_built", True):
+            # Hub ainda não montado: só acompanha o tema (a bandeja e os widgets seguem o Windows; as páginas nascem
+            # já com o tema certo quando forem montadas)
+            if self._theme_preference == "system":
+                resolved = resolve_theme("system")
+                if resolved != self._current_theme:
+                    self._current_theme = self._current_theme_before_mode = resolved
+                    self.tray_icon.update_theme(resolved)
+                    get_service_bridge().on_theme_changed(resolved)
+            get_service_bridge().on_windows_mode_changed()
+            return
         if self._theme_preference == "system":
             resolved = resolve_theme("system")
             if resolved != self._current_theme:

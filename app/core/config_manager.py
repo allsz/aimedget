@@ -170,6 +170,8 @@ class ConfigManager:
 
     def set_active_skin(self, skin_name: str):
         music_cfg = self._data.setdefault("music_widget", {})
+        if music_cfg.get("active_skin") == str(skin_name):
+            return   # a partida re-grava a skin atual: não reescreve o arquivo inteiro à toa
         music_cfg["active_skin"] = str(skin_name)
         self._save()
 
@@ -406,6 +408,8 @@ class ConfigManager:
 
     def set_timer_active_skin(self, skin_name: str):
         timer_cfg = self._data.setdefault("timer_widget", {})
+        if timer_cfg.get("active_skin") == str(skin_name):
+            return
         timer_cfg["active_skin"] = str(skin_name)
         self._save()
 
@@ -594,7 +598,10 @@ class ConfigManager:
         return self._data.get("weather_widget", {}).get(key, default)
 
     def set_weather(self, key: str, value: Any):
-        self._data.setdefault("weather_widget", {})[key] = value
+        section = self._data.setdefault("weather_widget", {})
+        if key in section and section[key] == value:
+            return   # nada mudou (ex.: posição regravada ao mostrar o cartão): não reescreve o arquivo
+        section[key] = value
         self._save()
 
     # --- Helpers de Configuração: Performance Widget ---

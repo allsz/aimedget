@@ -13,6 +13,7 @@ from app.hub.components.city_list import CityList
 from app.hub.components.collapsible_section import skin_and_theme_block
 from app.hub.components.fold import Fold
 from app.hub.components.help_badge import HelpBadge
+from app.hub.components.message_dialog import confirm
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.responsive_grid import ResponsiveCardGrid
 from app.hub.components.shortcut_picker import ShortcutPicker
@@ -23,11 +24,12 @@ from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
+from app.hub.components.pill_switch import PillSwitch
 from app.widgets.weather import font_skins, init_weather_skin_specs
 from app.widgets.weather.theme import loader as weather_theme_loader
 from app.widgets.weather.theme_specs import make_theme_spec as make_weather_theme_spec
-from app.services.weather_service import MAX_CITIES, city_key
-from app.hub.ui_tokens import LIST_ROW_GAP, ROWS_GAP, STACK_GAP
+from app.services.weather_service import AUTO_SOURCE_WINDOWS, MAX_CITIES, city_key
+from app.hub.ui_tokens import INLINE_GAP, LIST_ROW_GAP, ROWS_GAP, STACK_GAP
 
 SEARCH_DEBOUNCE_MS = 450
 MAX_RESULTS = 6
@@ -271,6 +273,35 @@ class WeatherPage(BaseHubPage):
         self.fold_results = Fold(self.results_box, gap=STACK_GAP)
         self.fold_results.set_open(False)
         col.addWidget(self.fold_results)
+
+        # Opt-in explícito para localização do Windows (aparece só quando "Minha localização" está na lista)
+        self.win_loc_box = QWidget()
+        win_loc_col = QVBoxLayout(self.win_loc_box)
+        win_loc_col.setContentsMargins(0, 0, 0, 0)
+        win_loc_col.setSpacing(STACK_GAP)
+        win_loc_col.addWidget(self._divider())
+        win_loc_row = QHBoxLayout()
+        win_loc_row.setSpacing(INLINE_GAP)
+        win_loc_row.addLayout(
+            self._info("weather_win_loc_title", "weather_win_loc_sub", help_key="weather_win_loc_help"),
+            stretch=1,
+        )
+        self._subs[-1].setWordWrap(False)   # evita sizeHint de 2 linhas antes do Fold abrir (overshoot de altura)
+        self.sw_win_loc = PillSwitch(checked=self.service.windows_location_consent() is True, theme=self._theme)
+        self.sw_win_loc.toggled.connect(self._on_win_loc_toggled)
+        win_loc_row.addWidget(self.sw_win_loc, alignment=Qt.AlignmentFlag.AlignVCenter)
+        win_loc_col.addLayout(win_loc_row)
+        self.fold_win_loc = Fold(self.win_loc_box, gap=STACK_GAP, parent=card)
+        col.addWidget(self.fold_win_loc)
+        self.fold_win_loc.set_open(self.service.has_auto())
+        self.lbl_win_loc_hint = QLabel(t("weather_win_loc_hint"))
+        self.lbl_win_loc_hint.setWordWrap(True)
+        self.lbl_win_loc_hint.setStyleSheet(f"color: {self._theme.mute}; font-size: 12px;")
+        self._subs.append(self.lbl_win_loc_hint)
+        self.fold_win_loc_hint = Fold(self.lbl_win_loc_hint, gap=6, parent=card)
+        col.addWidget(self.fold_win_loc_hint)
+        self.fold_win_loc_hint.set_open(False)
+
         self.content_layout.addWidget(card)
         self._last_query_places: list = []
         self._refresh_cities()
@@ -334,7 +365,12 @@ class WeatherPage(BaseHubPage):
         for c in cities:
             if c.get("kind") == "auto":
                 auto_name = self.service.city_name(c)
-                detail = t("weather_my_location_detail") + (f" · {auto_name}" if auto_name else "")
+                src_key = (
+                    "weather_my_location_detail_win"
+                    if self.service.auto_location_source() == AUTO_SOURCE_WINDOWS
+                    else "weather_my_location_detail"
+                )
+                detail = t(src_key) + (f" · {auto_name}" if auto_name else "")
                 items.append((city_key(c), t("weather_my_location"), detail))
             else:
                 items.append((city_key(c), str(c.get("name", "")), str(c.get("detail", ""))))
@@ -344,7 +380,16 @@ class WeatherPage(BaseHubPage):
         self.fold_empty.set_open(not cities, follow)
         self.lbl_count.setText(t("weather_cities_count", n=len(cities), max=MAX_CITIES))
         full = not self.service.can_add()
-        self.fold_auto.set_open(not self.service.has_auto() and not full, follow)
+        has_auto = self.service.has_auto()
+        self.fold_auto.set_open(not has_auto and not full, follow)
+        self.sw_win_loc.blockSignals(True)
+        self.sw_win_loc.setChecked(self.service.windows_location_consent() is True)
+        self.sw_win_loc.blockSignals(False)
+        self.fold_win_loc.set_open(has_auto, follow)
+        self.fold_win_loc_hint.set_open(
+            has_auto and self.service.windows_location_consent() is True and self.service.windows_location_failed(),
+            follow,
+        )
         self.search_box.setEnabled(not full)
         self.search_box.setPlaceholderText(t("weather_cities_full") if full else t("weather_loc_search_placeholder"))
         if full:
@@ -359,6 +404,26 @@ class WeatherPage(BaseHubPage):
     def _on_add_auto(self):
         if self.service.add_auto() == "ok":
             self._refresh_cities()
+
+    def _on_win_loc_toggled(self, checked: bool):
+        if checked:
+            if self.service.windows_location_consent() is None:
+                allowed = confirm(
+                    self,
+                    self._theme,
+                    t("weather_win_loc_confirm_title"),
+                    t("weather_win_loc_confirm_body"),
+                    yes=t("weather_win_loc_allow"),
+                    no=t("weather_win_loc_decline"),
+                )
+                if not allowed:
+                    self.sw_win_loc.blockSignals(True)
+                    self.sw_win_loc.setChecked(False)
+                    self.sw_win_loc.blockSignals(False)
+                    return
+            self.service.set_windows_location_consent(True)
+        else:
+            self.service.set_windows_location_consent(False)
 
     def _run_search(self):
         self._search_timer.stop()
@@ -597,6 +662,7 @@ class WeatherPage(BaseHubPage):
         self.btn_add_auto.setText(t("weather_add_my_location"))
         self.btn_show.setText(t("weather_opt_show_btn"))
         self.lbl_empty.setText(t("weather_cities_empty"))
+        self.lbl_win_loc_hint.setText(t("weather_win_loc_hint"))
         self._refresh_cities()
 
     def set_theme(self, theme: HubTheme):
@@ -610,7 +676,7 @@ class WeatherPage(BaseHubPage):
         self.city_list.set_theme(theme)
         self.lbl_count.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px; font-weight: 600;")
         self._style_bento(theme)
-        for w in (self.scale_card, self.theme_picker, self._forecast_group, self._unit_group, self._model_tray, self.pos_picker, self.hk_picker, self.sw_remember, self.sw_desktop, self.sw_startup):
+        for w in (self.scale_card, self.theme_picker, self._forecast_group, self._unit_group, self._model_tray, self.pos_picker, self.hk_picker, self.sw_win_loc, self.sw_remember, self.sw_desktop, self.sw_startup):
             if hasattr(w, "set_theme"):
                 w.set_theme(theme)
 

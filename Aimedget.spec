@@ -71,7 +71,17 @@ hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
-    'PySide6.QtNetwork',   # instância única (QLocalServer)
+    'PySide6.QtNetwork',      # instância única (QLocalServer)
+    'PySide6.QtPositioning',  # localização do Windows (WinRT) para o Weather Widget
+]
+
+# Plugin Qt de posicionamento (qtposition_winrt.dll): o hook do PyInstaller nem sempre inclui plugins/position/.
+import PySide6 as _PySide6
+_qt_pos_dir = os.path.join(os.path.dirname(_PySide6.__file__), "plugins", "position")
+_qt_pos_binaries = [
+    (os.path.join(_qt_pos_dir, f), os.path.join("PySide6", "plugins", "position"))
+    for f in (os.listdir(_qt_pos_dir) if os.path.isdir(_qt_pos_dir) else ())
+    if f.lower().endswith(".dll")
 ]
 
 excludes = [
@@ -101,7 +111,7 @@ excludes = [
 a = Analysis(
     ['app/main.py'],
     pathex=[ROOT_DIR],
-    binaries=[],
+    binaries=_qt_pos_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
