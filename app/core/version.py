@@ -2,7 +2,7 @@
 Definição de versão oficial e metadados do Aimedget.
 """
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 APP_NAME = "Aimedget"
 GITHUB_OWNER = "allsz"
 GITHUB_REPO = "aimedget"

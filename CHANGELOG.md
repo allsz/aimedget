@@ -6,6 +6,12 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [1.1.4] - 2026-11-27
+
+### Corrigido
+- O Hub não aparecia ao abrir quando a última posição salva era de um monitor que não está mais ligado: a janela
+  abria fora de todas as telas. Agora ela volta centralizada na tela principal.
+
 ## [1.1.3] - 2026-11-27
 
 ### Adicionado
