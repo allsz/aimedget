@@ -17,6 +17,7 @@ import sys
 from ctypes import wintypes
 
 WM_WINDOWPOSCHANGING = 0x0046
+WM_DPICHANGED = 0x02E0
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
@@ -289,6 +290,8 @@ if IS_WINDOWS:
     _u32.EndDeferWindowPos.restype = wintypes.BOOL
     _u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     _u32.GetWindowRect.restype = wintypes.BOOL
+    _u32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    _u32.GetCursorPos.restype = wintypes.BOOL
 
 
 def native_window_rect(hwnd: int):
@@ -299,6 +302,26 @@ def native_window_rect(hwnd: int):
     if not _u32.GetWindowRect(hwnd, ctypes.byref(rect)):
         return None
     return rect.left, rect.top
+
+
+def native_window_box(hwnd: int):
+    """(esquerda, topo, largura, altura) da janela em px físicos, ou None."""
+    if not IS_WINDOWS or not hwnd:
+        return None
+    rect = wintypes.RECT()
+    if not _u32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def native_cursor_pos():
+    """(x, y) do cursor em px físicos contínuos entre todos os monitores, ou None."""
+    if not IS_WINDOWS:
+        return None
+    pt = wintypes.POINT()
+    if not _u32.GetCursorPos(ctypes.byref(pt)):
+        return None
+    return pt.x, pt.y
 
 
 def defer_move(moves) -> bool:

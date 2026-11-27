@@ -70,7 +70,12 @@ def card_font(px: float, weight: QFont.Weight = QFont.Weight.Normal, tabular: bo
     f = QFont(family or APP_FONT_FAMILY)
     f.setPixelSize(max(min_px, int(round(px))))
     f.setWeight(weight)
-    f.setStyleStrategy(QFont.StyleStrategy.PreferQuality | QFont.StyleStrategy.PreferAntialias)
+    f.setStyleStrategy(
+        QFont.StyleStrategy.PreferQuality
+        | QFont.StyleStrategy.PreferAntialias
+        | QFont.StyleStrategy.NoSubpixelAntialias
+    )
+    f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
     if tabular:
         try:
             f.setFeature(QFont.Tag("tnum"), 1)
