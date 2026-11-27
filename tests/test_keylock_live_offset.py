@@ -73,8 +73,12 @@ class FlyoutLiveAdjustTests(unittest.TestCase):
         self.fly.preview_edge_offset(999)
         self.assertEqual(self.fly.edge_offset(), 120.0)
         self.fly.preview_edge_offset(30.0)
+        # Segundo valor que cai no MESMO pixel do primeiro, qualquer que seja a tela: o Y base pode ser fracionário
+        # (escala 1,105 -> 1048,54) e 30,0 e 30,2 já arredondariam para pixels diferentes.
+        y_exact = self.fly._current_win_y
+        same_pixel = 30.0 + (y_exact - round(y_exact))           # leva o Y ao centro do pixel atual
         with mock.patch.object(self.fly, "move") as move:
-            self.fly.preview_edge_offset(30.2)                   # mesmo pixel: nenhum move()
+            self.fly.preview_edge_offset(same_pixel)             # mesmo pixel: nenhum move()
             move.assert_not_called()
             self.fly.preview_edge_offset(33.0)
             move.assert_called_once()

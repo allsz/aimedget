@@ -6,15 +6,40 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+## [1.1.3] - 2026-11-27
+
 ### Adicionado
 - Bateria: **mouses Redragon** pelo dongle 2.4G ou pelo cabo. No cabo, mouse e dongle continuam sendo um cartão só,
   agora carregando.
+- Bateria: **Direção de expansão** (direcional no Hub, com Automático) e **Overflow entre monitores**: o cartão
+  cresce para o lado escolhido, não passa da borda da tela e, com o overflow ligado, avança para outra tela em vez de
+  empurrar a pilha.
+- Clima: **localização do Windows** (opcional, pede confirmação). Mais precisa que o IP; só coordenadas arredondadas
+  (~1 km) saem do PC e só a cidade é salva. Se estiver desligada ou negada, volta para a conexão sem avisar.
 - Widgets fixados na área de trabalho aparecem em todas as áreas de trabalho virtuais e, ao trocar de área
   (Ctrl+Win+←/→), saem junto com os apps e voltam do lado oposto.
+- Teclas Lock: a skin de esboço circular ganhou os rótulos Caps/Num e o LED centralizado.
+- Os flyouts da skin **Windows** (Teclas Lock e Mixer de volume) seguem o tema claro/escuro do Windows, com um visual
+  claro novo para o Mixer. Na troca de modo, flyouts abertos e miniaturas do Hub dissolvem junto.
+- Teclas Lock: a **Distância da borda** mostra o flyout enquanto você arrasta o controle, acompanhando quadro a
+  quadro, e só salva ao soltar.
+
+### Alterado
+- Início mais rápido: ao abrir minimizado, só a bandeja e os serviços sobem; as páginas do Hub são montadas no
+  primeiro uso ou quando o PC acalma, sem competir com o logon. A verificação de instância única vem antes de
+  fontes e do Hub.
+- Teclas Lock: o cartão de Tema visual agora fica acima da Distância da borda.
+- Textos em português revisados (Temporizador, Teclas Lock, painel flutuante) e nomes de skins e temas traduzidos
+  (Bolha, Meia-noite).
+- Menos trabalho por mensagem do Windows nos widgets, o que ajuda ao trocar de monitor.
 
 ### Corrigido
 - Widgets fixados na área de trabalho não piscam mais ao clicar no desktop, usar "Atualizar" ou o Win+D (acontecia
   mais em notebooks na bateria). Agora o desktop leva os widgets junto quando sobe.
+- Trocar o monitor principal (Configurações ou Steam Big Picture) não leva mais os widgets para a outra tela nem
+  desmonta grupos ancorados: cada widget lembra seu lugar em cada monitor.
+- Arrastar um widget entre telas com escalas diferentes mantém o tamanho físico, e o texto dos cartões ficou mais
+  nítido (sem suavização de subpixel).
 
 ## [1.1.2] - 2026-11-24
 
