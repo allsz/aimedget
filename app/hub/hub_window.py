@@ -59,6 +59,7 @@ class AimedgetHubWindow(QMainWindow):
         if saved_geo:
             x, y, w, h = saved_geo
             self.setGeometry(x, y, max(w, 850), max(h, 540))
+            self._ensure_on_screen()
         else:
             self.resize(1020, 680)
         self.setMinimumSize(850, 540)
@@ -301,6 +302,8 @@ class AimedgetHubWindow(QMainWindow):
         self._reveal_anim.stop()
         if needs_reveal:
             self.setWindowOpacity(0.0)
+            if not self.isMaximized() and not self.isMinimized():
+                self._ensure_on_screen()   # um monitor pode ter saído enquanto o Hub estava escondido
         if self.isMinimized():
             self.setWindowState((self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowActive)
         self.show()
@@ -313,6 +316,16 @@ class AimedgetHubWindow(QMainWindow):
             self._reveal_timer.start()
         elif self.windowOpacity() < 1.0:
             self.setWindowOpacity(1.0)
+
+    def _ensure_on_screen(self):
+        """Traz o Hub de volta a uma tela existente se a posição salva ficou fora de todas (ver hub_placement)."""
+        from app.hub.hub_placement import current_screens, fit_to_screens
+        g = self.geometry()
+        rect = (g.x(), g.y(), g.width(), g.height())
+        screens, primary = current_screens()
+        fitted = fit_to_screens(rect, screens, primary)
+        if fitted != rect:
+            self.setGeometry(*fitted)
 
     def show_music_skins(self):
         """Abre o Hub direto na seção de skins da página do Music Player."""
