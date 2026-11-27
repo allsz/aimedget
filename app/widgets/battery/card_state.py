@@ -79,6 +79,8 @@ class Options:
     show: str = SHOW_ALL
     odd: str = lay.ODD_CENTER
     count: bool = True          # "X dispositivos" ao lado do título (some junto com o título)
+    expand: str = lay.DEFAULT_EXPAND
+    overflow: bool = False      # permite crescer para outro monitor conectado (nunca para o vazio)
 
     @property
     def header(self) -> bool:
@@ -97,6 +99,8 @@ class Options:
         o.show = show if show in SHOWS else SHOW_ALL
         o.odd = odd if odd in ODDS else lay.ODD_CENTER
         o.count = bool(get("count", True))
+        o.expand = lay.normalize_expand(get("expand", lay.DEFAULT_EXPAND))
+        o.overflow = bool(get("overflow", False))
         return o
 
 
@@ -241,7 +245,9 @@ class BatteryState:
         prev = self.layout
         n = len(self.order)
         prefer = prev.cols if prev is not None and n > 0 and len(prev.cells) == n else None
-        L = lay.compute(n, self.base_w, self.base_h, header=o.header, names=o.names, odd=o.odd, prefer=prefer)
+        L = lay.compute(
+            n, self.base_w, self.base_h, header=o.header, names=o.names, odd=o.odd, prefer=prefer, expand=o.expand
+        )
         self.layout = L
         instant = snap or not self.animated
         follow = direct_size and not instant

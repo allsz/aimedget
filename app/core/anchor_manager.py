@@ -307,6 +307,7 @@ class AnchorManager(QObject):
         self._arrange: Optional[dict] = None   # alinhamento em curso: {group, root, ref, save, st: {key: [x, y, vx, vy]}}
         self._absent: set = set()              # escondidos pelo usuário: no grupo, mas sem ocupar espaço
         self._slide: Optional[dict] = None     # fileiras fechando/reabrindo: {group, st: {key: [x, y, vx, vy]}, goal}
+        self._overflow_rest: Dict[int, Dict[str, tuple]] = {}   # posições de repouso antes de auto-overflow (para voltar)
         self._clock = FrameTimer(self)
         self._clock.setTimerType(Qt.TimerType.PreciseTimer)
         self._clock.setInterval(FRAME_MS)
@@ -572,10 +573,11 @@ class AnchorManager(QObject):
         if sl is None:
             return
         move_cards([(w, x, y) for k, (x, y) in sl["goal"].items() if (w := self.window(k)) is not None])
-        for k in sl["goal"]:
-            w = self.window(k)
-            if w is not None:
-                _persist(w)
+        if sl.get("persist", True):
+            for k in sl["goal"]:
+                w = self.window(k)
+                if w is not None:
+                    _persist(w)
 
     def member_resized(self, w):
         """A escala de um membro mudou: o grupo se refaz em volta dele (ele fica parado, os outros acompanham)."""
@@ -592,7 +594,174 @@ class AnchorManager(QObject):
         if self._slide is not None and self._slide["group"] is g:
             self._finish_slide()
         if len(g.keys()) > 1 and not (self._drag and self._drag.group is g):
+            self._overflow_rest.pop(id(g), None)
             self._reflow(g, key)
+
+    @staticmethod
+    def _reachable_bounds(box: Rect, allow_overflow: bool) -> Optional[tuple[float, float, float, float]]:
+        from PySide6.QtCore import QPoint as _QPoint
+        from PySide6.QtGui import QGuiApplication
+        from app.widgets.battery import layout as bat_lay
+
+        screen = QGuiApplication.screenAt(_QPoint(int((box.l + box.r) / 2), int((box.t + box.b) / 2)))
+        screen = screen or QGuiApplication.primaryScreen()
+        if screen is None:
+            return None
+        a = screen.availableGeometry()
+        cur = (float(a.x()), float(a.y()), float(a.x() + a.width()), float(a.y() + a.height()))
+        screens = []
+        for s in QGuiApplication.screens():
+            g = s.availableGeometry()
+            screens.append((float(g.x()), float(g.y()), float(g.x() + g.width()), float(g.y() + g.height())))
+        return bat_lay.reachable_bounds((box.l, box.t, box.r, box.b), cur, screens, allow_overflow=allow_overflow)
+
+    def member_auto_resized(
+        self,
+        w,
+        base_w: float,
+        base_h: float,
+        pivot: tuple[float, float],
+        allow_overflow: bool = False,
+    ):
+        """
+        Redimensionamento automático (overflow do Battery Widget) dentro de um grupo ancorado:
+        - Aplica o pivô do D-pad (cresce para a esquerda, direita, ambos, cima, baixo...) mantendo os vizinhos parados
+          quando não há colisão nem borda da tela.
+        - Se bater na borda do monitor / barra de tarefas (ou no vazio), empurra a pilha inteira para dentro.
+        - Quando o widget encolhe de volta ao tamanho base, a pilha inteira desliza de volta ao lugar original.
+        """
+        from app.widgets.battery import layout as bat_lay
+
+        key = self._key(w)
+        if key is None:
+            return
+        r = card_rect(w)
+        self._sizes[key] = (r.w, r.h)
+        if self._screens.is_settling():
+            return
+        g = self.group_of(key)
+        if self._arranging(g) or len(g.keys()) < 2 or (self._drag and self._drag.group is g):
+            return
+        if self._slide is not None and self._slide["group"] is g and not self._slide.get("overflow"):
+            self._finish_slide()
+
+        dw = max(0.0, r.w - base_w)
+        dh = max(0.0, r.h - base_h)
+        gid = id(g)
+
+        # Calcula o repouso a partir da ÁRVORE do grupo (usando um vizinho parado como referência + base_w x base_h):
+        # mesmo se o widget já estava crescido ao alinhar, o repouso nunca sai do alinhamento da pilha.
+        if gid not in self._overflow_rest:
+            if dw <= 0.5 and dh <= 0.5:
+                self._reflow(g, key)
+                return
+            sizes = self._sizes_of(g)
+            anchor_k = next((k for k in g.keys() if k != key and self._present(k) and self._visible(k)), None)
+            if sizes is None or anchor_k is None:
+                return
+            base_sizes = dict(sizes)
+            base_sizes[key] = (base_w, base_h)
+            ar = card_rect(self.window(anchor_k))
+            base_pos = geo.layout(g.tree, base_sizes, anchor_k, (ar.l, ar.t), self._absent_in(g))
+            snap = {}
+            for k in g.keys():
+                if k in base_pos and self._present(k) and self._visible(k):
+                    bw_k, bh_k = base_sizes[k]
+                    snap[k] = (base_pos[k][0], base_pos[k][1], bw_k, bh_k)
+            if key not in snap:
+                return
+            self._overflow_rest[gid] = snap
+
+        rest = self._overflow_rest[gid]
+        if key not in rest:
+            self._overflow_rest.pop(gid, None)
+            return
+
+        rest_l, rest_t, rest_w, rest_h = rest[key]
+        px, py = pivot
+        bat_l = rest_l + dw * px
+        bat_t = rest_t + dh * py
+        bat_r = bat_l + r.w
+        bat_b = bat_t + r.h
+
+        # Vizinhos: ficam parados por padrão, exceto se o crescimento avançar na direção deles (empurra mantendo folga)
+        up_push = min(0.0, bat_t - rest_t)
+        down_push = max(0.0, bat_b - (rest_t + rest_h))
+        left_push = min(0.0, bat_l - rest_l)
+        right_push = max(0.0, bat_r - (rest_l + rest_w))
+
+        cand_rects: Dict[str, Rect] = {key: Rect(bat_l, bat_t, bat_r, bat_b)}
+        for k, (kl, kt, kw, kh) in rest.items():
+            if k == key:
+                continue
+            mw = self.window(k)
+            if mw is None or not self._present(k) or not self._visible(k):
+                continue
+            kr, kb = kl + kw, kt + kh
+            nx, ny = kl, kt
+            if kb <= rest_t + 2.0:             # acima do Battery
+                ny += up_push
+            elif kt >= rest_t + rest_h - 2.0:  # abaixo do Battery
+                ny += down_push
+            if kr <= rest_l + 2.0:             # à esquerda do Battery
+                nx += left_push
+            elif kl >= rest_l + rest_w - 2.0:  # à direita do Battery
+                nx += right_push
+            cand_rects[k] = Rect.of(nx, ny, kw, kh)
+
+        group_box = geo.union(cand_rects.values())
+        rest_box = geo.union(Rect.of(kl, kt, kw, kh) for kl, kt, kw, kh in rest.values())
+        bounds = self._reachable_bounds(cand_rects[key], allow_overflow=allow_overflow)
+        push_dx, push_dy = (0.0, 0.0)
+        if bounds is not None:
+            # Folga sutil de borda (até 12px, respeitando se o usuário já estacionou mais perto)
+            al, at, ar_b, ab = bounds
+            pad_l = min(12.0, max(0.0, rest_box.l - al))
+            pad_t = min(12.0, max(0.0, rest_box.t - at))
+            pad_r = min(12.0, max(0.0, ar_b - rest_box.r))
+            pad_b = min(12.0, max(0.0, ab - rest_box.b))
+            padded = (al + pad_l, at + pad_t, ar_b - pad_r, ab - pad_b)
+            push_dx, push_dy = bat_lay.clamp_shift((group_box.l, group_box.t, group_box.r, group_box.b), padded)
+
+        goal = {k: (cr.l + push_dx, cr.t + push_dy) for k, cr in cand_rects.items()}
+
+        if animations_enabled():
+            sl = self._slide if (self._slide is not None and self._slide["group"] is g and self._slide.get("overflow")) else None
+            if self._slide is not None and sl is None:
+                self._finish_slide()
+            st = sl["st"] if sl else {}
+            moved_any = False
+            for k, (gx, gy) in goal.items():
+                mw = self.window(k)
+                if mw is None:
+                    continue
+                if k not in st:
+                    mr = card_rect(mw)
+                    st[k] = [mr.l, mr.t, 0.0, 0.0]
+                if abs(st[k][0] - gx) > 0.5 or abs(st[k][1] - gy) > 0.5:
+                    moved_any = True
+            for k in list(st):
+                if k not in goal:
+                    del st[k]
+            if moved_any or sl is not None:
+                self._slide = {"group": g, "st": st, "goal": goal, "spring": CLOSE_SPRING, "persist": False, "overflow": True}
+                self._wake()
+        else:
+            moves = []
+            for k, (tx, ty) in goal.items():
+                mw = self.window(k)
+                if mw is None:
+                    continue
+                cur = card_rect(mw)
+                if abs(cur.l - tx) > 0.35 or abs(cur.t - ty) > 0.35:
+                    moves.append((mw, tx, ty))
+            if moves:
+                move_cards(moves)
+
+        settled_fn = getattr(w, "is_scale_animating", None)
+        animating = bool(settled_fn()) if callable(settled_fn) else False
+        if dw <= 0.5 and dh <= 0.5 and not animating:
+            self._overflow_rest.pop(gid, None)
 
     def _rects_of(self, g: Group) -> Optional[Dict[str, Rect]]:
         """Retângulos de todos os membros como estão NA TELA: os presentes pela janela, os ausentes como um ponto (sem
@@ -886,6 +1055,7 @@ class AnchorManager(QObject):
 
         self._finish_arrange()      # um alinhamento anterior ainda deslizando termina no lugar dele
         self._finish_slide()
+        self._overflow_rest.clear()
         ref_rect = card_rect(ref_widget)
         animate = save and animations_enabled() and ref_widget.isVisible()
 
@@ -938,6 +1108,14 @@ class AnchorManager(QObject):
         self._reflow(new_group, ref_key)
         if save:
             self.commit_group_layout(ref_widget)
+        self._reapply_overflow_in_group(new_group)
+
+    def _reapply_overflow_in_group(self, g: Group):
+        """Se algum membro (ex.: Battery) já estiver crescido após um alinhamento, aplica a guarda de borda."""
+        for k in g.keys():
+            mw = self.window(k)
+            if mw is not None and hasattr(mw, "_sync_size") and self._visible(k):
+                mw._sync_size(force_reposition=True)
 
     # --- Alinhamento animado ---
 
@@ -954,6 +1132,7 @@ class AnchorManager(QObject):
             self._reflow(a["group"], a["root"])
         if a["save"] and _alive(a["ref"]):
             self.commit_group_layout(a["ref"])
+        self._reapply_overflow_in_group(a["group"])
 
     def _step_arrange(self, dt: float) -> bool:
         """Um quadro do deslize do alinhamento. Devolve True enquanto ainda há movimento."""
@@ -1194,6 +1373,9 @@ class AnchorManager(QObject):
         if best is not None and best.lock and og is not None:
             self._join(d.group, og, best)
         self._drag = None
+        self._overflow_rest.pop(id(d.group), None)
+        if og is not None:
+            self._overflow_rest.pop(id(og), None)
         for g in self.groups():
             g.prox = None
         self._screens.user_placed(d.base)

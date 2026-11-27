@@ -6,6 +6,7 @@ a posição chega com um quique pequeno e o botão volta a ficar redondo, enquan
 Com os efeitos de animação do Windows desligados, a troca acontece na hora.
 """
 
+import math
 import time
 
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
@@ -55,6 +56,9 @@ class PillSwitch(QAbstractButton):
 
         self._pos = Spring(self._thumb_position, POSITION)
         self._stretch = Spring(0.0, STRETCH)
+        self._shake_t0: float = 0.0
+        self._shake_dur: float = 0.30
+        self._shake_dx: float = 0.0
         self._last = 0.0
         self._timer = FrameTimer(self)
         self._timer.setInterval(FRAME_MS)
@@ -84,6 +88,16 @@ class PillSwitch(QAbstractButton):
 
     def set_before_toggle(self, callback):
         self._before_toggle = callback
+
+    def shake(self):
+        """Vibração horizontal suave de recusa (ex.: tentar ativar overflow com apenas um monitor)."""
+        if not animations_enabled():
+            return
+        self._shake_t0 = time.monotonic()
+        self._last = self._shake_t0
+        self._timer.setInterval(refresh_interval_ms(self))
+        self._timer.start()
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -126,13 +140,24 @@ class PillSwitch(QAbstractButton):
             self._pos.step(dt)
             self._stretch.step(dt)
         self._thumb_position = self._pos.x
-        if self._pos.settled() and self._stretch.settled():
+        shaking = False
+        if self._shake_t0 > 0.0:
+            p = (now - self._shake_t0) / self._shake_dur
+            if p >= 1.0:
+                self._shake_t0 = 0.0
+                self._shake_dx = 0.0
+            else:
+                self._shake_dx = math.sin(p * math.pi * 5.0) * (1.0 - p) * 3.5
+                shaking = True
+        if self._pos.settled() and self._stretch.settled() and not shaking:
             self._snap(self.isChecked())
         self.update()
 
     def paintEvent(self, event: QPaintEvent):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if abs(self._shake_dx) > 0.05:
+            painter.translate(self._shake_dx, 0.0)
 
         w = float(self.width())
         h = float(self.height())

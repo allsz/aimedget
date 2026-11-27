@@ -3,7 +3,8 @@ Página do Battery Widget no Hub: posição, aparência (bento 2×2: centro do a
 tamanho, comportamento (lembrar posição, fixar no desktop, exibir ao iniciar, abrir agora), atalho e dispositivos.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -16,12 +17,15 @@ from PySide6.QtWidgets import (
 from app.core.config_manager import config_manager
 from app.core.screen_metrics import SCALE_PCT_MAX, SCALE_PCT_MIN
 from app.core.i18n import t
+from app.hub.components.direction_pad import DirectionPad
+from app.hub.components.fold import Fold
 from app.hub.components.help_badge import HelpBadge
 from app.hub.components.pill_switch import PillSwitch
 from app.hub.components.position_picker import PositionPicker
 from app.hub.components.scale_card import ScaleCard
 from app.hub.components.shortcut_picker import ShortcutPicker
 from app.hub.components.tab_pill import Blend, ChipGroup
+from app.hub.components.theme_import_dialog import warning_color
 from app.hub.pages import BaseHubPage
 from app.hub.service_bridge import get_service_bridge
 from app.hub.theme import HubTheme, THEME_LIGHT
@@ -263,13 +267,94 @@ class BatteryPage(BaseHubPage):
         self.controller.scale_changed.connect(lambda _s: self._sync_size())
         self._sync_size()
 
-        # 3b. Formato (livre: o canto do cartão decide largura e altura)
-        card, row = self._card()
+        # 3b. Formato, Direção de expansão (D-Pad) e Overflow entre monitores
+        card, col = self._card(vertical=True)
+        col.setSpacing(ROWS_GAP)
+
+        # Linha 1: Formato livre + Padrão
+        row_shape = QHBoxLayout()
         size_info = self._info("battery_size_title", "battery_size_sub", 14)
-        row.addLayout(size_info, stretch=1)
-        row.setAlignment(size_info, Qt.AlignmentFlag.AlignVCenter)
+        row_shape.addLayout(size_info, stretch=1)
+        row_shape.setAlignment(size_info, Qt.AlignmentFlag.AlignVCenter)
         self.btn_reset = self._chip(t("battery_shape_reset"), self.controller.reset_size)
-        row.addWidget(self.btn_reset, alignment=Qt.AlignmentFlag.AlignVCenter)
+        row_shape.addWidget(self.btn_reset, alignment=Qt.AlignmentFlag.AlignVCenter)
+        col.addLayout(row_shape)
+
+        col.addWidget(self._divider())
+
+        # Linha 2: Direção de expansão + Console Cross D-Pad
+        row_expand = QHBoxLayout()
+        expand_info = QVBoxLayout()
+        expand_info.setSpacing(2)
+        self._lbl_expand_title = QLabel(t("battery_expand_title"))
+        self._lbl_expand_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self._lbl_expand_sub = QLabel(self._format_expand_sub(self.controller.options.expand))
+        self._lbl_expand_sub.setWordWrap(True)
+        self._lbl_expand_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self._texts.append((self._lbl_expand_title, "battery_expand_title"))
+        self._subs.append(self._lbl_expand_sub)
+        expand_info.addWidget(self._lbl_expand_title)
+        expand_info.addWidget(self._lbl_expand_sub)
+        row_expand.addLayout(expand_info, stretch=1)
+        row_expand.setAlignment(expand_info, Qt.AlignmentFlag.AlignVCenter)
+        self.direction_pad = DirectionPad(
+            directions=self.controller.options.expand,
+            theme=self._theme,
+            parent=card,
+        )
+        self.direction_pad.directions_changed.connect(self._on_expand_changed)
+        row_expand.addWidget(self.direction_pad, alignment=Qt.AlignmentFlag.AlignVCenter)
+        col.addLayout(row_expand)
+
+        col.addWidget(self._divider())
+
+        # Linha 3: Overflow entre monitores + HelpBadge (?) + PillSwitch (com guarda de monitor único)
+        row_ov = QHBoxLayout()
+        ov_info = QVBoxLayout()
+        ov_info.setSpacing(2)
+        ov_title_row = QHBoxLayout()
+        ov_title_row.setSpacing(6)
+        self._lbl_overflow_title = QLabel(t("battery_overflow_title"))
+        self._lbl_overflow_title.setStyleSheet("font-size: 13.5px; font-weight: 600;")
+        self._texts.append((self._lbl_overflow_title, "battery_overflow_title"))
+        self.overflow_help = HelpBadge(t("battery_overflow_help"), self._theme, card)
+        ov_title_row.addWidget(self._lbl_overflow_title)
+        ov_title_row.addWidget(self.overflow_help, alignment=Qt.AlignmentFlag.AlignVCenter)
+        ov_title_row.addStretch()
+        self._lbl_overflow_sub = QLabel(t("battery_overflow_sub"))
+        self._lbl_overflow_sub.setWordWrap(True)
+        self._lbl_overflow_sub.setStyleSheet(f"color: {self._theme.mute}; font-size: 12.5px;")
+        self._texts.append((self._lbl_overflow_sub, "battery_overflow_sub"))
+        self._subs.append(self._lbl_overflow_sub)
+        ov_info.addLayout(ov_title_row)
+        ov_info.addWidget(self._lbl_overflow_sub)
+        row_ov.addLayout(ov_info, stretch=1)
+        row_ov.setAlignment(ov_info, Qt.AlignmentFlag.AlignVCenter)
+
+        self.sw_overflow = PillSwitch(
+            checked=self.controller.options.overflow and self._screen_count() > 1,
+            theme=self._theme,
+            before_toggle=self._can_toggle_overflow,
+            parent=card,
+        )
+        self.sw_overflow.toggled.connect(self.controller.set_overflow)
+        row_ov.addWidget(self.sw_overflow, alignment=Qt.AlignmentFlag.AlignVCenter)
+        col.addLayout(row_ov)
+
+        # Aviso discreto em Fold quando o usuário tenta ativar overflow com apenas 1 monitor
+        self._lbl_overflow_warn = QLabel(t("battery_overflow_single_screen"))
+        self._lbl_overflow_warn.setWordWrap(True)
+        self._lbl_overflow_warn.setStyleSheet(
+            f"color: {warning_color(self._theme)}; font-size: 12px; font-weight: 500;"
+        )
+        self.fold_overflow_warn = Fold(self._lbl_overflow_warn, gap=0)
+        self.fold_overflow_warn.set_open(False)
+        col.addWidget(self.fold_overflow_warn)
+        self._overflow_warn_timer = QTimer(self)
+        self._overflow_warn_timer.setSingleShot(True)
+        self._overflow_warn_timer.setInterval(3500)
+        self._overflow_warn_timer.timeout.connect(lambda: self.fold_overflow_warn.set_open(False))
+
         self.content_layout.addWidget(card)
 
         # 4. Comportamento
@@ -327,6 +412,39 @@ class BatteryPage(BaseHubPage):
 
         self.content_layout.addStretch()
 
+    @staticmethod
+    def _screen_count() -> int:
+        return len(QGuiApplication.screens())
+
+    @staticmethod
+    def _format_expand_sub(expand: str) -> str:
+        e = lay.normalize_expand(expand)
+        if e == "lrud":
+            return t("battery_expand_auto")
+        names = [t(f"battery_dir_{d}") for d in lay.EXPAND_DIRS if d in e]
+        axis = lay.expand_axis(e)
+        axis_key = (
+            "battery_expand_axis_x" if axis == "x"
+            else "battery_expand_axis_y" if axis == "y"
+            else "battery_expand_axis_both"
+        )
+        return f"{' + '.join(names)} — {t(axis_key)}"
+
+    def _on_expand_changed(self, value: str):
+        self._lbl_expand_sub.setText(self._format_expand_sub(value))
+        self.controller.set_expand(value)
+
+    def _can_toggle_overflow(self, target_checked: bool) -> bool:
+        if target_checked and self._screen_count() <= 1:
+            self.sw_overflow.shake()
+            self._lbl_overflow_warn.setText(t("battery_overflow_single_screen"))
+            self.fold_overflow_warn.set_open(True)
+            self._overflow_warn_timer.start()
+            return False
+        self._overflow_warn_timer.stop()
+        self.fold_overflow_warn.set_open(False)
+        return True
+
     def _on_follow_accent(self, enabled: bool):
         self.controller.set_follow_accent(enabled)
 
@@ -356,6 +474,9 @@ class BatteryPage(BaseHubPage):
         self._label_dim.set(1.0 if show_n else 0.42, animated=vis)
         self._sync_switch(self.sw_show_count, self.controller.options.count, animated=vis)
         self._count_dim.set(1.0 if show_t else 0.42, animated=vis)
+        self.direction_pad.set_directions(self.controller.options.expand, emit=False)
+        self._lbl_expand_sub.setText(self._format_expand_sub(self.controller.options.expand))
+        self._sync_switch(self.sw_overflow, self.controller.options.overflow and self._screen_count() > 1, animated=vis)
 
     def _sync_size(self):
         """Chip Automático e polegar seguem o widget (inclusive enquanto ele anima até o tamanho novo)."""
@@ -384,9 +505,15 @@ class BatteryPage(BaseHubPage):
         self._style_bento(theme)
         for sub in self._subs:
             sub.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+        self._lbl_overflow_warn.setStyleSheet(
+            f"color: {warning_color(theme)}; font-size: 12px; font-weight: 500;"
+        )
         for w in (
             self.pos_picker,
             self.scale_card,
+            self.direction_pad,
+            self.overflow_help,
+            self.sw_overflow,
             self.hk_picker,
             self.sw_show_title,
             self.sw_show_names,
@@ -416,6 +543,9 @@ class BatteryPage(BaseHubPage):
         self._lbl_show_title.setText(t("battery_show_title_lbl"))
         self._lbl_show_names.setText(t("battery_show_names_lbl"))
         self._lbl_show_count.setText(t("battery_show_count_lbl"))
+        self._lbl_expand_sub.setText(self._format_expand_sub(self.controller.options.expand))
+        self.overflow_help.set_text(t("battery_overflow_help"))
+        self._lbl_overflow_warn.setText(t("battery_overflow_single_screen"))
         self.btn_reset.setText(t("battery_shape_reset"))
         self.scale_card.retranslate()
         self.btn_show.setText(t("weather_opt_show_btn"))

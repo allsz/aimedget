@@ -43,6 +43,100 @@ MAX_SIZE = (1200.0, 900.0)
 ODD_CENTER = "center"
 ODD_LEFT = "left"
 
+EXPAND_DIRS = ("l", "r", "u", "d")
+DEFAULT_EXPAND = "lrud"
+
+
+def normalize_expand(raw: Optional[str]) -> str:
+    """Normaliza a string de direções do D-pad para a ordem canônica ('l','r','u','d'); nunca fica vazia."""
+    if not isinstance(raw, str):
+        return DEFAULT_EXPAND
+    low = raw.lower()
+    out = "".join(d for d in EXPAND_DIRS if d in low)
+    return out or DEFAULT_EXPAND
+
+
+def expand_axis(expand: str) -> str:
+    """'x' (só horizontal), 'y' (só vertical) ou 'both' (2D menor área)."""
+    e = normalize_expand(expand)
+    has_h = ("l" in e) or ("r" in e)
+    has_v = ("u" in e) or ("d" in e)
+    if has_h and not has_v:
+        return "x"
+    if has_v and not has_h:
+        return "y"
+    return "both"
+
+
+def expand_pivot(expand: str) -> tuple[float, float]:
+    """Fração de deslocamento (dx/dW, dy/dH) ao crescer: 0=cresce dir/baixo, -1=esq/cima, -0.5=ambos os lados."""
+    e = normalize_expand(expand)
+    l, r, u, d = ("l" in e), ("r" in e), ("u" in e), ("d" in e)
+    px = -1.0 if (l and not r) else (-0.5 if (l and r) else 0.0)
+    py = -1.0 if (u and not d) else (-0.5 if (u and d) else 0.0)
+    return px, py
+
+
+def reachable_bounds(
+    card: tuple[float, float, float, float],
+    current: tuple[float, float, float, float],
+    screens: list[tuple[float, float, float, float]],
+    allow_overflow: bool,
+) -> tuple[float, float, float, float]:
+    """
+    Limites alcançáveis (l, t, r, b) para crescimento automático.
+    - `allow_overflow=False` (ou monitor único): fica dentro de `current` (área útil do monitor atual, sem barra de tarefas).
+    - `allow_overflow=True`: estende para monitores vizinhos que encostam no eixo correspondente; o vazio puro é SEMPRE parede.
+    """
+    cl, ct, cr, cb = current
+    if not allow_overflow or len(screens) <= 1:
+        return cl, ct, cr, cb
+    _xl, yt, _xr, yb = card
+    xl, _yt, xr, _yb = card
+    l, t, r, b = cl, ct, cr, cb
+    tol = 2.0
+    changed = True
+    while changed:
+        changed = False
+        for sl, st, sr, sb in screens:
+            # Vizinho horizontal (compartilha faixa vertical com o cartão)
+            if sb > yt + 1.0 and st < yb - 1.0:
+                if sl <= r + tol and sr > r:
+                    r = sr
+                    changed = True
+                if sr >= l - tol and sl < l:
+                    l = sl
+                    changed = True
+            # Vizinho vertical (compartilha faixa horizontal com o cartão)
+            if sr > xl + 1.0 and sl < xr - 1.0:
+                if st <= b + tol and sb > b:
+                    b = sb
+                    changed = True
+                if sb >= t - tol and st < t:
+                    t = st
+                    changed = True
+    return l, t, r, b
+
+
+def clamp_shift(
+    box: tuple[float, float, float, float],
+    bounds: tuple[float, float, float, float],
+) -> tuple[float, float]:
+    """Menor deslocamento (dx, dy) para manter `box` (l, t, r, b) dentro de `bounds` (l, t, r, b)."""
+    bl, bt, br, bb = box
+    al, at, ar, ab = bounds
+    bw, bh = br - bl, bb - bt
+    aw, ah = ar - al, ab - at
+    if bw <= aw:
+        dx = max(0.0, al - bl) - max(0.0, br - ar)
+    else:
+        dx = al - bl
+    if bh <= ah:
+        dy = max(0.0, at - bt) - max(0.0, bb - ab)
+    else:
+        dy = at - bt
+    return dx, dy
+
 # Histerese da troca de colunas: um layout já na tela só é trocado por um de MAIS linhas quando o anel dele cai abaixo
 # de 82% do melhor (para MENOS linhas a troca continua em 90%). Sem a faixa 82-90%, arrastar o canto perto do limite
 # fazia o cartão pular entre 1 e 2 linhas a cada pixel.
@@ -163,9 +257,9 @@ def _fit(n: int, W: float, H: float, header: bool, names: bool, prefer: Optional
 
 
 def solve(n: int, W: float, H: float, header: bool = True, names: bool = True,
-          prefer: Optional[int] = None) -> tuple[int, int, float, float, float, bool]:
+          prefer: Optional[int] = None, expand: str = DEFAULT_EXPAND) -> tuple[int, int, float, float, float, bool]:
     """(colunas, linhas, anel, largura, altura, cresceu) para `n` dispositivos num cartão W x H. `prefer`: colunas do
-    layout que já está na tela (histerese, ver KEEP)."""
+    layout que já está na tela (histerese, ver KEEP). `expand`: direções ativas do D-pad ('l','r','u','d')."""
     n = max(1, int(n))
     W = clamp(float(W), *[MIN_SIZE[0], MAX_SIZE[0]])
     H = clamp(float(H), *[MIN_SIZE[1], MAX_SIZE[1]])
@@ -173,6 +267,32 @@ def solve(n: int, W: float, H: float, header: bool = True, names: bool = True,
     if d >= D_MIN:
         return c, r, d, W, H, False
     d = D_MIN
+    axis = expand_axis(expand)
+    if axis == "y":
+        # Trava largura em W (respeita largura herdada da pilha) e cresce só na vertical
+        max_cc = 1
+        for cc in range(1, n + 1):
+            if math.ceil(d * (cc + (cc + 1) * K)) <= W + 0.5:
+                max_cc = cc
+            else:
+                break
+        rr = math.ceil(n / max_cc)
+        w = max(W, float(math.ceil(d * (max_cc + (max_cc + 1) * K))))
+        h = max(H, float(math.ceil(_top(header) + _need_h(d, rr, names, header))))
+        return max_cc, rr, d, w, h, True
+    if axis == "x":
+        # Trava altura em H e cresce só na horizontal
+        max_rr = 1
+        for rr in range(1, n + 1):
+            if math.ceil(_top(header) + _need_h(d, rr, names, header)) <= H + 0.5:
+                max_rr = rr
+            else:
+                break
+        cc = math.ceil(n / max_rr)
+        rr = math.ceil(n / cc)
+        w = max(W, float(math.ceil(d * (cc + (cc + 1) * K))))
+        h = max(H, float(math.ceil(_top(header) + _need_h(d, rr, names, header))))
+        return cc, rr, d, w, h, True
     best = None
     options = {}
     for cc in range(1, n + 1):
@@ -192,13 +312,13 @@ def solve(n: int, W: float, H: float, header: bool = True, names: bool = True,
 
 
 def compute(n: int, W: float, H: float, header: bool = True, names: bool = True, odd: str = ODD_CENTER,
-            prefer: Optional[int] = None) -> Layout:
+            prefer: Optional[int] = None, expand: str = DEFAULT_EXPAND) -> Layout:
     """Layout completo: tamanho final do cartão, anel e o canto de cada anel."""
     if n <= 0:
         W = clamp(float(W), MIN_SIZE[0], MAX_SIZE[0])
         H = clamp(float(H), MIN_SIZE[1], MAX_SIZE[1])
         return Layout(W=W, H=H, d=D_MIN, cols=0, rows=0, gap_x=0.0, gap_y=0.0, cells=(), top=_top(header))
-    c, r, d, W2, H2, grown = solve(n, W, H, header, names, prefer)
+    c, r, d, W2, H2, grown = solve(n, W, H, header, names, prefer, expand=expand)
     ty = typo(d, names)
     top = _top(header)
     gap_x = (W2 - c * d) / (c + 1)
