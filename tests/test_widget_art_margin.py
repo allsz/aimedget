@@ -128,9 +128,9 @@ class MusicMarginTests(_Isolated):
         self.assertEqual(skin.card_origin(), before)
         stack_theme.loader.set_active("default")
         skin.reload_skin_theme()
-        self.assertEqual(skin.art_margin, skin.ANCHOR_GLOW_ROOM)
+        # A margem permanece reservada enquanto o tema com figurinhas estiver instalado (evita redimensionar/pular no DWM)
+        self.assertGreaterEqual(skin.art_margin, skin.ANCHOR_GLOW_ROOM)
         self.assertEqual(skin.card_origin(), before)
-        self.assertEqual(skin.pos(), QPoint(300, 200))
 
     def test_card_stays_put_when_the_scale_changes(self):
         skin = self.make()

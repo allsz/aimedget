@@ -355,7 +355,14 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
     def _wanted_art_margin(self) -> int:
         """Margem transparente (px de tela) para as figurinhas do tema que passam da borda do cartão."""
         card_w, card_h = stack_theme.CARD_SIZE
-        return art_margin_px(self.skin_theme.stickers, card_w, card_h, k=self.canvas_w * self.scale / card_w)
+        k = self.canvas_w * self.scale / card_w
+        own = art_margin_px(self.skin_theme.stickers, card_w, card_h, k=k)
+        if not self._glow_room:
+            return own
+        # No desktop, reserva a maior folga dos temas instalados para trocar Padrão <-> Exclusivo sem redimensionar a janela
+        from app.core.widget_theme import MAX_ART_MARGIN
+        reserved = int(min(MAX_ART_MARGIN, max(0, math.ceil(stack_theme.max_installed_sticker_overflow() * k))))
+        return max(own, reserved)
 
     def _update_hitboxes(self):
         s = self.scale
