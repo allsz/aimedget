@@ -28,6 +28,29 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "native: precisa de janelas reais do Windows (roda com AIMEDGET_NATIVE_TESTS=1)")
 
 
+_exit_status = None
+
+
+def pytest_sessionfinish(session, exitstatus):
+    global _exit_status
+    _exit_status = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    """
+    Sai com o resultado do pytest antes de o Python desmontar o Qt. Depois da suíte inteira NA TELA, a destruição das
+    centenas de QObjects na saída do interpretador derrubava o processo ("access violation", sem frame Python) com
+    todos os testes passando, e o gancho pre-push via isso como falha. O resultado (e o resumo) já está impresso aqui.
+    """
+    if _exit_status is None:
+        return
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_exit_status)
+
+
 def pytest_collection_modifyitems(config, items):
     if NATIVE or os.environ.get("QT_QPA_PLATFORM") != "offscreen":
         return
