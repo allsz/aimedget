@@ -169,7 +169,7 @@ def unseen_while_relayout(widget: QWidget):
 
 
 def reposition_with_glide(widget: QWidget, glide: PositionGlide, card_offset: Callable[[], QPointF],
-                          relayout: Callable[[], None]) -> bool:
+                          relayout: Callable[[], None], duration_ms: int | None = None) -> bool:
     """
     Troca a posição/âncora de uma janela cujo card muda de lugar DENTRO dela. `relayout()` muda o estado e leva a
     janela ao lugar FINAL; `card_offset()` devolve onde o card fica dentro da janela (é chamado antes e depois, então
@@ -191,7 +191,7 @@ def reposition_with_glide(widget: QWidget, glide: PositionGlide, card_offset: Ca
             start = (old_card_tl - card_offset()).toPoint()
             widget.move(start)
     if animate and start != final:
-        glide.start(start, final)
+        glide.start(start, final, duration_ms)   # None: a duração pela distância
     return glide.is_running()
 
 

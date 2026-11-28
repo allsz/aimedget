@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from app.core import desktop_layer
 from app.core.config_manager import config_manager
+import pytest
 
 _FAKE_HOST = 0x1000
 _SOME_WINDOW = 0x2000      # vizinha específica escolhida pelo Windows ao mover o grupo do dono
@@ -151,6 +152,7 @@ class WindowPosChangedTests(unittest.TestCase):
         self.assertEqual(desktop_layer._correcting, set())
 
 
+@pytest.mark.native
 @unittest.skipUnless(sys.platform == "win32", "janela dona é do Windows")
 class DesktopOwnerTests(unittest.TestCase):
     @classmethod

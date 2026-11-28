@@ -24,6 +24,7 @@ from app.widgets.weather import motion as mo
 from app.widgets.weather.card_painter import paint_card, tab_at, tab_rect
 from app.widgets.weather.icons import ICONS
 from app.widgets.weather.card_state import PAST, CardState, DayView, DigitGroup, TextMorph, TextSwap
+import pytest
 
 FORECAST = {
     "current": {"temperature_2m": 23.6, "weather_code": 0, "is_day": 0},
@@ -929,6 +930,7 @@ class TestShowDesktopGuard(unittest.TestCase):
         self.card.hide()
         self.assertFalse(guard.is_running())
 
+    @pytest.mark.native
     def test_card_left_above_an_app_goes_back_down(self):
         """Depois de voltar do Win+D o cartão pode ficar por cima dos apps: o vigia o devolve ao nível do desktop."""
         import ctypes
@@ -1090,6 +1092,66 @@ class TestResizeAndDesktopLayer(unittest.TestCase):
         self.assertFalse(card._on_grip(tab_rect(4).center()))
         self.assertFalse(card._on_grip(QPointF(150, 100)))
 
+    def test_desktop_mode_switch_keeps_the_window_and_applies_the_layer_once(self):
+        """A parte da troca de modo que não depende de janela real do Windows (roda também sem tela).
+
+        A ordem Z em si fica em test_desktop_mode_keeps_card_under_other_windows (native)."""
+        from unittest import mock
+        from app.core import desktop_layer
+        card = self.ctrl.skin
+        card.show()
+        self._pump(0.3)
+        hwnd = int(card.winId())
+        layers = []
+        real_apply = desktop_layer.apply_layer
+        hidden = []
+        watcher = _HideWatcher(hidden)
+        card.installEventFilter(watcher)   # registra qualquer Hide durante a troca
+        from app.ui_components import floating_card
+        with mock.patch.object(desktop_layer, "apply_layer",
+                               side_effect=lambda h, on: layers.append((h, on)) or real_apply(h, on)), \
+                mock.patch.object(floating_card, "animations_enabled", return_value=True):
+            self.ctrl.set_desktop_mode(True)
+            self.assertTrue(config_manager.get_weather("desktop_mode"))
+            self.assertTrue(card.desktop_mode_target())
+            # A troca espera o meio da onda de pontos
+            self.assertIsNotNone(card.wave_progress(card.now()))
+            self.assertFalse(card.is_desktop_mode(), "ainda no topo no início da onda")
+            self.assertEqual(layers, [])
+            self._pump(1.0)
+            self.assertIsNone(card.wave_progress(card.now()))
+            self.assertTrue(card.is_desktop_mode())
+            if desktop_layer.IS_WINDOWS:
+                self.assertEqual(layers, [(hwnd, True)])
+            # Mesma janela nativa, nunca escondida: é o que tirava o quadro preto ao trocar de modo
+            self.assertEqual(int(card.winId()), hwnd)
+            self.assertEqual(hidden, [])
+
+            layers.clear()
+            self.ctrl.set_desktop_mode(False)   # volta a ser "sempre no topo"
+            self.assertFalse(config_manager.get_weather("desktop_mode"))
+            self._pump(1.0)
+            self.assertFalse(card.is_desktop_mode())
+            if desktop_layer.IS_WINDOWS:
+                self.assertEqual(layers, [(hwnd, False)])
+            self.assertEqual(int(card.winId()), hwnd)
+            self.assertEqual(hidden, [])
+        card.removeEventFilter(watcher)
+
+    def test_desktop_mode_switch_without_animations_is_immediate(self):
+        from unittest import mock
+        from app.ui_components import floating_card
+        card = self.ctrl.skin
+        card.show()
+        self._pump(0.3)
+        with mock.patch.object(floating_card, "animations_enabled", return_value=False):
+            self.ctrl.set_desktop_mode(True)
+            self.assertIsNone(card.wave_progress(card.now()))
+            self.assertTrue(card.is_desktop_mode())
+            self.ctrl.set_desktop_mode(False)
+            self.assertFalse(card.is_desktop_mode())
+
+    @pytest.mark.native
     @unittest.skipUnless(sys.platform == "win32", "ordem Z do Windows")
     def test_desktop_mode_keeps_card_under_other_windows(self):
         from PySide6.QtWidgets import QWidget

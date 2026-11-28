@@ -322,7 +322,7 @@ class WeatherWidgetController(AnimatedVisibilityMixin, QObject):
         skin = font_skins.skin_by_id(skin_id)
         changed = (skin.id != self.active_skin_name) or (skin.family != self.skin.state.font_family)
         if changed:
-            self.skin.begin_skin_crossfade()
+            self.skin.begin_skin_switch()   # efeito escolhido no Hub (app/core/skin_switch.py)
         self.active_skin_name = skin.id
         self.skin.state.skin_id = skin.id
         self.skin.state.font_family = skin.family

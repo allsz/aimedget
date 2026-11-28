@@ -41,7 +41,9 @@ class TestSkinSwapAnimation(unittest.TestCase):
         new_w = QWidget()
         try:
             old_w.show()
-            with mock.patch.object(widget_animator, "animations_enabled", return_value=True):
+            # O efeito "Dissolver" do Hub; os outros (janela por cima) estão em test_skin_switch.py
+            with mock.patch.object(widget_animator, "animations_enabled", return_value=True), \
+                    mock.patch("app.core.skin_switch.current_effect", return_value="fade"):
                 widget_animator.swap_skin_windows(old_w, new_w, was_visible=True, duration_ms=40)
                 # Nova janela já está visível enquanto a antiga faz fade-out (sem piscar nem pular foco para o Hub)
                 self.assertTrue(new_w.isVisible())

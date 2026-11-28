@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from app.core.frame_clock import FrameTimer, frame_clock
+import pytest
 
 
 def _app():
@@ -25,6 +26,7 @@ def _subscribed(t) -> bool:
     return t in frame_clock()._subs
 
 
+@pytest.mark.native
 def test_one_clock_drives_every_subscriber_at_its_own_rate_and_stops_when_idle():
     _app()
     owner = QObject()

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QToolTip, QWidget
 
 from app.core import osd_anchor
 from app.core.position_glide import PositionGlide, reposition_with_glide
+from app.widgets.volume_mixer.skin_transition import DURATION_MS as SKIN_SWITCH_MS, SkinTransition, mix_color
 from app.core.refresh_rate import refresh_interval_ms
 from app.core.typography import get_ui_font
 from app.services.audio_endpoint_service import AudioEndpoint
@@ -24,7 +25,7 @@ from app.widgets.volume_mixer.theme_shape import (
     DEFAULT_HEADER, POP_DURATION_S, Header, art_overflow, digits_overhang, hairline, paint_digits, paint_plates, pop_amount,
     tilt_transform,
 )
-from app.core.theme_crossfade import mode_crossfade, theme_crossfade
+from app.core.theme_crossfade import mode_crossfade
 from app.core.widget_animator import animations_enabled
 from app.widgets.volume_mixer.app_volume_row import AppVolumeRow, MasterDeviceDrawer
 from app.core.frame_clock import FrameTimer
@@ -100,6 +101,10 @@ class VolumeMixerFlyout(QWidget):
         # Número em imagem (tema com `digits`): último valor desenhado e quando ele mudou (o "pulo")
         self._digits_value: int | None = None
         self._digits_pop_start = 0.0
+        # Troca de visual em curso (mola de morph / encolhe e salta; ver skin_transition.py). `_content_only`: a foto do
+        # conteúdo antigo é tirada com o cartão e a arte omitidos.
+        self._skin_tx: SkinTransition | None = None
+        self._content_only = False
 
         # Âncora na tela e empilhamento com o Caps Lock no meio da tela: o mixer desce metade da altura do
         # Caps Lock (+ o espaço entre eles) para o PAR ficar centralizado; animado para os dois se afastarem juntos
@@ -318,7 +323,7 @@ class VolumeMixerFlyout(QWidget):
         else:
             self.setGeometry(pos[0], pos[1], win_w, win_h)
         self.setFixedSize(win_w, win_h)   # já está no tamanho: só trava, sem novo resize
-        if self.isVisible():
+        if self.isVisible() and self.updatesEnabled():
             self.repaint()   # pinta já no tamanho novo, antes de o compositor mostrar um quadro com o conteúdo velho
 
     def _slot_height(self) -> float:
@@ -390,9 +395,10 @@ class VolumeMixerFlyout(QWidget):
 
     def _tilt_transform(self):
         """Rotação do card pedida pelo tema (`tilt`), ou None. Vale para a pintura e, invertida, para o mouse."""
-        if not self.theme.tilt:
+        tilt = self._skin_tx.tilt() if self._skin_tx is not None else self.theme.tilt
+        if not tilt:
             return None
-        return tilt_transform(self._card_rect(), self.theme.tilt, self._vertical())
+        return tilt_transform(self._card_rect(), tilt, self._vertical())
 
     def _card_point(self, pos: QPointF) -> QPointF:
         """Ponto do mouse no sistema do card (desfaz a inclinação do tema)."""
@@ -463,11 +469,74 @@ class VolumeMixerFlyout(QWidget):
         `mode_switch`: o Windows trocou de claro/escuro (visual "Windows"): dissolvência de modo em vez da de tema."""
         if theme is self.theme:
             return
-        if self.isVisible():   # já na tela (ex.: escolhendo temas em sequência): troca com a transição comum
-            with (mode_crossfade(self) if mode_switch else theme_crossfade(self)):
+        settled = self.isVisible() and not self._is_hiding and self._slide_t >= 0.98   # já parado na tela
+        if self.isVisible() and mode_switch:
+            with mode_crossfade(self):
                 self._apply_theme_now(theme)
+        elif settled and animations_enabled() and self.width() > 1:
+            self._begin_skin_transition(theme)   # escolhendo temas em sequência: mola de morph / encolhe e salta
         else:
             self._apply_theme_now(theme)
+
+    def _begin_skin_transition(self, theme: MixerTheme):
+        """
+        Troca de visual com o flyout na tela (skin_transition.py). A foto leva só o CONTEÚDO antigo; o cartão e a arte
+        são pintados ao vivo dos dois visuais. A janela vai ao tamanho do visual novo com folga para a arte antiga
+        (as figurinhas saem de dentro dela) e o card desliza ao lugar novo na mesma duração (a âncora depende da arte).
+        """
+        # Se outra troca estava no meio, limpa antes de fotografar para nunca capturar conteúdo apagado (piscada)
+        self._skin_tx = None
+        self._content_only = True
+        try:
+            photo = self.grab()
+        finally:
+            self._content_only = False
+        tx = SkinTransition(self.theme, theme, photo, self._card_rect().topLeft(), SKIN_SWITCH_MS)
+
+        def relayout():
+            self._skin_tx = tx
+            self._apply_theme_now(theme)
+
+        was_enabled = self.updatesEnabled()
+        if was_enabled:
+            self.setUpdatesEnabled(False)
+        try:
+            # Sem unseen_while_relayout (setWindowOpacity(0.0)): trocar de visual no lugar nunca deve piscar a janela.
+            animate = self.isVisible() and animations_enabled()
+            start = final = QPointF()
+            if animate:
+                self._glide.stop()
+                old_card_tl = QPointF(self.pos()) + self._card_rect().topLeft()
+            relayout()
+            if animate:
+                final = self.pos()
+                start = (old_card_tl - self._card_rect().topLeft()).toPoint()
+                if start != final:
+                    self.move(start)
+            tx.start()
+            self._start_anim_timer()
+            if animate and start != final:
+                self._glide.start(start, final, SKIN_SWITCH_MS)
+        finally:
+            if was_enabled:
+                self.setUpdatesEnabled(True)
+                if self.isVisible():
+                    self.repaint()
+
+    def _end_skin_tx(self):
+        """Fim da troca: a janela encolhe para a folga do visual novo (o card não se mexe)."""
+        was_enabled = self.updatesEnabled()
+        if was_enabled:
+            self.setUpdatesEnabled(False)
+        try:
+            self._skin_tx = None
+            self._update_margins()
+            self._apply_window_canvas_size()
+        finally:
+            if was_enabled:
+                self.setUpdatesEnabled(True)
+                if self.isVisible():
+                    self.repaint()
 
     def _apply_theme_now(self, theme: MixerTheme):
         self.theme = theme
@@ -488,11 +557,16 @@ class VolumeMixerFlyout(QWidget):
     def _update_margins(self):
         """Folga da janela para sombra e figurinhas que passam da borda (senão a janela transparente as corta)."""
         base = float(self.SHADOW_MARGIN)
-        ov_l, ov_t, ov_r, ov_b = art_overflow(
-            self.theme, float(self.CARD_W), (float(self.COLLAPSED_H), float(self.EXPANDED_MAX_H))
-        )
+        heights = (float(self.COLLAPSED_H), float(self.EXPANDED_MAX_H))
+        own = art_overflow(self.theme, float(self.CARD_W), heights)
+        ov_l, ov_t, ov_r, ov_b = own
+        # Na troca de visual a janela guarda também a folga do visual ANTIGO (as figurinhas saem de dentro dela);
+        # o lugar do card (`_art_*`) já é o do visual novo
+        wide = own
+        if self._skin_tx is not None:
+            wide = tuple(max(a, b) for a, b in zip(own, art_overflow(self._skin_tx.old, float(self.CARD_W), heights)))
         grow = lambda ov: max(base, math.ceil(ov) + 2.0) if ov else base
-        self._margins = (grow(ov_l), grow(ov_t), grow(ov_r), grow(ov_b))
+        self._margins = tuple(grow(ov) for ov in wide)
         self._art_top = float(math.ceil(ov_t)) if ov_t else 0.0
         self._art_bottom = float(math.ceil(ov_b)) if ov_b else 0.0
         self._art_left = float(math.ceil(ov_l)) if ov_l else 0.0
@@ -616,6 +690,8 @@ class VolumeMixerFlyout(QWidget):
 
     def hideEvent(self, event):
         self._glide.stop(settle=True)   # escondido no meio do deslize: já fica no lugar final para a próxima vez
+        if self._skin_tx is not None:   # escondido no meio da troca de visual: termina na hora
+            self._end_skin_tx()
         self._click_timer.stop()
         self._tip_hide_timer.stop()
         QToolTip.hideText()
@@ -826,6 +902,12 @@ class VolumeMixerFlyout(QWidget):
         if self.theme.digits is not None and now - self._digits_pop_start < POP_DURATION_S:
             needs_update = True
 
+        # 5.2 Troca de visual: pinta a cada quadro; só acaba quando o card também chegou ao lugar novo (o deslize)
+        if self._skin_tx is not None:
+            needs_update = True
+            if self._skin_tx.finished() and not self._glide.is_running():
+                self._end_skin_tx()
+
         # 6. Deslocamento do par no meio da tela (Caps Lock chegou/saiu): os dois se afastam/reaproximam do centro
         diff_off = self._stack_offset_target - self._stack_offset
         if abs(diff_off) > 0.3:
@@ -851,6 +933,7 @@ class VolumeMixerFlyout(QWidget):
             and abs(self._anim_card_h - target_card_h) <= 0.15
             and abs(self._scroll_y - self._target_scroll_y) <= 0.15
             and abs(self._scrollbar_opacity - self._scrollbar_target_opacity) <= 0.01
+            and self._skin_tx is None
             and not needs_update
         ):
             self._anim_timer.stop()
@@ -875,43 +958,82 @@ class VolumeMixerFlyout(QWidget):
             | QPainter.RenderHint.TextAntialiasing
             | QPainter.RenderHint.SmoothPixmapTransform
         )
-        p.setOpacity(min(1.0, self._slide_t * 1.15))
+        base = min(1.0, self._slide_t * 1.15)
+        p.setOpacity(base)
 
         th = self.theme
+        tx = self._skin_tx
+        sm = tx.sample() if tx is not None else None
+        morph = sm.morph if sm is not None else 1.0
+        mc = max(0.0, min(1.0, morph))
+        # Durante a troca de visual o cartão é a mistura dos dois (cor, borda, raio); o conteúdo antigo vem da foto
+        radius = th.radius if tx is None else max(0.0, tx.old.radius + (th.radius - tx.old.radius) * morph)
         card_rect = self._card_rect()
         x0 = card_rect.left()
         y0 = card_rect.top()
         tilt = self._tilt_transform()
         if tilt is not None:
             p.setTransform(tilt, True)
-
-        # 1. Sombra externa: a do tema (suave, colorida) ou a multicamada original
-        if th.shadow is not None:
-            paint_card_shadow(p, card_rect, th.radius, th.shadow)
-        else:
-            for i in range(1, 6):
-                sh_rect = card_rect.adjusted(-i * 1.6, -i * 1.0 + 2.0, i * 1.6, i * 2.0 + 2.0)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QColor(0, 0, 0, int(30 / i)))
-                p.drawRoundedRect(sh_rect, th.radius + i, th.radius + i)
-
-        # 1.1 Figurinhas "behind": atrás do card (só a parte que sai pelas bordas aparece)
-        if th.stickers:
-            paint_stickers_behind(p, card_rect, th.stickers)
-        if th.plates:
-            paint_plates(p, card_rect, th.plates)
-
-        # 2. Fundo do Card (#1e1e1e) e Borda 1px (#373737)
         bg_rect = card_rect.adjusted(0.5, 0.5, -0.5, -0.5)
-        p.setBrush(th.card_bg)
-        p.setPen(QPen(th.border, hairline(th)))
-        p.drawRoundedRect(bg_rect, th.radius, th.radius)
 
-        # 2.1 Imagem de fundo (sobre o fundo liso, sob o conteúdo) e figurinhas "below"
-        if th.background is not None:
-            paint_background(p, card_rect, th.background, th.radius)
-        if th.stickers:
-            paint_stickers(p, card_rect, th.stickers, above=False)
+        # Figurinhas: (visual, efeito por figurinha). Na troca as antigas se recolhem e as novas saem da borda
+        if tx is None:
+            art = [(th, None)]
+        else:
+            n_old, n_new = len(tx.old.stickers), len(th.stickers)
+            art = [(tx.old, lambda i, _st: tx.leaving(i, n_old)), (th, lambda i, _st: tx.arriving(i, n_new))]
+
+        if not self._content_only:
+            # `looks`: (visual, peso 0..1) do cartão; sem troca só o visual atual, inteiro
+            looks = [(th, 1.0)] if tx is None else [(tx.old, 1.0 - mc), (th, mc)]
+
+            # 1. Sombra externa: a do tema (suave, colorida) ou a multicamada original
+            for look, weight in looks:
+                if weight > 0.003:
+                    p.setOpacity(base * weight)
+                    self._paint_shadow(p, card_rect, look, radius)
+            p.setOpacity(base)
+
+            # 1.1 Figurinhas "behind": atrás do card (só a parte que sai pelas bordas aparece)
+            for look, fx in art:
+                if look.stickers:
+                    paint_stickers_behind(p, card_rect, look.stickers, fx=fx)
+            for look, weight in looks:
+                if look.plates and weight > 0.003:
+                    p.setOpacity(base * weight)
+                    paint_plates(p, card_rect, look.plates)
+            p.setOpacity(base)
+
+            # 2. Fundo do Card (#1e1e1e) e Borda 1px (#373737)
+            if tx is None:
+                fill, edge = th.card_bg, th.border
+            else:
+                fill, edge = mix_color(tx.old.card_bg, th.card_bg, mc), mix_color(tx.old.border, th.border, mc)
+            p.setBrush(fill)
+            p.setPen(QPen(edge, hairline(th)))
+            p.drawRoundedRect(bg_rect, radius, radius)
+
+            # 2.1 Imagem de fundo (sobre o fundo liso, sob o conteúdo) e figurinhas "below"
+            for look, weight in looks:
+                if look.background is not None and weight > 0.003:
+                    p.setOpacity(base * weight)
+                    paint_background(p, card_rect, look.background, radius)
+            p.setOpacity(base)
+            for look, fx in art:
+                if look.stickers:
+                    paint_stickers(p, card_rect, look.stickers, above=False, fx=fx)
+
+        # Conteúdo antigo (foto, sem cartão nem arte): some logo; o novo, pintado ao vivo, entra depois
+        content_a = 1.0
+        if tx is not None:
+            content_a = sm.new_content
+            if tx.photo is not None and sm.old_content > 0.003:
+                p.save()
+                p.resetTransform()
+                p.setOpacity(base * sm.old_content)
+                p.drawPixmap(card_rect.topLeft() - tx.photo_origin, tx.photo)
+                p.restore()
+        p.setOpacity(base * content_a)
 
         # 3. Cabeçalho: Controle Master (y0 .. y0 + 50)
         header_cy = y0 + 24.5
@@ -938,7 +1060,7 @@ class VolumeMixerFlyout(QWidget):
         if self._expand_t > 0.01 and card_rect.height() > 52.0:
             p.save()
             clip_path = QPainterPath()
-            clip_path.addRoundedRect(bg_rect, th.radius, th.radius)
+            clip_path.addRoundedRect(bg_rect, radius, radius)
             p.setClipPath(clip_path)
 
             # Linha divisória horizontal em y0 + 48.5 (#313131)
@@ -962,8 +1084,12 @@ class VolumeMixerFlyout(QWidget):
             p.restore()
 
         # 5. Figurinhas "above" (por cima de tudo, fora do recorte da lista)
-        if th.stickers:
-            paint_stickers(p, card_rect, th.stickers, above=True)
+        if not self._content_only:
+            p.setOpacity(base)
+            for look, fx in art:
+                if look.stickers:
+                    paint_stickers(p, card_rect, look.stickers, above=True, fx=fx)
+            p.setOpacity(base * content_a)
 
         # 6. Número do volume em imagem (tema com `digits`), com o pulo ao mudar
         if th.digits is not None:
@@ -982,10 +1108,21 @@ class VolumeMixerFlyout(QWidget):
         if self._master_drawer.extra_height() > 0.0:
             p.save()
             clip_path = QPainterPath()
-            clip_path.addRoundedRect(bg_rect, th.radius, th.radius)
+            clip_path.addRoundedRect(bg_rect, radius, radius)
             p.setClipPath(clip_path)
             self._master_drawer.draw_drawer(p, x0, y0 + self.HEADER_H)
             p.restore()
+
+    def _paint_shadow(self, p: QPainter, card_rect: QRectF, th: MixerTheme, radius: float):
+        """Sombra externa do card: a do tema (suave, colorida) ou a multicamada original."""
+        if th.shadow is not None:
+            paint_card_shadow(p, card_rect, radius, th.shadow)
+            return
+        for i in range(1, 6):
+            sh_rect = card_rect.adjusted(-i * 1.6, -i * 1.0 + 2.0, i * 1.6, i * 2.0 + 2.0)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, int(30 / i)))
+            p.drawRoundedRect(sh_rect, radius + i, radius + i)
 
     def _draw_speaker_icon(self, p: QPainter, cx: float, cy: float):
         """Desenha o ícone vetorial de alto-falante fiel ao Windows 11 (com ondas dinâmicas ou mudo)."""

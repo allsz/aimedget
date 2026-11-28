@@ -44,6 +44,29 @@ class OverviewPage(BaseHubPage):
         self._build_tools()
         self._build_gallery()
         self._build_anchor_card()
+        self._build_skin_switch_card()
+
+    def _build_skin_switch_card(self):
+        """Troca de skin: um efeito para todos os widgets (app/core/skin_switch.py)."""
+        from app.core import skin_switch
+
+        card, lay = self._card(vertical=True)
+        lay.setSpacing(ROWS_GAP)
+        self.skin_switch_card = card
+        lay.addLayout(self._info("skin_switch_title", "skin_switch_sub", title_px=14, help_key="skin_switch_help"))
+
+        def pick(key):
+            config_manager.set_skin_switch_effect(key)
+            self._skin_switch_group.set_selected(key)
+
+        self._skin_switch_group = ChipGroup([(k, t(f"skin_switch_{k}")) for k in skin_switch.EFFECTS], pick,
+                                            self._theme, selected=skin_switch.current_effect())
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._skin_switch_group)
+        row.addStretch()
+        lay.addLayout(row)
+        self.content_layout.insertWidget(self.content_layout.count() - 1, card)   # antes do espaçador final
 
     # Ancoragem de widgets: estilo da rede e efeito ao juntar (o resto é fixo; ver app/core/anchor_manager.py)
     _ANCHOR_NET_CHIPS = (("dots", "anchor_net_dots"), ("lines", "anchor_net_lines"), ("both", "anchor_net_both"))
@@ -413,6 +436,14 @@ class OverviewPage(BaseHubPage):
             self.battery_card.retranslate_ui(name=t("overview_card_battery"), skin_label=t("battery_skin_label"))
         if hasattr(self, "anchor_card"):
             self._retranslate_anchor_card()
+        if hasattr(self, "skin_switch_card"):
+            for lbl, key in self._texts:
+                lbl.setText(t(key))
+            for badge, key in self._help_badges:
+                badge.set_text(t(key))
+            from app.core.skin_switch import EFFECTS
+            for key in EFFECTS:
+                self._skin_switch_group.button(key).setText(t(f"skin_switch_{key}"))
         self._refresh_grid()
 
     def set_theme(self, theme: HubTheme):
@@ -424,6 +455,12 @@ class OverviewPage(BaseHubPage):
             self._anchor_net_group.set_theme(theme)
             self._anchor_boom_group.set_theme(theme)
             self._style_anchor_card(theme)
+        if hasattr(self, "skin_switch_card"):
+            self._skin_switch_group.set_theme(theme)
+            for sub in self._subs:
+                sub.setStyleSheet(f"color: {theme.mute}; font-size: 12.5px;")
+            for badge, _key in self._help_badges:
+                badge.set_theme(theme)
 
     def _on_music_skin_changed(self, skin_key: str):
         music_specs = init_music_skin_specs()

@@ -38,6 +38,7 @@ from app.core.widget_animator import animations_enabled
 DURATION_MS = 160
 SHRINK = 0.025   # quanto a aparência antiga encolhe ao sair (fração)
 MODE_DURATION_MS = 300   # troca claro/escuro: protótipo mockups/theme-mode-transition.html, variante C
+STICKER_DURATION_MS = 280  # troca envolvendo temas com figurinhas (Card Bloom + Edge Unfold)
 
 
 def ease_out_cubic(t: float) -> float:
@@ -46,9 +47,23 @@ def ease_out_cubic(t: float) -> float:
 
 
 def ease_in_out_cubic(t: float) -> float:
-    """Começa e termina devagar: a curva da troca de modo (claro/escuro)."""
+    """Começa e termina devagar: a curva da troca de modo (claro/escuro) e do Card Bloom."""
     t = max(0.0, min(1.0, t))
     return 4.0 * t * t * t if t < 0.5 else 1.0 - (-2.0 * t + 2.0) ** 3 / 2.0
+
+
+def ease_out_back(t: float) -> float:
+    """Curva com leve overshoot tátil usada no desdobrar das figurinhas a partir da borda."""
+    t = max(0.0, min(1.0, t))
+    c1 = 1.45
+    c3 = c1 + 1.0
+    return 1.0 + c3 * ((t - 1.0) ** 3) + c1 * ((t - 1.0) ** 2)
+
+
+def theme_bloom_scale(widget: QWidget) -> float:
+    """Escala de bloom (0.97 -> 1.0) do cartão novo durante `theme_crossfade` com figurinhas, ou 1.0 em repouso."""
+    fn = getattr(widget, "_theme_bloom", None)
+    return float(fn()) if fn is not None else 1.0
 
 
 class ThemeCrossfade(QWidget):
@@ -69,6 +84,7 @@ class ThemeCrossfade(QWidget):
         self._shrink = float(shrink)
         self._ease = ease
         self._on_progress = on_progress   # recebe a curva (0..1) a cada quadro e 1.0 ao terminar
+        self._drive_host = False          # True quando o host também anima (bloom do cartão / unfold das figurinhas)
         self._t0 = 0.0
         self._timer = FrameTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -107,6 +123,29 @@ class ThemeCrossfade(QWidget):
             host.removeEventFilter(self)
             if getattr(host, "_theme_crossfade", None) is self:
                 host._theme_crossfade = None
+            if getattr(host, "_sticker_transition_fx", None) is not None:
+                host._sticker_transition_fx = None
+            if getattr(host, "_theme_bloom", None) is not None:
+                host._theme_bloom = None
+            held_margin = getattr(host, "_crossfade_min_margin", 0)
+            if held_margin:
+                host._crossfade_min_margin = 0
+                was_enabled = host.updatesEnabled()
+                if was_enabled:
+                    host.setUpdatesEnabled(False)
+                try:
+                    apply_m = getattr(host, "_apply_art_margin", None)
+                    if apply_m is not None:
+                        apply_m()
+                    elif hasattr(host, "set_square_side") and hasattr(host, "square_side"):
+                        host.set_square_side(host.square_side())
+                finally:
+                    if was_enabled:
+                        host.setUpdatesEnabled(True)
+                        if host.isVisible():
+                            host.repaint()
+            elif self._drive_host:
+                host.update()
         self.hide()
         self.deleteLater()
 
@@ -138,6 +177,10 @@ class ThemeCrossfade(QWidget):
             self.stop()
         else:
             self._notify(self._ease(self.progress()))
+            if self._drive_host:
+                host = self._host()
+                if host is not None:
+                    host.update()
             self.update()
 
     # --- Desenho ---
@@ -179,18 +222,61 @@ def begin_theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrin
     return layer
 
 
+def _has_stickers(widget: QWidget) -> bool:
+    fn = getattr(widget, "anchor_sticker_info", None)
+    if fn is not None:
+        info = fn()
+        return bool(info and info[0])
+    return False
+
+
 @contextmanager
 def theme_crossfade(widget: QWidget, duration_ms: int = DURATION_MS, shrink: float = SHRINK) -> Iterator[None]:
     """Foto antes, aplica dentro do bloco, dissolve depois. Se o bloco falhar, a camada é descartada."""
+    had_stickers = _has_stickers(widget)
+    old_margin = getattr(widget, "art_margin", 0) if had_stickers else 0
     layer = begin_theme_crossfade(widget, duration_ms, shrink)
+    if layer is not None and old_margin > 0:
+        # Segura a margem antiga durante a transição: evita que a janela encolha antes das figurinhas sumirem
+        widget._crossfade_min_margin = old_margin
+    paused = bool(layer is not None and widget.updatesEnabled())
+    if paused:
+        widget.setUpdatesEnabled(False)
     try:
         yield
     except BaseException:
+        if paused:
+            widget.setUpdatesEnabled(True)
         if layer is not None:
             layer.stop()
+        elif old_margin > 0:
+            widget._crossfade_min_margin = 0
         raise
     if layer is not None:
+        has_stickers = _has_stickers(widget)
+        if had_stickers or has_stickers:
+            # Card Bloom + Edge Unfold (280 ms): cartão novo cresce suavemente (0.97 -> 1.0),
+            # figurinhas novas desdobram da borda sem "pipocar" no 1º quadro, e figurinhas antigas recolhem ao sair.
+            layer._duration = max(0.04, STICKER_DURATION_MS / 1000.0)
+            layer._ease = ease_in_out_cubic
+            layer._shrink = 0.015 if has_stickers else 0.040
+            layer._drive_host = True
+            widget._theme_bloom = lambda lyr=layer: 0.97 + 0.03 * ease_in_out_cubic(lyr.progress())
+            if has_stickers:
+                def _unfold(_i, _st, lyr=layer):
+                    t = lyr.progress()
+                    fade = ease_in_out_cubic(min(1.0, t * 1.15))
+                    scale = 0.85 + 0.15 * ease_in_out_cubic(t)
+                    pull = max(0.0, (1.0 - ease_out_back(min(1.0, t * 1.05))) * 0.14)
+                    return (scale, fade, pull)
+                widget._sticker_transition_fx = _unfold
         layer.run()
+        if paused:
+            widget.setUpdatesEnabled(True)
+            if widget.isVisible():
+                widget.repaint()
+    elif paused:
+        widget.setUpdatesEnabled(True)
 
 
 @contextmanager

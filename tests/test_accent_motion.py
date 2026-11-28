@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from app.core.config_manager import config_manager
 from app.hub.components import accent_wipe, hue_slider as hs
 from app.hub.theme import THEME_DARK, resolve_theme
+import pytest
 
 app = QApplication.instance() or QApplication(sys.argv)
 
@@ -235,6 +236,7 @@ class HueSliderWaveTests(unittest.TestCase):
         self.assertAlmostEqual(self.slider._end_radius(track.right()), hs.TRACK_H / 2.0, delta=0.01)
         self.slider._lift = 0.0
 
+    @pytest.mark.native
     def test_the_knob_ring_is_never_clipped_at_the_ends_of_the_bar(self):
         """Regressão: o anel branco de foco do botão (já crescido) era cortado pela borda do slider nas extremidades."""
         self.slider.setFocus()

@@ -316,22 +316,12 @@ class WindowsTimerSkin(BaseTimerSkin):
         p.drawLine(QPointF(center.x() + s, center.y() - s), QPointF(center.x() - s, center.y() + s))
 
     def _paint_resize_grip(self, p: QPainter, scale: float):
+        from app.ui_components.resize_grip import paint_resize_dots
         card = self.get_card_rect()
         grip_x = card.right() - 8 * scale
         grip_y = card.bottom() - 8 * scale
-
         alpha = 240 if self._resize_hovered else (160 if self._hovered else 80)
-        dot_color = QColor(self.theme.mute)
-        dot_color.setAlpha(alpha)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(dot_color))
-
-        r = 1.2 * scale
-        spacing = 3.6 * scale
-        # 3 pequenos pontos diagonais
-        p.drawEllipse(QPointF(grip_x, grip_y), r, r)
-        p.drawEllipse(QPointF(grip_x - spacing, grip_y), r, r)
-        p.drawEllipse(QPointF(grip_x, grip_y - spacing), r, r)
+        paint_resize_dots(p, grip_x, grip_y, QColor(self.theme.mute), alpha=alpha, scale=scale, radius=1.2, spacing=3.6)
 
     # --- Tratamento de Eventos de Mouse ---
 

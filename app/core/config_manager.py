@@ -246,6 +246,27 @@ class ConfigManager:
         music_cfg["stacked_cover_effect"] = str(effect)
         self._save()
 
+    def get_skin_switch_effect(self, default: str) -> str:
+        """Efeito da troca de skin de todos os widgets (Hub > Visão geral); ver app/core/skin_switch.py."""
+        return str(self._data.get("appearance", {}).get("skin_switch", default))
+
+    def set_skin_switch_effect(self, effect: str):
+        self._data.setdefault("appearance", {})["skin_switch"] = str(effect)
+        self._save()
+
+    def get_music_track_effect(self, skin_id: str, default: str) -> str:
+        """Efeito da troca de faixa da skin (Ecos, Capa Completa, Vinil); ver music/skins/track_motion.py."""
+        effects = self._data.get("music_widget", {}).get("track_effects", {})
+        return str(effects.get(skin_id, default)) if isinstance(effects, dict) else default
+
+    def set_music_track_effect(self, skin_id: str, effect: str):
+        music_cfg = self._data.setdefault("music_widget", {})
+        effects = music_cfg.get("track_effects")
+        if not isinstance(effects, dict):
+            effects = music_cfg["track_effects"] = {}
+        effects[skin_id] = str(effect)
+        self._save()
+
 
     def is_music_enabled(self) -> bool:
         music_cfg = self._data.get("music_widget", {})

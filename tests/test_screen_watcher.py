@@ -115,6 +115,7 @@ def test_batch_moves_only_when_every_window_shares_the_scale():
 # --- Com janelas de verdade ---------------------------------------------------------------------------------------
 
 
+@pytest.mark.native
 def test_main_monitor_swap_keeps_every_widget_on_its_monitor_instantly(no_anim):
     """O pulo para a TV: o monitor dos widgets "andou" na área de trabalho; eles vão junto, na hora, sem mudar de
     tamanho, e o grupo continua em fileira."""
@@ -142,6 +143,7 @@ def test_main_monitor_swap_keeps_every_widget_on_its_monitor_instantly(no_anim):
     assert watcher.placement("weather").screen == "MON"
 
 
+@pytest.mark.native
 def test_widgets_are_back_inside_the_switch_signal_and_on_wm_displaychange(no_anim):
     """Sem esperar o próximo giro do laço (que só chegava 460-720 ms depois): já de volta quando o sinal retorna."""
     import ctypes
@@ -185,6 +187,7 @@ def test_nothing_moves_or_reflows_while_the_monitors_are_switching(no_anim):
     assert not watcher.is_settling()
 
 
+@pytest.mark.native
 def test_missing_monitor_is_provisional_and_the_widget_returns_with_it(no_anim):
     """Big Picture desligando o monitor: o widget vai para a principal sem perder o lugar, e volta quando ele volta."""
     env = no_anim
@@ -213,6 +216,7 @@ def test_missing_monitor_is_provisional_and_the_widget_returns_with_it(no_anim):
     assert (n.l, n.t) == pytest.approx((ext.rect.l + saved.dx, ext.rect.t + saved.dy), abs=1)
 
 
+@pytest.mark.native
 def test_dragging_while_the_monitor_is_missing_chooses_a_new_place(no_anim):
     env = no_anim
     real = _real()
@@ -230,6 +234,7 @@ def test_dragging_while_the_monitor_is_missing_chooses_a_new_place(no_anim):
     assert "battery" not in watcher._provisional
 
 
+@pytest.mark.native
 def test_opening_puts_a_remembered_widget_on_its_monitor(no_anim, monkeypatch):
     """A principal mudou com o app fechado: a posição absoluta da configuração aponta para outro lugar."""
     env = no_anim
@@ -243,6 +248,7 @@ def test_opening_puts_a_remembered_widget_on_its_monitor(no_anim, monkeypatch):
     assert (n.l, n.t) == pytest.approx((real.rect.l + 300, real.rect.t + 260), abs=2)
 
 
+@pytest.mark.native
 def test_rescue_of_a_group_from_a_missing_monitor_is_animated_and_ends_clean(anim):
     env = anim
     real = _real()

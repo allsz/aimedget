@@ -29,6 +29,7 @@ from app.core.show_desktop_watcher import show_desktop_watcher
 from app.core.typography import init_app_font
 from app.core.widget_animator import AnimatedSkinMixin, animations_enabled
 from app.core.frame_clock import FrameTimer
+from app.ui_components.resize_grip import paint_resize_dots
 from app.core.theme_crossfade import (
     DURATION_MS as THEME_FADE_MS,
     SHRINK as THEME_FADE_SHRINK,
@@ -211,6 +212,9 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._skin_swap_t0: float = -1e9
         self._skin_swap_dur: float = 0.160
         self._skin_swap_mode: bool = False   # troca claro/escuro: curva in-out, sem encolher (ver mode_crossfade)
+        self._skin_swap_effect: Optional[str] = None   # troca de SKIN (app/core/skin_switch.py); None = dissolver
+        self._skin_swap_old: Optional[tuple] = None    # (tamanho, raio) do cartão antigo
+        self._skin_swap_origin = None
         self._drag_offset: Optional[QPoint] = None
         self._dragged = False
         self._resize_start: Optional[tuple] = None
@@ -407,7 +411,40 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         self._skin_swap_t0 = self.now()
         self._skin_swap_dur = max(0.04, duration_ms / 1000.0)
         self._skin_swap_mode = bool(mode_switch)
+        self._skin_swap_effect = None
         self.kick()
+
+    def begin_skin_switch(self):
+        """
+        Troca de SKIN (não de tema): fotografa o cartão e anima com o efeito escolhido no Hub (skin_switch.py).
+        Chame antes de aplicar a skin nova; o cartão novo é pintado ao vivo durante a troca.
+        """
+        from app.core import skin_switch
+        self.begin_skin_crossfade(int(skin_switch.duration_s(skin_switch.current_effect()) * 1000))
+        if self._skin_swap_prev is None:
+            return
+        rect = self.card_rect()
+        self._skin_swap_effect = skin_switch.current_effect()
+        self._skin_swap_old = ((rect.width(), rect.height()), self.anchor_card_radius())
+        self._skin_swap_origin = None
+        if self._skin_swap_effect == "iris":
+            old = skin_switch.Layer(lambda p: None, (rect.width(), rect.height()), QRectF(0, 0, rect.width(), rect.height()))
+            self._skin_swap_origin = skin_switch.cursor_origin(self.mapToGlobal(rect.topLeft().toPoint()), old, old)
+
+    def _paint_skin_switch(self, p: QPainter, rect: QRectF, now: float, t: float):
+        from app.core import skin_switch
+        (ow, oh), orad = self._skin_swap_old
+        prev = self._skin_swap_prev
+        old = skin_switch.Layer(lambda q: q.drawPixmap(QPointF(0.0, 0.0), prev), (ow, oh), QRectF(0, 0, ow, oh), orad)
+        w, h = rect.width(), rect.height()
+        new = skin_switch.Layer(lambda q: self.paint_card_content(q, QRectF(0.0, 0.0, w, h), now), (w, h),
+                                QRectF(0, 0, w, h), self.anchor_card_radius())
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.translate(rect.topLeft())
+        skin_switch.paint_switch(p, self._skin_swap_effect, t, old, new, self._skin_swap_origin)
+        p.restore()
 
     def _skin_swap_progress(self, now: float) -> Optional[float]:
         if self._skin_swap_prev is None:
@@ -641,7 +678,9 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
         p.setOpacity(1.0)
         rect = self.card_rect()
         swap_p = self._skin_swap_progress(now)
-        if swap_p is not None and self._skin_swap_prev is not None and self._skin_swap_mode:
+        if swap_p is not None and self._skin_swap_prev is not None and self._skin_swap_effect:
+            self._paint_skin_switch(p, rect, now, swap_p)
+        elif swap_p is not None and self._skin_swap_prev is not None and self._skin_swap_mode:
             # Claro/escuro: o cartão novo por baixo, inteiro, e a foto antiga sumindo por cima (como o Hub)
             self.paint_card_content(p, rect, now)
             p.setOpacity(1.0 - mode_ease(swap_p))
@@ -681,16 +720,21 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
             self._paint_grip(p, rect)
         p.end()
 
+    def _grip_color(self) -> QColor:
+        try:
+            from app.core.app_theme import current_hub_theme
+            return QColor(255, 255, 255) if current_hub_theme().is_dark else QColor(36, 36, 40)
+        except Exception:
+            return QColor(255, 255, 255)
+
     def _paint_grip(self, p: QPainter, rect: QRectF):
         s = self._render_scale()
-        alpha = 0.85 if (self._grip_hovered or self._resize_start is not None) else 0.45
+        alpha = 240 if (self._grip_hovered or self._resize_start is not None) else 145
+        margin = max(10.0, self._card_radius * 0.54)
         p.save()
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.translate(rect.topLeft())
         p.scale(s, s)
-        p.setPen(QPen(QColor(255, 255, 255, int(alpha * 255)), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        p.drawLine(QPointF(self._card_w - 9, self._card_h - 17), QPointF(self._card_w - 17, self._card_h - 9))
-        p.drawLine(QPointF(self._card_w - 9, self._card_h - 11.5), QPointF(self._card_w - 11.5, self._card_h - 9))
+        paint_resize_dots(p, self._card_w - margin, self._card_h - margin, self._grip_color(), alpha=alpha)
         p.restore()
 
     # --- Mouse ---

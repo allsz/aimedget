@@ -15,14 +15,21 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.tactile_button import draw_tactile_physical_button
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.widgets.music.skins.track_motion import (
+    LIFT, MORPH, SETTLE, TrackMotionMixin, bump, clamp, ease_in, ease_in_out, ease_out, lerp, smooth, span, spring,
+)
 from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
 CANVAS_H = 540
+DISC_CENTER = QPointF(690.0, 270.0)
+DISC_SIZE = 420.0
+LABEL_SIZE = DISC_SIZE * 0.36
+HOP_ANGLE = 9.0   # "Salto da agulha": o braço sai do sulco até aqui (fora do disco, que começa em ~11,5°)
 
 
-class VinylMusicSkin(BaseMusicSkin):
+class VinylMusicSkin(TrackMotionMixin, BaseMusicSkin):
     """
     Skin de Vinil (Wide Vinyl Edition):
     - Toca-discos interativo com giro 33 RPM e scrubbing DJ na barra de progresso.
@@ -32,9 +39,11 @@ class VinylMusicSkin(BaseMusicSkin):
     """
     tonearm_landed = Signal()
     CARD_RADIUS: float = 40.0
+    TRACK_MOTION_SKIN = "vinyl"
 
     def __init__(self, scale: float | None = None):
         super().__init__(CANVAS_W, CANVAS_H, scale=scale)
+        self._init_track_motion()
 
         # Renderizadores SVG exclusivos da skin de Vinil
         self.svg_cover = QSvgRenderer(get_vinyl_asset("cover-placeholder.svg"))
@@ -131,6 +140,7 @@ class VinylMusicSkin(BaseMusicSkin):
         thumb_bytes: bytes,
         provider: str = "generic",
     ):
+        pre = self._motion_snapshot()   # o que está na tela antes desta atualização (troca de faixa animada)
         changed = False
         track_changed = (title != self.title_text or artist != self.artist_text)
         if track_changed:
@@ -142,7 +152,8 @@ class VinylMusicSkin(BaseMusicSkin):
             self.provider = provider
             changed = True
 
-        if self._update_and_cache_cover(thumb_bytes):
+        cover_changed = self._update_and_cache_cover(thumb_bytes)
+        if cover_changed:
             changed = True
 
         now = time.perf_counter()
@@ -177,8 +188,145 @@ class VinylMusicSkin(BaseMusicSkin):
                     self.current_time = min(self.duration, max(0.0, self.current_time + drift * 0.35))
                     changed = True
 
+        self._motion_after_update(pre, track_changed, cover_changed)
         if changed:
             self.update()
+
+    # --- Troca de faixa animada (protótipo: mockups/music-track-change.html, aba Vinyl) ---
+
+    def _motion_covers(self) -> dict:
+        return {"album": self.album_pixmap}
+
+    def _motion_arm(self):
+        """Ângulo do braço antes da troca, só se ele estava tocando no disco (parado ou arrastado, ele não se move)."""
+        return self.arm_current_angle if self.arm_state == "on" else None
+
+    def _arm_with_motion(self, target: float) -> float:
+        """Braço no disco durante a troca: sai e volta (salto/troca de disco) ou desliza até o começo da faixa nova."""
+        m = self._motion
+        if not m.busy or m.frm.arm is None:
+            return target
+        p, a0 = m.p, m.frm.arm
+        if m.effect in ("hop", "drop"):
+            out = HOP_ANGLE if m.effect == "hop" else self.park_angle
+            lift_end, land_at = (0.30, 0.46) if m.effect == "hop" else (0.28, 0.62)
+            if p < lift_end:
+                return lerp(a0, out, ease_in_out(p / lift_end))
+            if p < land_at:
+                return out
+            return lerp(out, target, spring(span(p, land_at, 1.0), SETTLE))
+        return lerp(a0, target, ease_in_out(span(p, 0.1, 0.9)))
+
+    def _spin_multiplier(self) -> float:
+        """O disco acelera durante o salto da agulha e o selo crescendo."""
+        m = self._motion
+        if not m.busy or m.started is None:
+            return 1.0
+        if m.effect == "hop":
+            return 1.0 + 5.0 * bump(span(m.p, 0.1, 0.9))
+        if m.effect == "bloom":
+            return 1.0 + 2.5 * bump(m.p)
+        return 1.0
+
+    def _draw_label(self, painter: QPainter, pm: QPixmap | None, scx: float = 1.0, grow: float = 1.0,
+                    alpha: float = 1.0):
+        """O selo (capa redonda) no centro do disco, girando com ele. Coordenadas: centro do disco."""
+        r = LABEL_SIZE / 2.0
+        painter.save()
+        if scx != 1.0:
+            painter.scale(scx, 1.0)
+        painter.rotate(self.vinyl_angle)
+        clip = QPainterPath()
+        clip.addEllipse(QPointF(0.0, 0.0), max(0.01, r * grow), max(0.01, r * grow))
+        painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
+        painter.setOpacity(painter.opacity() * alpha)
+        cover_rect = QRectF(-r, -r, LABEL_SIZE, LABEL_SIZE)
+        if pm is not None and not pm.isNull():
+            pw, ph = pm.width(), pm.height()
+            side = min(pw, ph)
+            painter.drawPixmap(cover_rect, pm, QRectF((pw - side) / 2.0, (ph - side) / 2.0, side, side))
+        else:
+            self.svg_cover.render(painter, cover_rect)
+        painter.restore()
+
+    def _draw_disc(self, painter: QPainter, label, sc: float = 1.0, alpha: float = 1.0, dx: float = 0.0,
+                   dy: float = 0.0, lift: float = 0.0):
+        """Sombra, selo (`label(painter)`, no centro do disco), disco e brilho. `lift` afasta a sombra (disco no ar)."""
+        cx, cy = DISC_CENTER.x() + dx, DISC_CENTER.y() + dy
+        painter.save()
+        painter.setOpacity(painter.opacity() * alpha)
+        painter.setBrush(QColor(0, 10, 30, int(130 * (1.0 - 0.45 * lift))))
+        painter.setPen(Qt.PenStyle.NoPen)
+        shadow_r = (DISC_SIZE - 16.0) / 2.0 * sc
+        painter.drawEllipse(QPointF(cx + lift * 12.0, cy + 8.0 + lift * 24.0), shadow_r, shadow_r)
+        painter.translate(cx, cy)
+        if sc != 1.0:
+            painter.scale(sc, sc)
+        label(painter)
+        disc_rect = QRectF(-DISC_SIZE / 2.0, -DISC_SIZE / 2.0, DISC_SIZE, DISC_SIZE)
+        painter.save()
+        painter.rotate(self.vinyl_angle)
+        # O disco GIRA: fica vetorial (girar um raster borra os sulcos finos). Só o que fica parado usa o cache.
+        self.svg_vinyl.render(painter, disc_rect)
+        painter.restore()
+        self._draw_svg(painter, self.svg_glare, disc_rect)
+        painter.restore()
+
+    def _paint_discs(self, painter: QPainter):
+        m = self._motion
+        new = self.album_pixmap
+        if not m.busy:
+            self._draw_disc(painter, lambda pa: self._draw_label(pa, new))
+            return
+        p, d, effect = m.p, m.direction, m.effect
+        old = m.frm.covers.get("album")
+        if effect == "drop":
+            # Como trocar o disco: o antigo sobe e some, o novo cai no prato (mola LIFT)
+            old_k, new_k = span(p, 0.10, 0.50), span(p, 0.36, 0.84)
+            if old_k < 1.0:
+                self._draw_disc(painter, lambda pa: self._draw_label(pa, old), sc=1.0 + 0.12 * ease_in(old_k),
+                                alpha=1.0 - ease_in(old_k), dx=-d * 40.0 * ease_out(old_k), dy=-30.0 * ease_out(old_k),
+                                lift=ease_out(old_k))
+            if new_k > 0.0:
+                s = spring(new_k, LIFT)
+                self._draw_disc(painter, lambda pa: self._draw_label(pa, new), sc=1.0 + 0.14 * (1.0 - s),
+                                alpha=smooth(span(new_k, 0.0, 0.4)), dx=d * 40.0 * (1.0 - s), dy=-34.0 * (1.0 - s),
+                                lift=clamp(1.0 - s))
+        elif effect == "flip":
+            # Só o selo vira, como uma moeda, com uma leve subida
+            phi = math.pi * spring(p, MORPH)
+            scx = max(0.02, abs(math.cos(phi)))
+            pm = new if phi > math.pi / 2.0 else old
+
+            def flip_label(pa):
+                pa.setPen(Qt.PenStyle.NoPen)
+                pa.setBrush(QColor("#0d0d10"))
+                pa.drawEllipse(QPointF(0.0, 0.0), LABEL_SIZE / 2.0, LABEL_SIZE / 2.0)
+                self._draw_label(pa, pm, scx=scx)
+            self._draw_disc(painter, flip_label, sc=1.0 + 0.02 * bump(p))
+        elif effect == "bloom":
+            # O selo novo cresce do pino e manda um anel pelos sulcos
+            q = clamp(spring(span(p, 0.0, 0.8), MORPH))
+
+            def bloom_label(pa):
+                self._draw_label(pa, old)
+                if q > 0.001:
+                    self._draw_label(pa, new, grow=q)
+            self._draw_disc(painter, bloom_label)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for delay, strength in ((0.0, 1.0), (0.12, 0.6)):
+                u = span(p, delay, 0.8 + delay * 0.5)
+                if 0.0 < u < 1.0:
+                    painter.setPen(QPen(QColor(255, 255, 255, int(102 * (1.0 - u) * strength)), 3.0))
+                    r = LABEL_SIZE / 2.0 + (DISC_SIZE / 2.0 - LABEL_SIZE / 2.0) * ease_out(u)
+                    painter.drawEllipse(DISC_CENTER, r, r)
+        else:   # "hop": o selo troca enquanto a agulha está fora e o disco acelera
+            swap = smooth(span(p, 0.34, 0.52))
+
+            def hop_label(pa):
+                self._draw_label(pa, old)
+                self._draw_label(pa, new, alpha=swap)
+            self._draw_disc(painter, hop_label, sc=1.0 + 0.014 * bump(p))
 
     @staticmethod
     def _cubic_ease(t: float) -> float:
@@ -229,6 +377,9 @@ class VinylMusicSkin(BaseMusicSkin):
         # --- 0.1 Atualização da Onda Sonora Animada (Fallback) ---
         self.soundwave.update(dt, self.is_playing)
         if self.provider == "generic" and self.is_playing:
+            needs_update = True
+
+        if self._track_motion_tick(now):   # troca de faixa animada (track_motion.py)
             needs_update = True
 
         target_play = self._compute_target_play_angle()
@@ -287,7 +438,7 @@ class VinylMusicSkin(BaseMusicSkin):
             needs_update = True
 
         elif self.arm_state == "on":
-            self.arm_current_angle = target_play
+            self.arm_current_angle = self._arm_with_motion(target_play)
 
         # --- 2. Giro do Vinil e Avanço Contínuo do Tempo ---
         if self.is_dragging_bar:
@@ -304,7 +455,7 @@ class VinylMusicSkin(BaseMusicSkin):
                 self.scrub_velocity = 0.0
 
             if self.is_playing and self.arm_state == "on":
-                self.vinyl_angle = (self.vinyl_angle + 105.88 * dt) % 360.0
+                self.vinyl_angle = (self.vinyl_angle + 105.88 * self._spin_multiplier() * dt) % 360.0
                 if self.duration > 0:
                     self.current_time = min(self.duration, self.current_time + dt)
                 needs_update = True
@@ -375,29 +526,11 @@ class VinylMusicSkin(BaseMusicSkin):
             wave_rect = QRectF(logo_x, logo_y, logo_s, logo_s)
             self.soundwave.render(painter, wave_rect, QColor(255, 255, 255, 240))
 
-        # --- 3. Tipografia com Espaço Expandido no Meio do Widget ---
-        # Título da Música: y=186 (espaço expandido para 405px)
-        title_y = 186.0
-        title_w = 405.0
-        font_title = get_ui_font(44, QFont.Weight.Bold)
-        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 98.0)
-        painter.setFont(font_title)
-        painter.setPen(QColor("#FFFFFF"))
-        fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, int(title_w))
-        painter.drawText(QRectF(52, title_y, title_w, 54), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
-
-        # Nome do Artista: y=248
-        artist_y = 248.0
-        font_artist = get_ui_font(24, QFont.Weight.Medium)
-        painter.setFont(font_artist)
-        painter.setPen(QColor(255, 255, 255, 175))
-        fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.shown_artist(), Qt.TextElideMode.ElideRight, int(title_w))
-        painter.drawText(QRectF(52, artist_y, title_w, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
+        # --- 3. Tipografia com Espaço Expandido no Meio do Widget (título y=186, artista y=248, 405px) ---
+        self._paint_track_text(painter)
 
         # --- 3. Barra de Progresso Expandida (left=52, top=326, w=405) ---
-        progress_ratio = max(0.0, min(1.0, self.current_time / self.duration)) if self.duration > 0 else 0.0
+        progress_ratio = self._shown_progress(self._live_progress())
         bar_x, bar_y, bar_w, bar_h = 52.0, 326.0, 405.0, 6.0
 
         painter.setPen(Qt.PenStyle.NoPen)
@@ -450,41 +583,8 @@ class VinylMusicSkin(BaseMusicSkin):
         # --- 5. Base Estática da Agulha (Alinhada com o disco mais à direita) ---
         self._draw_svg(painter, self.svg_arm_base, QRectF(821.5, 74.9, 99.5, 148.8))
 
-        # --- 6. O Disco de Vinil (Deslocado mais à direita: disc_x=480.0) ---
-        disc_x, disc_y, disc_s = 480.0, 60.0, 420.0
-        disc_cx = disc_x + disc_s / 2.0
-        disc_cy = disc_y + disc_s / 2.0
-
-        painter.setBrush(QColor(0, 10, 30, 130))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(QRectF(disc_x + 8, disc_y + 16, disc_s - 16, disc_s - 16))
-
-        painter.save()
-        painter.translate(disc_cx, disc_cy)
-        painter.rotate(self.vinyl_angle)
-
-        cover_s = disc_s * 0.36
-        cover_rect = QRectF(-cover_s / 2.0, -cover_s / 2.0, cover_s, cover_s)
-        cover_clip = QPainterPath()
-        cover_clip.addEllipse(cover_rect)
-        painter.save()
-        painter.setClipPath(cover_clip, Qt.ClipOperation.IntersectClip)
-
-        if self.album_pixmap is not None and not self.album_pixmap.isNull():
-            pw = self.album_pixmap.width()
-            ph = self.album_pixmap.height()
-            side = min(pw, ph)
-            src_rect = QRectF((pw - side) / 2.0, (ph - side) / 2.0, side, side)
-            painter.drawPixmap(cover_rect, self.album_pixmap, src_rect)
-        else:
-            self.svg_cover.render(painter, cover_rect)
-        painter.restore()
-
-        # O disco GIRA: fica vetorial (girar um raster borra os sulcos finos). Só o que fica parado usa o cache.
-        self.svg_vinyl.render(painter, QRectF(-disc_s / 2.0, -disc_s / 2.0, disc_s, disc_s))
-        painter.restore()
-
-        self._draw_svg(painter, self.svg_glare, QRectF(disc_x, disc_y, disc_s, disc_s))
+        # --- 6. O Disco de Vinil (centro 690,270; 420px) com o selo, e o brilho parado por cima ---
+        self._paint_discs(painter)
 
         # --- 7. A Agulha Reduzida em 8% (Pivô alinhado com a base) ---
         arm_left, arm_top, arm_w, arm_h = 800.2, 70.0, 158.6, 399.3
@@ -497,6 +597,27 @@ class VinylMusicSkin(BaseMusicSkin):
         painter.restore()
 
         self.paint_resize_grip(painter)
+
+    def _draw_title_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_title = get_ui_font(44, QFont.Weight.Bold)
+        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 98.0)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_title)
+        painter.setPen(QColor("#FFFFFF"))
+        elided = QFontMetrics(font_title).elidedText(text, Qt.TextElideMode.ElideRight, 405)
+        painter.drawText(QRectF(52, 186.0 + dy, 405, 54), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
+
+    def _draw_artist_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_artist = get_ui_font(24, QFont.Weight.Medium)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_artist)
+        painter.setPen(QColor(255, 255, 255, 175))
+        elided = QFontMetrics(font_artist).elidedText(text, Qt.TextElideMode.ElideRight, 405)
+        painter.drawText(QRectF(52, 248.0 + dy, 405, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
 
     def _is_pos_on_arm(self, pos) -> bool:
         """Verifica se o ponto (em coordenadas do widget) colide com a geometria do tonearm."""
@@ -692,10 +813,12 @@ class VinylMusicSkin(BaseMusicSkin):
             elif self.pressed_btn == "main" and hit == "main":
                 self.toggle_play()
             elif self.pressed_btn == "prev" and hit == "prev":
+                self._note_direction(-1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("prev", None)
             elif self.pressed_btn == "next" and hit == "next":
+                self._note_direction(1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("next", None)

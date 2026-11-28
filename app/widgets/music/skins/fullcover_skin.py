@@ -24,14 +24,18 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.widgets.music.skins.track_motion import (
+    MORPH, SETTLE, SLIDE, TrackMotionMixin, clamp, ease_in, ease_in_out, ease_out, smooth, span, spring,
+)
 from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
 CANVAS_H = 540
+BLUR_SMALL = (96, 54)   # "Foco": a capa reduzida a 1/10 e ampliada de volta (um desfoque feito uma vez, não por quadro)
 
 
-class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
+class FullCoverSkin(CrispIconsMixin, TrackMotionMixin, BaseMusicSkin):
     """
     Skin Wide FullCover (inspirada em wide_fullcover.png):
     - Fundo imersivo (Full Bleed) em alta definição (pré-filtrado via SmoothTransformation sem fantasma duplo).
@@ -41,6 +45,7 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
     - Barra inferior integrada: Anterior, Barra de Progresso com marcador vertical, Próximo, Fila e Favorito.
     """
     CARD_RADIUS: float = 48.0
+    TRACK_MOTION_SKIN = "fullcover"
 
     def __init__(self, scale: float | None = None):
         super().__init__(CANVAS_W, CANVAS_H, scale=scale)
@@ -49,6 +54,8 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
         self.svg_next = QSvgRenderer(get_vinyl_asset("icon-next.svg"))
         self.soundwave = SoundWaveVisualizer()
         self._fullbleed_pixmap: QPixmap | None = None
+        self._blur_cache: dict[int, QPixmap] = {}
+        self._init_track_motion()
 
         # Renderizadores SVG monocromáticos brancos dos provedores
         self.provider_renderers = {}
@@ -140,6 +147,7 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
         thumb_bytes: bytes,
         provider: str = "generic",
     ):
+        pre = self._motion_snapshot()   # o que está na tela antes desta atualização (troca de faixa animada)
         changed = False
         track_changed = (title != self.title_text or artist != self.artist_text)
         if track_changed:
@@ -151,7 +159,8 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
             self.provider = provider
             changed = True
 
-        if self._update_and_cache_cover(thumb_bytes):
+        cover_changed = self._update_and_cache_cover(thumb_bytes)
+        if cover_changed:
             changed = True
 
         now = time.perf_counter()
@@ -167,16 +176,111 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
         if self._sync_playback_position(pos, dur, track_changed, now):
             changed = True
 
+        self._motion_after_update(pre, track_changed, cover_changed)
         if changed:
             self.update()
+
+    # --- Troca de faixa animada (protótipo: mockups/music-track-change.html, aba Full cover) ---
+
+    def _motion_covers(self) -> dict:
+        return {"full": self._fullbleed_pixmap}
+
+    def _blurred(self, pm: QPixmap | None) -> QPixmap | None:
+        """A capa desfocada (reduzida e ampliada com suavização), uma vez por capa."""
+        if pm is None or pm.isNull():
+            return None
+        key = pm.cacheKey()
+        blurred = self._blur_cache.get(key)
+        if blurred is None:
+            if len(self._blur_cache) > 4:
+                self._blur_cache.clear()
+            small = pm.scaled(*BLUR_SMALL, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            blurred = small.scaled(pm.width(), pm.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+            self._blur_cache[key] = blurred
+        return blurred
+
+    def _draw_cover_layer(self, painter: QPainter, card_rect: QRectF, pm: QPixmap | None, palette,
+                          sc: float = 1.0, dx: float = 0.0, alpha: float = 1.0):
+        """Uma camada de capa (ou do fundo adaptativo, sem capa), escalada em volta do centro e deslocada em x."""
+        if alpha <= 0.002:
+            return
+        painter.save()
+        painter.setOpacity(painter.opacity() * alpha)
+        painter.translate(480.0 + dx, 270.0)
+        painter.scale(sc, sc)
+        painter.translate(-480.0, -270.0)
+        if pm is not None and not pm.isNull():
+            painter.drawPixmap(card_rect, pm, QRectF(pm.rect()))
+        else:
+            render_adaptive_card_background(painter, card_rect, palette)
+        painter.restore()
+
+    def _draw_motion_cover(self, painter: QPainter, card_rect: QRectF):
+        m = self._motion
+        p, d, effect = m.p, m.direction, m.effect
+        old, new = m.frm.covers.get("full"), self._fullbleed_pixmap
+        old_pal = m.frm.palette or self.current_palette
+        new_pal = self.current_palette
+        layer = self._draw_cover_layer
+        painter.fillRect(card_rect, QColor("#0b0b0d"))
+        if effect == "push":
+            sp = clamp(spring(p, SLIDE))
+            layer(painter, card_rect, old, old_pal, dx=-d * 960.0 * 0.25 * sp)
+            painter.fillRect(card_rect, QColor(0, 0, 0, int(115 * sp)))
+            nx = d * 960.0 * (1.0 - sp)
+            layer(painter, card_rect, new, new_pal, dx=nx)
+            edge = nx if d > 0 else nx + 960.0
+            shade = QLinearGradient(edge, 0.0, edge - d * 90.0, 0.0)
+            shade.setColorAt(0.0, QColor(0, 0, 0, int(115 * (1.0 - sp))))
+            shade.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.fillRect(card_rect, shade)
+        elif effect == "iris":
+            cx = 676.0 if d > 0 else 70.0   # abre do botão que trocou a faixa (próxima / anterior)
+            q = clamp(spring(span(p, 0.0, 0.9), MORPH))
+            layer(painter, card_rect, old, old_pal)
+            if q > 0.001:
+                r = 1100.0 * q
+                painter.save()
+                clip = QPainterPath()
+                clip.addEllipse(QPointF(cx, 448.0), r, r)
+                painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
+                layer(painter, card_rect, new, new_pal)
+                painter.restore()
+                if q < 0.995:
+                    painter.setPen(QPen(QColor(255, 255, 255, int(115 * (1.0 - q))), 3.0))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawEllipse(QPointF(cx, 448.0), r, r)
+        elif effect == "blur":
+            u_old = span(p, 0.0, 0.6)
+            sc_old = 1.0 + 0.1 * ease_in_out(u_old)
+            layer(painter, card_rect, old, old_pal, sc=sc_old)
+            layer(painter, card_rect, self._blurred(old), old_pal, sc=sc_old, alpha=ease_in(u_old) if old else 0.0)
+            u = span(p, 0.15, 1.0)
+            a_new = smooth(span(p, 0.15, 0.7))
+            blur_left = 1.0 - ease_out(u)
+            sc_new = 1.1 - 0.1 * ease_out(u)
+            if new is not None:
+                layer(painter, card_rect, self._blurred(new), new_pal, sc=sc_new, alpha=a_new)
+                layer(painter, card_rect, new, new_pal, sc=sc_new, alpha=a_new * (1.0 - blur_left))
+            else:
+                layer(painter, card_rect, None, new_pal, sc=sc_new, alpha=a_new)
+        else:   # "zoom": a antiga avança devagar, a nova recua de 109% e aparece
+            q = ease_out(p)
+            layer(painter, card_rect, old, old_pal, sc=1.0 + 0.07 * q, dx=-d * 30.0 * q)
+            layer(painter, card_rect, new, new_pal, sc=1.09 - 0.09 * spring(p, SETTLE), dx=d * 40.0 * (1.0 - q),
+                  alpha=ease_out(span(p, 0.0, 0.65)))
 
     def _draw_fullbleed_cover(self, painter: QPainter, card_rect: QRectF):
         """
         Renderiza a capa do álbum em alta nitidez (1 camada única pré-filtrada em Ultra-HD)
         com vinheta suave à esquerda e na base para legibilidade perfeita.
         """
-        if self._fullbleed_pixmap is not None and not self._fullbleed_pixmap.isNull():
-            painter.drawPixmap(card_rect, self._fullbleed_pixmap, QRectF(0, 0, self._fullbleed_pixmap.width(), self._fullbleed_pixmap.height()))
+        if self._motion.busy or (self._fullbleed_pixmap is not None and not self._fullbleed_pixmap.isNull()):
+            if self._motion.busy:
+                self._draw_motion_cover(painter, card_rect)
+            else:
+                painter.drawPixmap(card_rect, self._fullbleed_pixmap, QRectF(0, 0, self._fullbleed_pixmap.width(), self._fullbleed_pixmap.height()))
 
             # Vinheta suave à esquerda para leitura nítida do título e artista
             c_dark = QColor(self.current_palette.stop0)
@@ -230,29 +334,35 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
             self.soundwave.render(painter, QRectF(logo_x, logo_y, logo_s, logo_s), QColor(255, 255, 255, 245))
 
         # --- 3. Título da Música e Artista (Meio-Esquerda, amplo espaço horizontal) ---
-        title_y = 224.0
-        font_title = get_ui_font(38, QFont.Weight.DemiBold)
-        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 99.0)
-        painter.setFont(font_title)
-        painter.setPen(QColor("#FFFFFF"))
-        fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, 690)
-        painter.drawText(QRectF(56, title_y, 690, 48), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
-
-        artist_y = 276.0
-        font_artist = get_ui_font(23, QFont.Weight.Medium)
-        font_artist.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 102.0)
-        painter.setFont(font_artist)
-        painter.setPen(QColor(255, 255, 255, 185))
-        fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.shown_artist().upper(), Qt.TextElideMode.ElideRight, 690)
-        painter.drawText(QRectF(56, artist_y, 690, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
+        self._paint_track_text(painter)
 
         # --- 4. Botão Circular Flutuante Play/Pause à Direita ---
         self._draw_floating_play_button(painter, QPointF(842.0, 256.0))
 
         # --- 5. Barra de Controles Inferior (y_center = 448) ---
         self._draw_bottom_controls(painter, 448.0)
+
+    def _draw_title_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_title = get_ui_font(38, QFont.Weight.DemiBold)
+        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 99.0)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_title)
+        painter.setPen(QColor("#FFFFFF"))
+        elided = QFontMetrics(font_title).elidedText(text, Qt.TextElideMode.ElideRight, 690)
+        painter.drawText(QRectF(56, 224.0 + dy, 690, 48), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
+
+    def _draw_artist_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_artist = get_ui_font(23, QFont.Weight.Medium)
+        font_artist.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 102.0)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_artist)
+        painter.setPen(QColor(255, 255, 255, 185))
+        elided = QFontMetrics(font_artist).elidedText(text.upper(), Qt.TextElideMode.ElideRight, 690)
+        painter.drawText(QRectF(56, 276.0 + dy, 690, 34), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
 
     def _draw_floating_play_button(self, painter: QPainter, center: QPointF):
         is_hover = (self.hovered_btn == "main")
@@ -291,7 +401,7 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
 
         bar_x, bar_w, bar_h = 136.0, 478.0, 3.6
         bar_y = cy - bar_h / 2.0
-        progress = max(0.0, min(1.0, self.current_time / self.duration)) if self.duration > 0 else 0.0
+        progress = self._shown_progress(self._live_progress())
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(255, 255, 255, 75))
@@ -415,10 +525,12 @@ class FullCoverSkin(CrispIconsMixin, BaseMusicSkin):
                 self._ignore_external_state_until = time.perf_counter() + 1.0
                 self.command_requested.emit("play" if self.is_playing else "pause", None)
             elif self.pressed_btn == "prev" and hit == "prev":
+                self._note_direction(-1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("prev", None)
             elif self.pressed_btn == "next" and hit == "next":
+                self._note_direction(1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("next", None)

@@ -164,8 +164,12 @@ class TestScreenMetrics(unittest.TestCase):
         """
         import math
 
-        # Capa Empilhada (fundo pastel claro)
-        stacked = CapaEmpilhadaSkin(scale=0.50)
+        # Capa Empilhada (fundo pastel claro) no tema PADRÃO: o tema salvo no PC (ex.: um com título claro, que pede
+        # a alça branca) não pode decidir o resultado
+        from unittest import mock
+        from app.widgets.music.skins import stack_theme
+        with mock.patch.object(stack_theme, "load_user_theme", lambda: stack_theme.DEFAULT_THEME):
+            stacked = CapaEmpilhadaSkin(scale=0.50)
         col_stacked = stacked.get_resize_grip_color()
         # Deve ser escuro (R, G, B baixos) para contraste com o card claro
         self.assertLess(col_stacked.red(), 60)
