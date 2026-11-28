@@ -581,6 +581,8 @@ class FloatingCard(AnimatedSkinMixin, QWidget):
                     self._on_dpi_changed_during_drag(msg)
                 elif self._desktop_mode and msg.message == desktop_layer.WM_WINDOWPOSCHANGING:
                     desktop_layer.on_window_pos_changing(msg.lParam, int(msg.hWnd or 0))
+                elif self._desktop_mode and msg.message == desktop_layer.WM_WINDOWPOSCHANGED:
+                    desktop_layer.on_window_pos_changed(msg.lParam, int(msg.hWnd or 0))
             except (TypeError, ValueError, OSError):
                 pass
         return False, 0

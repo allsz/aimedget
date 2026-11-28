@@ -61,7 +61,11 @@ O app adota redação minimalista e precisa (veja a skill completa em `.agents/s
 - Widget fixado no desktop tem o desktop como janela dona (`desktop_layer.ensure_desktop_owner`). O Qt zera a dona
   ao mostrar a janela (depois do `showEvent`), então o vínculo é refeito logo em seguida pelo `DesktopPinGuard`. E o
   gancho de WM_WINDOWPOSCHANGING só reescreve subidas (HWND_TOP etc.): reescrever o movimento que o Windows faz
-  levando o widget junto com o desktop o deixava atrás dele (piscada).
+  levando o widget junto com o desktop o deixava atrás dele (piscada). Mas o mesmo vínculo faz o Windows subir
+  TODOS os fixados quando um é clicado (grupo do dono). Regra medida: o clicado vem SEM `SWP_NOACTIVATE` e com
+  uma vizinha que se move no mesmo lote (a "Default IME" do app), então ativação é sempre reescrita; quem é levado
+  com o desktop vem COM `SWP_NOACTIVATE` e passa. Rede de segurança: `on_window_pos_changed` (WM_WINDOWPOSCHANGED).
+  Diagnóstico: `AIMEDGET_ZORDER_DEBUG=1` grava `crash_reports/zorder_debug.log`.
 - Nunca `setParent(None)` em widget visível: ele vira uma janela solta por um instante, fora do Hub. Use
   `hide()` + `removeWidget()` + `deleteLater()`.
 - Rodar a suíte: `python -m pytest --ignore=tests/test_pack_theme.py` (esse arquivo abre um diálogo nativo). O
