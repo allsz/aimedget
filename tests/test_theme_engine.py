@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -501,11 +502,16 @@ class MixerFlyoutGeometryTests(_Dir):
             m = self._flyout(mx_theme.DEFAULT_THEME)
             m._apply_window_canvas_size()
             m._anim_card_h = float(m.EXPANDED_MAX_H if expanded else m.COLLAPSED_H)
+            m._slide_target_t = 1.0   # parado na tela (a troca anima por 200 ms: o timer não pode deslizá-lo para fora)
             m.show()
             try:
                 r0 = m._card_rect()
                 before = (m.x() + r0.left(), m.y() + r0.bottom())
                 m._apply_theme(art)                                    # com o flyout VISÍVEL
+                deadline = time.perf_counter() + 2.0                   # a troca anima (200 ms); confere o estado final
+                while m._skin_tx is not None and time.perf_counter() < deadline:
+                    QApplication.processEvents()
+                    time.sleep(0.004)
                 ml, mt, mr, mb = m._margins
                 max_h = m.EXPANDED_MAX_H   # a janela fica sempre com espaço para a gaveta (evita o flash ao expandir)
                 self.assertEqual(m.width(), int(m.CARD_W + ml + mr), expanded)
@@ -518,6 +524,10 @@ class MixerFlyoutGeometryTests(_Dir):
                 self.assertAlmostEqual(m.x() + r.left(), before[0], delta=1.0)                       # mesmo X na tela
                 self.assertAlmostEqual(m.y() + r.bottom(), before[1] - m._art_bottom, delta=1.0)     # base só sobe pela arte pendente
                 m._apply_theme(mx_theme.DEFAULT_THEME)                                              # e de volta ao padrão
+                deadline = time.perf_counter() + 2.0
+                while m._skin_tx is not None and time.perf_counter() < deadline:
+                    QApplication.processEvents()
+                    time.sleep(0.004)
                 self.assertEqual(m._margins, (14.0, 14.0, 14.0, 14.0))
                 r2 = m._card_rect()
                 self.assertAlmostEqual(m.x() + r2.left(), before[0], delta=1.0)

@@ -6,6 +6,10 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
+### Corrigido
+- Widgets fixados na área de trabalho não piscam mais por cima dos apps ao clicar num widget ou no desktop. Antes,
+  todos os widgets fixados (não só o clicado) subiam por um ou dois quadros e depois voltavam.
+
 ## [1.1.4] - 2026-11-27
 
 ### Corrigido

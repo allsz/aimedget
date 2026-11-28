@@ -18,6 +18,10 @@ que estiverem secas.
   (manual ou seguindo o Windows) = `mode_crossfade` (300 ms, in-out, sem encolher; cartões flutuantes:
   `begin_skin_crossfade(MODE_DURATION_MS, mode_switch=True)`), com a barra de título nativa do Hub mudando de cor
   junto, quadro a quadro (`app/core/theme_crossfade.py`, protótipo `mockups/theme-mode-transition.html`, variante C).
+- **Troca de visual do mixer:** não usa a foto do `theme_crossfade`. 200 ms, mola MORPH 320/20 no cartão; se algum dos
+  dois visuais tem figurinhas, "Encolhe e salta" (elas se recolhem, depois saem da borda), senão só a mola de morph
+  (`app/widgets/volume_mixer/skin_transition.py`, protótipo `mockups/skin-switch-transition.html`). A janela guarda a folga
+  da arte antiga até o fim; o card desliza ao lugar novo (a âncora depende da arte).
 - **Exemplos prontos no app:** entrada "Unfold and rise", remoção com check, arrastar para reordenar (levanta, as
   vizinhas deslizam, assenta) em `city_list.py`; onda de pontos e assentar do cartão no Weather Widget.
 - **Respeite o Windows:** com `animations_enabled()` (app/core/widget_animator.py) falso, tudo acontece na hora.
@@ -61,9 +65,20 @@ O app adota redação minimalista e precisa (veja a skill completa em `.agents/s
 - Widget fixado no desktop tem o desktop como janela dona (`desktop_layer.ensure_desktop_owner`). O Qt zera a dona
   ao mostrar a janela (depois do `showEvent`), então o vínculo é refeito logo em seguida pelo `DesktopPinGuard`. E o
   gancho de WM_WINDOWPOSCHANGING só reescreve subidas (HWND_TOP etc.): reescrever o movimento que o Windows faz
-  levando o widget junto com o desktop o deixava atrás dele (piscada).
+  levando o widget junto com o desktop o deixava atrás dele (piscada). Mas o mesmo vínculo faz o Windows subir
+  TODOS os fixados quando um é clicado (grupo do dono). Regra medida: o clicado vem SEM `SWP_NOACTIVATE` e com
+  uma vizinha que se move no mesmo lote (a "Default IME" do app), então ativação é sempre reescrita; quem é levado
+  com o desktop vem COM `SWP_NOACTIVATE` e passa. Rede de segurança: `on_window_pos_changed` (WM_WINDOWPOSCHANGED).
+  Diagnóstico: `AIMEDGET_ZORDER_DEBUG=1` grava `crash_reports/zorder_debug.log`.
 - Nunca `setParent(None)` em widget visível: ele vira uma janela solta por um instante, fora do Hub. Use
   `hide()` + `removeWidget()` + `deleteLater()`.
 - Rodar a suíte: `python -m pytest --ignore=tests/test_pack_theme.py` (esse arquivo abre um diálogo nativo). O
   `pytest.ini` limita a coleta a `tests/`: scripts soltos em `scratch/` rodam ao serem importados, e um deles já
   apagou o desenho de `assets/icons/aimedget_icon_clean.svg`. Nunca reescreva assets a partir de script de rascunho.
+- **Testes sem janelas na tela (padrão):** a suíte roda com o Qt "offscreen" (`tests/conftest.py`), para o usuário
+  poder usar o PC enquanto ela roda. Teste que precisa de janela real do Windows (ordem Z, desktop dono, monitores,
+  SetWindowPos em lote, taxa do monitor, pixels capturados) leva `@pytest.mark.native` e só roda com
+  `AIMEDGET_NATIVE_TESTS=1`. Mexeu nessas áreas? Rode `AIMEDGET_NATIVE_TESTS=1 python -m pytest
+  --ignore=tests/test_pack_theme.py -m native` (~15 s na tela). Teste novo que só passa na tela: marque `native`.
+- **Gancho pre-push** (`.githooks/pre-push`, ligado com `git config core.hooksPath .githooks`): roda a suíte inteira
+  NA TELA antes de qualquer push e cancela o push se algo falhar. Nunca use `--no-verify` sem o usuário pedir.

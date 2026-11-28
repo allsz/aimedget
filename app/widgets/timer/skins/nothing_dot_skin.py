@@ -445,14 +445,13 @@ def paint_nothing_dot_timer(
         p.drawLine(QPointF(cc.x() - arm, cc.y() - arm), QPointF(cc.x() + arm, cc.y() + arm))
         p.drawLine(QPointF(cc.x() + arm, cc.y() - arm), QPointF(cc.x() - arm, cc.y() + arm))
 
-    # 8. Indicador sutil de redimensionamento no canto inferior direito
+    # 8. Indicador sutil de redimensionamento no canto inferior direito (3 pontos)
     if resize_hovered:
-        grip_c = QColor(colors["chassis_fg"])
-        grip_c.setAlpha(130)
-        p.setPen(QPen(grip_c, 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        rx, ry = card.right() - 8.0 * scale, card.bottom() - 8.0 * scale
-        p.drawLine(QPointF(rx - 5.0 * scale, ry), QPointF(rx, ry - 5.0 * scale))
-        p.drawLine(QPointF(rx - 2.0 * scale, ry), QPointF(rx, ry - 2.0 * scale))
+        from app.ui_components.resize_grip import paint_resize_dots
+        paint_resize_dots(
+            p, card.right() - 8.0 * scale, card.bottom() - 8.0 * scale,
+            QColor(colors["chassis_fg"]), alpha=180, scale=scale, radius=1.2, spacing=3.6,
+        )
 
     p.restore()
 

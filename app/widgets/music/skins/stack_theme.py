@@ -29,13 +29,16 @@ Exemplo (todas as chaves são opcionais):
 - Medidas das figurinhas em px do widget no tamanho padrão (490 x 240); elas acompanham o redimensionamento.
 """
 
+import json
+import math
+import os
 from dataclasses import dataclass, replace
 
 from PySide6.QtGui import QColor
 
-from app.core.theme_art import Background, Sticker
+from app.core.theme_art import ANCHORS, Background, Sticker
 from app.core.theme_loader import ThemeLoader, parse_tokens
-from app.core.widget_theme import drop_unsupported, parse_bool, widget_stickers
+from app.core.widget_theme import MAX_ART_MARGIN, drop_unsupported, parse_bool, widget_stickers
 from app.widgets.music.skins.stack_palette import PastelStackTheme, get_default_pastel_theme
 
 LABEL = "music"
@@ -87,6 +90,54 @@ def theme_from_dict(data: dict, base_dir: str | None = None) -> StackTheme:
 
 
 _loader = ThemeLoader("music", DEFAULT_THEME, theme_from_dict, LABEL)
+
+
+def max_installed_sticker_overflow() -> float:
+    """
+    Maior folga (em px lógicos de CARD_SIZE) pedida pelas figurinhas de todos os temas instalados.
+    Lê só o JSON (sem decodificar PNG/SVG) para que a janela translúcida já nasça com margem suficiente
+    e nunca precise chamar SetWindowPos/redimensionar ao alternar Padrão <-> Exclusivo (evita o salto de 1 frame no DWM).
+    """
+    card_w, card_h = CARD_SIZE
+    best = 0.0
+    for info in _loader.list_themes():
+        if info.id == "default":
+            continue
+        found = _loader._theme_file_and_dir(info.id)
+        if not found:
+            continue
+        theme_file, _ = found
+        try:
+            with open(theme_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        stickers = data.get("stickers")
+        if not isinstance(stickers, list):
+            continue
+        for item in stickers:
+            if not isinstance(item, dict):
+                continue
+            anchor = item.get("anchor", "center")
+            ax, ay = ANCHORS.get(anchor, (0.5, 0.5))
+            x = float(item.get("x", 0.0) or 0.0)
+            y = float(item.get("y", 0.0) or 0.0)
+            w = float(item.get("width", 0.0) or 0.0)
+            h = float(item.get("height", w) or w)
+            if w <= 0.0 and h > 0.0:
+                w = h
+            if w <= 0.0:
+                continue
+            # Folga de sombra assada nas figurinhas (DEFAULT_STICKER_SHADOW blur=1.6, dy=1.6 -> ~5px)
+            pad = 6.0 if item.get("shadow", True) is not False else 0.0
+            tw, th = w + 2.0 * pad, h + 2.0 * pad
+            a = math.radians(float(item.get("rotation", 0.0) or 0.0))
+            hw = (abs(tw * math.cos(a)) + abs(th * math.sin(a))) * 0.5
+            hh = (abs(tw * math.sin(a)) + abs(th * math.cos(a))) * 0.5
+            cx = card_w * ax + x
+            cy = card_h * ay + y
+            best = max(best, hw - cx, cx + hw - card_w, hh - cy, cy + hh - card_h)
+    return best
 
 theme_path = _loader.path
 load_user_theme = _loader.load

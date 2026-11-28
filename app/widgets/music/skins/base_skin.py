@@ -99,6 +99,9 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
             self.current_palette = lerp_palette(self.current_palette, self.target_palette, min(1.0, dt * 4.5))
             needs_update = True
 
+        if self._track_motion_tick(now):   # troca de faixa animada (track_motion.py)
+            needs_update = True
+
         self.soundwave.update(dt, self.is_playing)
         if self.provider == "generic" and self.is_playing:
             needs_update = True
@@ -111,6 +114,10 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
 
         if needs_update:
             self.update()
+
+    def _track_motion_tick(self, now: float) -> bool:
+        """Skins com troca de faixa animada (TrackMotionMixin) sobrescrevem; True pede um quadro."""
+        return False
 
     def _playhead_moved(self) -> bool:
         """True se o segundo exibido ou a posição da barra mudou desde o último quadro pedido por ela."""
@@ -388,6 +395,25 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         """Margem que o tema atual pede nesta escala. Skins com tema de figurinhas sobrescrevem."""
         return 0
 
+    def anchor_sticker_info(self):
+        """Retorna `(stickers, logical_w, logical_h)` se a skin tem figurinhas de tema, ou `None`."""
+        return None
+
+    def visual_bounds_rect(self, y_band: tuple[float, float] | None = None) -> QRectF:
+        """
+        Retângulo visual exato (cartão + pixels opacos das figurinhas) em coordenadas da janela.
+        Quando `y_band=(top, bottom)` é passado, expande apenas esquerda/direita para figurinhas que cruzam a faixa.
+        """
+        card = self.card_rect()
+        info = self.anchor_sticker_info()
+        if not info:
+            return card
+        stickers, lw, lh = info
+        if not stickers:
+            return card
+        from app.core.theme_art import visual_bounds
+        return visual_bounds(stickers, card, lw, lh, y_band=y_band)
+
     ANCHOR_GLOW_ROOM = 16      # px de janela em volta do cartão enquanto o brilho de "ancorado" está aceso
     _anchor_room = False
 
@@ -397,10 +423,14 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         brilho aceso): a janela é translúcida (layered no Windows) e, ao mudar de tamanho, mostra por um quadro a
         imagem antiga no tamanho novo, o cartão "pulando" ao ancorar. Pixels transparentes não pegam cliques.
         """
+        wanted = self._wanted_art_margin()
+        held = getattr(self, "_crossfade_min_margin", 0)
         if not self._glow_room:
-            return self._wanted_art_margin()
+            return max(wanted, held)
         from app.core.anchor_manager import shape_overhang
-        return max(self._wanted_art_margin(), self.ANCHOR_GLOW_ROOM + shape_overhang(self))
+        if wanted > 0:
+            return max(wanted + self.ANCHOR_GLOW_ROOM, held)
+        return max(wanted, self.ANCHOR_GLOW_ROOM + shape_overhang(self), held)
 
     _glow_room = True
 
@@ -426,7 +456,10 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         self.art_margin = wanted
         self._resize_window_keeping_card(old)   # o cartão fica onde estava, sem um quadro fora do lugar
         self._update_hitboxes()
-        self.update()
+        if self.isVisible() and self.updatesEnabled():
+            self.repaint()   # síncrono: envia UpdateLayeredWindow junto com o SetWindowPos (evita 1 frame deslocado)
+        else:
+            self.update()
         return True
 
     def _resize_window_keeping_card(self, old_margin: int):
@@ -533,6 +566,11 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
           Usa branco suave.
         """
         if hasattr(self, "pastel_theme") and self.pastel_theme:
+            title_col = getattr(self.pastel_theme, "title_color", None)
+            if title_col:
+                title_lum = (0.299 * title_col.red() + 0.587 * title_col.green() + 0.114 * title_col.blue()) / 255.0
+                if title_lum > 0.55:
+                    return QColor(255, 255, 255)
             card_bg = getattr(self.pastel_theme, "card_bg", None)
             if card_bg:
                 lum = (0.299 * card_bg.red() + 0.587 * card_bg.green() + 0.114 * card_bg.blue()) / 255.0
@@ -558,25 +596,12 @@ class BaseMusicSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         painter.save()
         painter.resetTransform()
 
+        from app.ui_components.resize_grip import paint_resize_dots
         base_col = self.get_resize_grip_color()
         alpha = 240 if self._resize_hovered else 145
-        base_col.setAlpha(alpha)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(base_col))
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
         margin = self.get_resize_grip_margin()
         card = self.card_rect()
-        grip_x = card.right() - margin
-        grip_y = card.bottom() - margin
-        r = 1.4
-        spacing = 4.2
-
-        # 3 pequenos pontos diagonais idênticos aos do Timer
-        painter.drawEllipse(QPointF(grip_x, grip_y), r, r)
-        painter.drawEllipse(QPointF(grip_x - spacing, grip_y), r, r)
-        painter.drawEllipse(QPointF(grip_x, grip_y - spacing), r, r)
+        paint_resize_dots(painter, card.right() - margin, card.bottom() - margin, base_col, alpha=alpha)
 
         painter.restore()
 

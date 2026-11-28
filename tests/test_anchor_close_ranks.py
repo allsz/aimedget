@@ -61,6 +61,7 @@ def no_anim(env, monkeypatch):
 # --- Uma fileira --------------------------------------------------------------------------------------------------
 
 
+@pytest.mark.native
 def test_hiding_the_middle_closes_the_row_and_showing_reopens_it_exactly(no_anim):
     env = no_anim
     area = _area()
@@ -81,6 +82,7 @@ def test_hiding_the_middle_closes_the_row_and_showing_reopens_it_exactly(no_anim
         assert _rect(c) == pytest.approx(before[c.ANCHOR_KEY], abs=1)                    # tudo volta ao mesmo pixel
 
 
+@pytest.mark.native
 def test_a_group_docked_at_the_right_edge_keeps_that_edge_still(no_anim):
     env = no_anim
     area = _area()
@@ -125,6 +127,7 @@ def _grid(env, align: int):
     return cs
 
 
+@pytest.mark.native
 def test_grid_centered_rows_meet_in_the_middle(no_anim):
     cs = _grid(no_anim, align=2)                      # fileiras centralizadas uma na outra
     before = {k: _rect(c) for k, c in cs.items()}
@@ -139,6 +142,7 @@ def test_grid_centered_rows_meet_in_the_middle(no_anim):
         assert _rect(c) == pytest.approx(before[k], abs=1)
 
 
+@pytest.mark.native
 def test_grid_left_aligned_rows_keep_the_left_column_lined_up(no_anim):
     cs = _grid(no_anim, align=0)                      # fileiras alinhadas à esquerda
     before = {k: _rect(c) for k, c in cs.items()}
@@ -198,6 +202,7 @@ def test_a_member_that_never_appeared_takes_no_space_and_opens_its_slot_later(no
     assert _rect(b).l == pytest.approx(_rect(t).r + GAP, abs=1)
 
 
+@pytest.mark.native
 def test_reopening_near_the_screen_edge_keeps_the_whole_group_on_screen(no_anim):
     env = no_anim
     area = _area()
@@ -244,6 +249,7 @@ def _width(cs):
     return max(r.r for r in rs) - min(r.l for r in rs)
 
 
+@pytest.mark.native
 def test_closing_and_reopening_slide_without_a_dent_and_end_clean(env, monkeypatch):
     env.state["anim"] = True
     monkeypatch.setattr(wa, "animations_enabled", lambda: True)

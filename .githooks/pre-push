@@ -1,0 +1,20 @@
+#!/bin/sh
+# Antes de qualquer push: a suíte inteira NA TELA (janelas reais do Windows), inclusive os testes `native` que a
+# rodada padrão (offscreen) pula. Falhou, o push não sai.
+#
+# Ligar (uma vez por clone):  git config core.hooksPath .githooks
+# Pular numa emergência:      git push --no-verify   (evite: é a única checagem na tela antes do GitHub)
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+echo "pre-push: rodando a suite inteira na tela (as janelas vao piscar ~2 min)..."
+unset QT_QPA_PLATFORM
+AIMEDGET_NATIVE_TESTS=1 python -m pytest --ignore=tests/test_pack_theme.py -q -p no:cacheprovider < /dev/null
+status=$?
+if [ $status -ne 0 ]; then
+    echo ""
+    echo "pre-push: testes falharam (codigo $status). Push cancelado."
+    exit 1
+fi
+echo "pre-push: tudo passou."
+exit 0

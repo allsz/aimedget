@@ -300,12 +300,13 @@ def paint_focus_ring_timer(
         p.drawLine(QPointF(cc2.x() - arm, cc2.y() - arm), QPointF(cc2.x() + arm, cc2.y() + arm))
         p.drawLine(QPointF(cc2.x() + arm, cc2.y() - arm), QPointF(cc2.x() - arm, cc2.y() + arm))
 
-    # 9. Alça sutil de redimensionamento no canto inferior direito
+    # 9. Alça sutil de redimensionamento no canto inferior direito (3 pontos)
     if resize_hovered:
-        p.setPen(QPen(QColor(255, 255, 255, 130), 1.4, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        rx, ry = card.right() - 8.0 * scale, card.bottom() - 8.0 * scale
-        p.drawLine(QPointF(rx - 5.0 * scale, ry), QPointF(rx, ry - 5.0 * scale))
-        p.drawLine(QPointF(rx - 2.0 * scale, ry), QPointF(rx, ry - 2.0 * scale))
+        from app.ui_components.resize_grip import paint_resize_dots
+        paint_resize_dots(
+            p, card.right() - 8.0 * scale, card.bottom() - 8.0 * scale,
+            QColor(255, 255, 255), alpha=180, scale=scale, radius=1.2, spacing=3.6,
+        )
 
     p.restore()
 

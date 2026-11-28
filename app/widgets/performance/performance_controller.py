@@ -106,7 +106,7 @@ class PerformanceWidgetController(AnimatedVisibilityMixin, QObject):
     def set_skin(self, skin_id: str, save: bool = True):
         sid = skin_id if skin_id in PERFORMANCE_SKINS else SKIN_FLUENT
         if sid != self.active_skin_name:
-            self.skin.begin_skin_crossfade()
+            self.skin.begin_skin_switch()   # efeito escolhido no Hub (app/core/skin_switch.py)
         self.active_skin_name = sid
         self.skin.set_skin(sid)
         if save:

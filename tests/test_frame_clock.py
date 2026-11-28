@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from app.core.frame_clock import FrameTimer, frame_clock
+import pytest
 
 
 def _app():
@@ -25,8 +26,29 @@ def _subscribed(t) -> bool:
     return t in frame_clock()._subs
 
 
+def _quiet_stage(timeout_s: float = 2.0):
+    """
+    Na suíte inteira NA TELA (pre-push), centenas de janelas de testes anteriores ainda estão abertas, animando e
+    redesenhando no mesmo laço de eventos: a medição de ritmo caía para ~40 Hz. Esconde essas sobras (elas param os
+    próprios timers ao sumir) e espera o relógio ficar livre antes de medir. Rodando sozinho, não muda nada.
+    """
+    app = _app()
+    for w in app.topLevelWidgets():
+        if w.isVisible():
+            w.hide()
+    deadline = time.perf_counter() + timeout_s
+    while time.perf_counter() < deadline:
+        QApplication.sendPostedEvents()
+        app.processEvents()
+        if frame_clock().active_count() == 0:
+            break
+        QTest.qWait(20)
+
+
+@pytest.mark.native
 def test_one_clock_drives_every_subscriber_at_its_own_rate_and_stops_when_idle():
     _app()
+    _quiet_stage()
     owner = QObject()
     fast, slow = FrameTimer(owner), FrameTimer(owner)
     hits = {"fast": [], "slow": []}

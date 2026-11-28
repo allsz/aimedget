@@ -9,6 +9,57 @@ violation), e o resultado dependia do que tocava na máquina. Aqui a thread de f
 worker (classificação, posição, comandos) continua testável chamando os métodos diretamente.
 """
 
+import os
+
+import pytest
+
+# --- Sem janelas na tela por padrão ---
+# A suíte roda com a plataforma "offscreen" do Qt: as janelas existem e desenham, mas só na memória, então o usuário
+# pode usar o PC enquanto os testes rodam. Os testes que precisam de janelas de verdade do Windows (ordem Z, desktop
+# dono, monitores, lotes de SetWindowPos, taxa de atualização do monitor, captura de pixels) levam
+# `@pytest.mark.native` e só rodam com AIMEDGET_NATIVE_TESTS=1, que também desliga o offscreen. O gancho pre-push
+# (.githooks/pre-push) roda a suíte inteira assim, na tela, antes de qualquer push.
+NATIVE = os.environ.get("AIMEDGET_NATIVE_TESTS") == "1"
+if not NATIVE:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "native: precisa de janelas reais do Windows (roda com AIMEDGET_NATIVE_TESTS=1)")
+
+
+_exit_status = None
+
+
+def pytest_sessionfinish(session, exitstatus):
+    global _exit_status
+    _exit_status = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    """
+    Sai com o resultado do pytest antes de o Python desmontar o Qt. Depois da suíte inteira NA TELA, a destruição das
+    centenas de QObjects na saída do interpretador derrubava o processo ("access violation", sem frame Python) com
+    todos os testes passando, e o gancho pre-push via isso como falha. O resultado (e o resumo) já está impresso aqui.
+    """
+    if _exit_status is None:
+        return
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_exit_status)
+
+
+def pytest_collection_modifyitems(config, items):
+    if NATIVE or os.environ.get("QT_QPA_PLATFORM") != "offscreen":
+        return
+    skip = pytest.mark.skip(reason="janela real do Windows: rode com AIMEDGET_NATIVE_TESTS=1")
+    for item in items:
+        if item.get_closest_marker("native"):
+            item.add_marker(skip)
+
+
 try:
     from app.services import media_worker as _media_worker
 except ModuleNotFoundError:   # sem winrt (dependências do app não instaladas): nada a desligar

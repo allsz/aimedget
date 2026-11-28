@@ -38,6 +38,7 @@ def test_disabled_writes_nothing(env, log_file, monkeypatch):
     assert not log_file.exists()
 
 
+@pytest.mark.native
 def test_enabled_logs_screens_widgets_and_buffered_moves(env, log_file, monkeypatch):
     monkeypatch.setenv(sd.ENV, "1")
     card = env.make("weather", 100, 100)

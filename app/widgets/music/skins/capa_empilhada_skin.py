@@ -346,10 +346,23 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
         paint_stickers(painter, rect, art.stickers, above=above)
         painter.restore()
 
+    def anchor_sticker_info(self):
+        """Figurinhas do tema e tamanho lógico do cartão (para barra de volume e brilho de ancoragem)."""
+        if self.skin_theme.stickers:
+            return (self.skin_theme.stickers, *stack_theme.CARD_SIZE)
+        return None
+
     def _wanted_art_margin(self) -> int:
         """Margem transparente (px de tela) para as figurinhas do tema que passam da borda do cartão."""
         card_w, card_h = stack_theme.CARD_SIZE
-        return art_margin_px(self.skin_theme.stickers, card_w, card_h, k=self.canvas_w * self.scale / card_w)
+        k = self.canvas_w * self.scale / card_w
+        own = art_margin_px(self.skin_theme.stickers, card_w, card_h, k=k)
+        if not self._glow_room:
+            return own
+        # No desktop, reserva a maior folga dos temas instalados para trocar Padrão <-> Exclusivo sem redimensionar a janela
+        from app.core.widget_theme import MAX_ART_MARGIN
+        reserved = int(min(MAX_ART_MARGIN, max(0, math.ceil(stack_theme.max_installed_sticker_overflow() * k))))
+        return max(own, reserved)
 
     def _update_hitboxes(self):
         s = self.scale
@@ -916,6 +929,12 @@ class CapaEmpilhadaSkin(BaseMusicSkin):
 
         painter.translate(self.art_margin, self.art_margin)   # o cartão começa depois da margem transparente
         painter.scale(self.scale, self.scale)
+        from app.core.theme_crossfade import theme_bloom_scale
+        bloom = theme_bloom_scale(self)
+        if bloom != 1.0:
+            painter.translate(CANVAS_W * 0.5, CANVAS_H * 0.5)
+            painter.scale(bloom, bloom)
+            painter.translate(-CANVAS_W * 0.5, -CANVAS_H * 0.5)
 
         # --- 1. Card Principal com Proporção 2.04:1 (980x480) e Curva de Borda Acentuada (radius=88) ---
         card_rect = QRectF(0, 0, CANVAS_W, CANVAS_H)

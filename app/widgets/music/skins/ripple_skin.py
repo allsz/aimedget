@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QTimer
@@ -24,14 +25,18 @@ from app.core.colorimetry import (
 from app.ui_components.soundwave_visualizer import SoundWaveVisualizer
 from app.ui_components.crisp_icons import CrispIconsMixin
 from app.widgets.music.skins.base_skin import BaseMusicSkin
+from app.widgets.music.skins.track_motion import (
+    MORPH, SETTLE, TrackMotionMixin, bump, clamp, ease_in_out, ease_out, smooth, span, spring,
+)
 from app.core.frame_clock import FrameTimer
 
 # Dimensões nativas do canvas 16:9
 CANVAS_W = 960
 CANVAS_H = 540
+SQUARE_PX = 640   # capa quadrada usada só durante a troca de faixa (os anéis giram/escalam um a um)
 
 
-class RippleSkin(CrispIconsMixin, BaseMusicSkin):
+class RippleSkin(CrispIconsMixin, TrackMotionMixin, BaseMusicSkin):
     """
     Skin Wide Ripple (inspirada em wide_ripple.html - Circle Cover Widget):
     - 4 círculos concêntricos da capa do álbum expandindo do centro (600px, 810px, 1020px, 1230px no canvas 960x540)
@@ -52,6 +57,8 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         (600, 0, 72, 3.0),     # 400 * 1.5 -> shade 0.00, border 2px rgba(255,255,255,0.28)
     )
     CARD_RADIUS: float = 42.0
+    TRACK_MOTION_SKIN = "ripple"
+    _fallback_square_pm: QPixmap | None = None
 
     def __init__(self, scale: float | None = None):
         super().__init__(CANVAS_W, CANVAS_H, scale=scale)
@@ -60,6 +67,8 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         self.svg_next = QSvgRenderer(get_vinyl_asset("icon-next.svg"))
         self.soundwave = SoundWaveVisualizer()
         self._ripple_pixmap: QPixmap | None = None
+        self._ripple_square: QPixmap | None = None
+        self._init_track_motion()
 
         # Renderizadores SVG monocromáticos brancos dos provedores
         self.provider_renderers = {}
@@ -153,6 +162,28 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         p.end()
         return QPixmap.fromImage(canvas)
 
+    @staticmethod
+    def _prepare_square(img: QImage) -> QPixmap:
+        """A capa recortada no quadrado central e pré-escalada uma vez: fonte dos anéis durante a troca de faixa."""
+        w, h = img.width(), img.height()
+        side = min(w, h)
+        img = img.copy((w - side) // 2, (h - side) // 2, side, side)
+        return QPixmap.fromImage(img.scaled(SQUARE_PX, SQUARE_PX, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                            Qt.TransformationMode.SmoothTransformation))
+
+    @classmethod
+    def _fallback_square(cls) -> QPixmap:
+        """Sem capa: o fundo adaptativo padrão no lugar dela (feito uma vez)."""
+        if cls._fallback_square_pm is None:
+            pm = QPixmap(SQUARE_PX, SQUARE_PX)
+            pm.fill(QColor("#0b0b0d"))
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            render_adaptive_card_background(p, QRectF(0, 0, SQUARE_PX, SQUARE_PX), get_default_palette())
+            p.end()
+            cls._fallback_square_pm = pm
+        return cls._fallback_square_pm
+
     def _update_and_cache_cover(self, thumb_bytes: bytes) -> bool:
         if thumb_bytes and thumb_bytes != self._last_thumb_bytes:
             self._last_thumb_bytes = thumb_bytes
@@ -160,6 +191,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
             if not img.isNull():
                 self.album_pixmap = QPixmap.fromImage(img)
                 self._ripple_pixmap = self._prepare_crisp_ripple(img)
+                self._ripple_square = self._prepare_square(img)
                 self.target_palette = extract_palette_from_image(img)
                 self._note_cover_for_track()
                 return True
@@ -168,9 +200,13 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
                 self._last_thumb_bytes = b""
                 self.album_pixmap = None
                 self._ripple_pixmap = None
+                self._ripple_square = None
                 self.target_palette = get_default_palette()
                 return True
         return False
+
+    def _motion_covers(self) -> dict:
+        return {"square": self._ripple_square}
 
     def on_media_updated(
         self,
@@ -182,6 +218,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         thumb_bytes: bytes,
         provider: str = "generic",
     ):
+        pre = self._motion_snapshot()   # o que está na tela antes desta atualização (troca de faixa animada)
         changed = False
         track_changed = (title != self.title_text or artist != self.artist_text)
         if track_changed:
@@ -193,7 +230,8 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
             self.provider = provider
             changed = True
 
-        if self._update_and_cache_cover(thumb_bytes):
+        cover_changed = self._update_and_cache_cover(thumb_bytes)
+        if cover_changed:
             changed = True
 
         now = time.perf_counter()
@@ -209,15 +247,115 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
         if self._sync_playback_position(pos, dur, track_changed, now):
             changed = True
 
+        self._motion_after_update(pre, track_changed, cover_changed)
         if changed:
             self.update()
+
+    # --- Troca de faixa animada (protótipo: mockups/music-track-change.html, aba Echos) ---
+
+    def _draw_ring(self, painter: QPainter, square: QPixmap, i: int, sc: float = 1.0, rot: float = 0.0,
+                   alpha: float = 1.0, grow: float | None = None, shrink: float | None = None, isc: float = 1.0,
+                   border: bool = True):
+        """
+        Um anel (i=0 o de fora, 3 o do meio) desenhado da capa quadrada: `sc` escala o anel inteiro, `rot` (rad) gira
+        a capa dentro dele, `grow`/`shrink` revelam só um disco/anel a partir do centro/da borda e `isc` escala a capa
+        dentro do círculo.
+        """
+        diameter, shade_alpha, border_alpha, border_w = self.RIPPLE_RINGS[i]
+        r_full = diameter / 2.0
+        painter.save()
+        painter.translate(480.0, 270.0)
+        if sc != 1.0:
+            painter.scale(sc, sc)
+        path = QPainterPath()
+        if shrink is not None:
+            path.addEllipse(QPointF(0.0, 0.0), r_full, r_full)
+            hole = QPainterPath()
+            r_in = max(0.0, r_full * (1.0 - shrink))
+            hole.addEllipse(QPointF(0.0, 0.0), r_in, r_in)
+            path = path.subtracted(hole)
+        else:
+            r = max(0.01, r_full * (1.0 if grow is None else grow))
+            path.addEllipse(QPointF(0.0, 0.0), r, r)
+        painter.save()
+        painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
+        painter.setOpacity(painter.opacity() * alpha)
+        if rot:
+            painter.rotate(math.degrees(rot))
+        if isc != 1.0:
+            painter.scale(isc, isc)
+        painter.drawPixmap(QRectF(-r_full, -r_full, diameter, diameter), square, QRectF(square.rect()))
+        if shade_alpha > 0:
+            painter.fillRect(QRectF(-2 * r_full, -2 * r_full, 4 * r_full, 4 * r_full), QColor(0, 0, 0, shade_alpha))
+        painter.restore()
+        if border:
+            painter.setPen(QPen(QColor(255, 255, 255, int(border_alpha * alpha)), border_w))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(0.0, 0.0), r_full, r_full)
+        painter.restore()
+
+    def _draw_wavefront(self, painter: QPainter, radius: float, sc: float, alpha: float):
+        painter.save()
+        painter.translate(480.0, 270.0)
+        painter.scale(sc, sc)
+        painter.setPen(QPen(QColor(255, 255, 255, int(255 * alpha)), 3.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(0.0, 0.0), max(0.1, radius), max(0.1, radius))
+        painter.restore()
+
+    def _draw_motion_rings(self, painter: QPainter, card_rect: QRectF):
+        """Os anéis durante a troca: capa antiga embaixo, a nova entra pelo efeito escolhido."""
+        m = self._motion
+        p, d, effect = m.p, m.direction, m.effect
+        old = m.frm.covers.get("square") or self._fallback_square()
+        new = self._ripple_square or self._fallback_square()
+        painter.fillRect(card_rect, QColor("#0b0b0d"))
+        for i in range(4):
+            depth = 3 - i                     # 0 = anel do meio, 3 = o de fora
+            k = depth if d > 0 else i         # ordem da onda: próxima de dentro para fora, anterior de fora para dentro
+            if effect == "ripple":
+                sc = 1.0 + 0.03 * bump(span(p, 0.0, 0.5)) if i == 3 else 1.0
+                self._draw_ring(painter, old, i, sc=sc)
+                q = clamp(spring(span(p, k * 0.07, k * 0.07 + 0.68), MORPH))
+                if q > 0.001:
+                    if d > 0:
+                        self._draw_ring(painter, new, i, sc=sc, grow=q, border=False)
+                    else:
+                        self._draw_ring(painter, new, i, sc=sc, shrink=q, border=False)
+                    if q < 0.995:
+                        r_full = self.RIPPLE_RINGS[i][0] / 2.0
+                        self._draw_wavefront(painter, r_full * q if d > 0 else r_full * (1.0 - q), sc, 0.6 * (1.0 - q))
+            elif effect == "shock":
+                q = span(p, k * 0.07, 1.0)
+                amp = 0.05 + 0.025 * depth
+                sc = 1.0 - amp * math.exp(-4.2 * q) * math.sin(2.0 * math.pi * 1.3 * q)
+                self._draw_ring(painter, old, i, sc=sc)
+                self._draw_ring(painter, new, i, sc=sc, alpha=smooth(span(q, 0.06, 0.2)), border=False)
+            elif effect == "depth":
+                q = span(p, k * 0.08, k * 0.08 + 0.62)
+                self._draw_ring(painter, old, i)
+                self._draw_ring(painter, new, i, alpha=ease_out(span(q, 0.0, 0.5)),
+                                isc=1.16 - 0.16 * spring(q, SETTLE), border=False)
+            else:   # "spin": o do meio dá uma volta e troca no meio do giro; os de fora balançam ao contrário
+                if i == 3:
+                    rot = d * 2.0 * math.pi * ease_in_out(p)
+                    sw = smooth(span(p, 0.34, 0.52))
+                    sc = 1.0 - 0.05 * bump(p)
+                else:
+                    rot = -d * 0.12 * depth * bump(span(p, k * 0.05, 1.0))
+                    sw = smooth(span(p, 0.34 + k * 0.04, 0.52 + k * 0.04))
+                    sc = 1.0
+                self._draw_ring(painter, old, i, sc=sc, rot=rot)
+                self._draw_ring(painter, new, i, sc=sc, rot=rot, alpha=sw, border=False)
 
     def _draw_ripple_background(self, painter: QPainter, card_rect: QRectF):
         """
         Renderiza os 4 círculos concêntricos (Ripple) e aplica o gradiente escuro inferior
         fiel ao wide_ripple.html: linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.35) 38%, transparent 60%).
         """
-        if self._ripple_pixmap is not None and not self._ripple_pixmap.isNull():
+        if self._motion.busy:
+            self._draw_motion_rings(painter, card_rect)
+        elif self._ripple_pixmap is not None and not self._ripple_pixmap.isNull():
             painter.drawPixmap(
                 card_rect,
                 self._ripple_pixmap,
@@ -284,29 +422,35 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
             self.soundwave.render(painter, QRectF(logo_x, logo_y, logo_s, logo_s), QColor(255, 255, 255, 245))
 
         # --- 3. Título da Música e Artista (Meio-Esquerda, fiel ao wide_ripple.html) ---
-        title_y = 336.0
-        font_title = get_ui_font(36, QFont.Weight.Bold)
-        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 99.0)
-        painter.setFont(font_title)
-        painter.setPen(QColor("#FFFFFF"))
-        fm_title = QFontMetrics(font_title)
-        elided_title = fm_title.elidedText(self.shown_title(), Qt.TextElideMode.ElideRight, 690)
-        painter.drawText(QRectF(56, title_y, 690, 46), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
-
-        artist_y = 384.0
-        font_artist = get_ui_font(20, QFont.Weight.DemiBold)
-        font_artist.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 106.0)
-        painter.setFont(font_artist)
-        painter.setPen(QColor(255, 255, 255, 200))
-        fm_artist = QFontMetrics(font_artist)
-        elided_artist = fm_artist.elidedText(self.shown_artist().upper(), Qt.TextElideMode.ElideRight, 690)
-        painter.drawText(QRectF(56, artist_y, 690, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_artist)
+        self._paint_track_text(painter)
 
         # --- 4. Botão Circular Flutuante Play/Pause à Direita ---
         self._draw_floating_play_button(painter, QPointF(842.0, 256.0))
 
         # --- 5. Barra de Controles Inferior (y_center = 480) ---
         self._draw_bottom_controls(painter, 480.0)
+
+    def _draw_title_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_title = get_ui_font(36, QFont.Weight.Bold)
+        font_title.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 99.0)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_title)
+        painter.setPen(QColor("#FFFFFF"))
+        elided = QFontMetrics(font_title).elidedText(text, Qt.TextElideMode.ElideRight, 690)
+        painter.drawText(QRectF(56, 336.0 + dy, 690, 46), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
+
+    def _draw_artist_line(self, painter: QPainter, text: str, alpha: float, dy: float):
+        font_artist = get_ui_font(20, QFont.Weight.DemiBold)
+        font_artist.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 106.0)
+        painter.save()
+        painter.setOpacity(alpha)
+        painter.setFont(font_artist)
+        painter.setPen(QColor(255, 255, 255, 200))
+        elided = QFontMetrics(font_artist).elidedText(text.upper(), Qt.TextElideMode.ElideRight, 690)
+        painter.drawText(QRectF(56, 384.0 + dy, 690, 30), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+        painter.restore()
 
     def _draw_floating_play_button(self, painter: QPainter, center: QPointF):
         is_hover = (self.hovered_btn == "main")
@@ -352,7 +496,7 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
 
         bar_x, bar_w, bar_h = 136.0, 478.0, 3.2
         bar_y = cy - bar_h / 2.0
-        progress = max(0.0, min(1.0, self.current_time / self.duration)) if self.duration > 0 else 0.0
+        progress = self._shown_progress(self._live_progress())
 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(255, 255, 255, 76))
@@ -476,10 +620,12 @@ class RippleSkin(CrispIconsMixin, BaseMusicSkin):
                 self._ignore_external_state_until = time.perf_counter() + 1.0
                 self.command_requested.emit("play" if self.is_playing else "pause", None)
             elif self.pressed_btn == "prev" and hit == "prev":
+                self._note_direction(-1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("prev", None)
             elif self.pressed_btn == "next" and hit == "next":
+                self._note_direction(1)
                 self.current_time = 0.0
                 self._last_seek_sent = time.perf_counter()
                 self.command_requested.emit("next", None)

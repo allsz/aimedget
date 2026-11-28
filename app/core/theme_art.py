@@ -126,10 +126,46 @@ class Sticker:
     opacity: float = 1.0
     layer: str = "above"
     state: str = "always"    # "on"/"off": só aparece com a tecla ligada/desligada (só no Caps/Num Lock)
+    opaque_rect: QRectF = field(default_factory=lambda: QRectF(0.0, 0.0, 1.0, 1.0))
 
     @property
     def above(self) -> bool:
         return self.layer == "above"
+
+
+def opaque_bounds(pm: QPixmap, alpha_threshold: int = 16) -> QRectF:
+    """
+    Caixa normalizada (0..1) dos pixels realmente opacos (alpha > alpha_threshold) em `pm`,
+    ignorando margens transparentes do PNG/SVG. Executado uma única vez ao carregar a figurinha.
+    """
+    if pm.isNull() or pm.width() <= 0 or pm.height() <= 0:
+        return QRectF(0.0, 0.0, 1.0, 1.0)
+    img = pm.toImage().convertToFormat(QImage.Format.Format_Alpha8)
+    w, h = img.width(), img.height()
+    bpl = img.bytesPerLine()
+    raw = bytes(img.constBits())
+    min_x, min_y, max_x, max_y = w, h, -1, -1
+    for y in range(h):
+        row = raw[y * bpl: y * bpl + w]
+        # Atalho rápido: se a linha inteira está abaixo do limite, pula sem iterar x
+        if max(row) <= alpha_threshold:
+            continue
+        if y < min_y:
+            min_y = y
+        max_y = y
+        for x in range(w):
+            if row[x] > alpha_threshold:
+                if x < min_x:
+                    min_x = x
+                break
+        for x in range(w - 1, -1, -1):
+            if row[x] > alpha_threshold:
+                if x > max_x:
+                    max_x = x
+                break
+    if max_x < min_x or max_y < min_y:
+        return QRectF(0.0, 0.0, 1.0, 1.0)
+    return QRectF(min_x / w, min_y / h, (max_x - min_x + 1) / w, (max_y - min_y + 1) / h)
 
 
 @dataclass(frozen=True, eq=False)
@@ -470,9 +506,21 @@ def _parse_sticker(item, base_dir: str, factor: float, allow_state: bool = False
     h = max(MIN_STICKER_SIDE, min(MAX_STICKER_SIDE, h))
 
     pixmap = _rasterize_svg(renderer, w, h, factor) if is_svg else presample(pm, w, h, factor)
+    raw_opaque = opaque_bounds(pixmap)
     shadow = _parse_shadow_spec(item.get("shadow"), *DEFAULT_STICKER_SHADOW, max_blur=20.0)
     if shadow is not None:
+        orig_w, orig_h = w, h
         pixmap, w, h = _bake_sticker_shadow(pixmap, w, h, *shadow)
+        pad_x = (w - orig_w) * 0.5
+        pad_y = (h - orig_h) * 0.5
+        opaque_rect = QRectF(
+            (pad_x + raw_opaque.x() * orig_w) / w,
+            (pad_y + raw_opaque.y() * orig_h) / h,
+            (raw_opaque.width() * orig_w) / w,
+            (raw_opaque.height() * orig_h) / h,
+        )
+    else:
+        opaque_rect = raw_opaque
 
     return Sticker(
         pixmap=pixmap, anchor=anchor,
@@ -482,6 +530,7 @@ def _parse_sticker(item, base_dir: str, factor: float, allow_state: bool = False
         rotation=_num(item, "rotation", 0.0, -360.0, 360.0),
         opacity=_num(item, "opacity", 1.0, 0.0, 1.0),
         layer=layer, state=state,
+        opaque_rect=opaque_rect,
     )
 
 
@@ -557,9 +606,19 @@ def paint_background(p: QPainter, rect: QRectF, bg: Background, radius: float):
     p.restore()
 
 
-def _paint_layer(p: QPainter, rect: QRectF, stickers, layer: str, on_amount: float | None = None):
-    for st in stickers:
+def _paint_layer(p: QPainter, rect: QRectF, stickers, layer: str, on_amount: float | None = None, fx=None):
+    """`fx(i, sticker) -> (escala, opacidade, puxão)` move cada figurinha (i = posição na tupla `stickers`): o puxão é
+    a fração do caminho até o centro do card (0 = no lugar). Usado pela troca de visual do mixer (guardar/sair) e pelo
+    desdobrar de figurinhas em `theme_crossfade`."""
+    if fx is None:
+        dev = p.device()
+        if dev is not None:
+            fx = getattr(dev, "_sticker_transition_fx", None)
+    for i, st in enumerate(stickers):
         if st.layer != layer:
+            continue
+        scale, fade, pull = fx(i, st) if fx is not None else (1.0, 1.0, 0.0)
+        if scale <= 0.003 or fade <= 0.003:
             continue
         # Figurinha de estado: aparece com a tecla ligada (on) ou desligada (off), com transição suave
         k = 1.0
@@ -570,9 +629,15 @@ def _paint_layer(p: QPainter, rect: QRectF, stickers, layer: str, on_amount: flo
         ax, ay = ANCHORS[st.anchor]
         cx = rect.x() + rect.width() * ax + st.x
         cy = rect.y() + rect.height() * ay + st.y
+        if pull:
+            c = rect.center()
+            cx += (c.x() - cx) * pull
+            cy += (c.y() - cy) * pull
         p.save()
-        p.setOpacity(p.opacity() * st.opacity * k)
+        p.setOpacity(p.opacity() * st.opacity * k * fade)
         p.translate(cx, cy)
+        if scale != 1.0:
+            p.scale(scale, scale)
         if st.rotation:
             p.rotate(st.rotation)
         p.drawPixmap(
@@ -583,17 +648,17 @@ def _paint_layer(p: QPainter, rect: QRectF, stickers, layer: str, on_amount: flo
         p.restore()
 
 
-def paint_stickers(p: QPainter, rect: QRectF, stickers, above: bool, on_amount: float | None = None):
+def paint_stickers(p: QPainter, rect: QRectF, stickers, above: bool, on_amount: float | None = None, fx=None):
     """
     Camadas "above" (por cima do conteúdo; above=True) ou "below" (entre o fundo e o conteúdo).
     `on_amount` (0 = desligado, 1 = ligado) só importa para figurinhas com `state`; sem ele, valem todas.
     """
-    _paint_layer(p, rect, stickers, "above" if above else "below", on_amount)
+    _paint_layer(p, rect, stickers, "above" if above else "below", on_amount, fx)
 
 
-def paint_stickers_behind(p: QPainter, rect: QRectF, stickers, on_amount: float | None = None):
+def paint_stickers_behind(p: QPainter, rect: QRectF, stickers, on_amount: float | None = None, fx=None):
     """Camada "behind": figurinhas ATRÁS do card (desenhar antes do fundo do card)."""
-    _paint_layer(p, rect, stickers, "behind", on_amount)
+    _paint_layer(p, rect, stickers, "behind", on_amount, fx)
 
 
 def _shadow_base(sh: CardShadow, radius: float) -> tuple[QPixmap, float, float]:
@@ -668,3 +733,148 @@ def overflow_margins(stickers, shadow: CardShadow | None, card_w: float, card_h:
         top = max(top, reach - shadow.dy)
         bottom = max(bottom, reach + shadow.dy)
     return left, top, right, bottom
+
+
+def visual_bounds(
+    stickers,
+    card_rect: QRectF,
+    logical_w: float,
+    logical_h: float,
+    y_band: tuple[float, float] | None = None,
+) -> QRectF:
+    """
+    Retângulo visual exato (em coordenadas da janela) cobrindo `card_rect` e os pixels opacos das figurinhas.
+    Se `y_band=(top, bottom)` for informado, expande apenas `left` e `right` para figurinhas cujo corpo opaco
+    cruza essa faixa vertical (usado pela barra de volume para desviar de figurinhas laterais sem se afastar
+    por causa de figurinhas apenas nos cantos superior/inferior).
+    """
+    left, top, right, bottom = card_rect.left(), card_rect.top(), card_rect.right(), card_rect.bottom()
+    if not stickers or logical_w <= 0.0 or logical_h <= 0.0:
+        return QRectF(card_rect)
+
+    sx = card_rect.width() / logical_w
+    sy = card_rect.height() / logical_h
+
+    for st in stickers:
+        if st.opacity <= 0.01:
+            continue
+        ax, ay = ANCHORS[st.anchor]
+        cx = card_rect.left() + (logical_w * ax + st.x) * sx
+        cy = card_rect.top() + (logical_h * ay + st.y) * sy
+        w = st.width * sx
+        h = st.height * sy
+        oq = st.opaque_rect
+        # Os 4 cantos da caixa opaca no referencial local centrado em (0, 0) da figurinha
+        x0 = (oq.left() - 0.5) * w
+        x1 = (oq.right() - 0.5) * w
+        y0 = (oq.top() - 0.5) * h
+        y1 = (oq.bottom() - 0.5) * h
+        a = math.radians(st.rotation)
+        ca, sa = math.cos(a), math.sin(a)
+        xs, ys = [], []
+        for lx, ly in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+            xs.append(cx + lx * ca - ly * sa)
+            ys.append(cy + lx * sa + ly * ca)
+        st_l, st_r, st_t, st_b = min(xs), max(xs), min(ys), max(ys)
+
+        if y_band is not None:
+            if st_b < y_band[0] or st_t > y_band[1]:
+                continue
+            left = min(left, st_l)
+            right = max(right, st_r)
+        else:
+            left = min(left, st_l)
+            top = min(top, st_t)
+            right = max(right, st_r)
+            bottom = max(bottom, st_b)
+
+    return QRectF(left, top, max(0.0, right - left), max(0.0, bottom - top))
+
+
+def bake_silhouette_glow(
+    width: int,
+    height: int,
+    card_shape: QPainterPath,
+    stickers,
+    card_rect: QRectF,
+    logical_w: float,
+    logical_h: float,
+    extent: float,
+) -> QImage:
+    """
+    Gera um halo branco externo (canal alpha pronto para tingimento) em volta da silhueta combinada
+    do cartão + pixels opacos de todas as figurinhas. A área interna (cartão + figurinhas) é recortada
+    com DestinationOut, então o brilho contorna cada figurinha sem jamais atravessá-las.
+    """
+    w, h = max(1, int(width)), max(1, int(height))
+    raw_mask = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    raw_mask.fill(0)
+
+    p = QPainter(raw_mask)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(255, 255, 255, 255))
+    p.drawPath(card_shape)
+    if stickers and logical_w > 0.0 and logical_h > 0.0:
+        p.save()
+        p.translate(card_rect.topLeft())
+        p.scale(card_rect.width() / logical_w, card_rect.height() / logical_h)
+        logical_rect = QRectF(0.0, 0.0, logical_w, logical_h)
+        for layer in ("behind", "below", "above"):
+            _paint_layer(p, logical_rect, stickers, layer)
+        p.restore()
+    p.end()
+
+    # Limiarização do alpha (> 100 -> 255, <= 100 -> 0) elimina sombras suaves assadas nas figurinhas
+    # e cria uma silhueta sólida limpa em ARGB32_Premultiplied para o desfoque do brilho.
+    alpha_img = raw_mask.convertToFormat(QImage.Format.Format_Alpha8)
+    bpl = alpha_img.bytesPerLine()
+    raw_bytes = bytes(alpha_img.constBits())
+    solid_bpl = w * 4
+    out_buf = bytearray(h * solid_bpl)
+    for y in range(h):
+        row = raw_bytes[y * bpl: y * bpl + w]
+        if max(row) <= 100:
+            continue
+        base_off = y * solid_bpl
+        for x, v in enumerate(row):
+            if v > 100:
+                o = base_off + x * 4
+                out_buf[o: o + 4] = b"\xff\xff\xff\xff"
+    solid = QImage(bytes(out_buf), w, h, solid_bpl, QImage.Format.Format_ARGB32_Premultiplied).copy()
+
+    # Desfoque gaussiano real em C++ (QGraphicsBlurEffect): gera halo largo suave + contorno próximo brilhante
+    def _gblur(src: QImage, radius: float) -> QImage:
+        from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsPixmapItem, QGraphicsScene
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(QPixmap.fromImage(src))
+        eff = QGraphicsBlurEffect()
+        eff.setBlurRadius(max(1.0, float(radius)))
+        eff.setBlurHints(QGraphicsBlurEffect.BlurHint.QualityHint)
+        item.setGraphicsEffect(eff)
+        scene.addItem(item)
+        out = QImage(src.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        out.fill(0)
+        gp = QPainter(out)
+        scene.render(gp, QRectF(out.rect()), QRectF(src.rect()))
+        gp.end()
+        return out
+
+    outer = _gblur(solid, max(2.0, extent * 1.15))
+    mid = _gblur(solid, max(1.5, extent * 0.55))
+    rim = _gblur(solid, max(1.0, extent * 0.22))
+
+    halo = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+    halo.fill(0)
+    hp = QPainter(halo)
+    hp.setOpacity(0.65)
+    hp.drawImage(0, 0, outer)
+    hp.setOpacity(0.80)
+    hp.drawImage(0, 0, mid)
+    hp.setOpacity(1.0)
+    hp.drawImage(0, 0, rim)
+    hp.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
+    hp.drawImage(0, 0, solid)
+    hp.end()
+    return halo

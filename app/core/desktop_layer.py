@@ -7,8 +7,8 @@ Como: a janela é posicionada (ordem Z) logo acima da janela que hospeda os íco
 do Windows de mudar essa ordem (clique, ativação, `raise_()`) é corrigida em WM_WINDOWPOSCHANGING. Não basta
 HWND_BOTTOM: ele pode pôr a janela atrás do próprio desktop, e ela some.
 
-Só Win32 (ctypes), sem Qt: quem desenha chama `on_window_pos_changing()` no `nativeEvent` e `send_to_desktop_layer()`
-ao mostrar.
+Só Win32 (ctypes), sem Qt: quem desenha chama `on_window_pos_changing()` e `on_window_pos_changed()` no `nativeEvent`
+e `send_to_desktop_layer()` ao mostrar.
 """
 
 import ctypes
@@ -129,11 +129,105 @@ def on_window_pos_changing(lparam: int, own_hwnd: int):
     pos = WINDOWPOS.from_address(lparam)
     if pos.flags & SWP_NOZORDER:
         return
-    if not _is_raise(pos.hwndInsertAfter) and owner_of(own_hwnd) == desktop_host():
-        # Uma janela específica como vizinha: é o Windows levando o cartão junto com o desktop (dono). Reescrever
-        # aqui, com o desktop ainda no meio do movimento, deixava um cartão atrás dele (piscada).
+    # Ativação (clique no próprio widget): sem SWP_NOACTIVATE. O Windows pede "logo abaixo de X" com um X que se
+    # move no mesmo lote (ex.: a "Default IME" do nosso app, que sobe junto com a janela ativada), então olhar onde
+    # X está agora engana. Medido: levado junto com o desktop (clique nele, Win+D), todo membro vem COM
+    # SWP_NOACTIVATE; só o clicado vem sem. Ativação sempre é reescrita, e o resto do grupo, que vem "logo abaixo do
+    # clicado", fica no desktop com ele.
+    activating = not (pos.flags & SWP_NOACTIVATE)
+    if (not activating and not _is_raise(pos.hwndInsertAfter) and owner_of(own_hwnd) == desktop_host()
+            and not _lands_over_an_app(pos.hwndInsertAfter, own_hwnd)):
+        # Uma janela específica como vizinha, perto do desktop: é o Windows levando o cartão junto com o desktop
+        # (dono). Reescrever aqui, com o desktop ainda no meio do movimento, deixava um cartão atrás dele (piscada).
+        zlog("CHANGING", own_hwnd, pos, "owned, pass")
         return
+    zlog("CHANGING", own_hwnd, pos, "rewrite")
     pos.hwndInsertAfter = insert_after_for(own_hwnd)
+
+
+# --- Depois da mudança: o grupo do dono subiu por cima dos apps? ---
+#
+# Clicar num widget fixado (ou no desktop) ativa a janela, e o Windows sobe o GRUPO do dono inteiro: todos os widgets
+# fixados, porque todos têm o desktop como dono. O clicado chega com HWND_TOP (o gancho acima reescreve), mas os
+# outros chegam com uma vizinha específica, igual ao caso "levado junto com o desktop", e passam. Em
+# WM_WINDOWPOSCHANGING não dá para distinguir os dois: a mensagem vem antes de o Windows aplicar o lote. Em
+# WM_WINDOWPOSCHANGED o lote já foi aplicado e a pilha está coerente: se uma janela de verdade ficou entre o widget e
+# o desktop, ele escapou, e volta na mesma hora (antes, só o guarda o devolvia, 1 a 2 quadros depois).
+
+WM_WINDOWPOSCHANGED = 0x0047
+_correcting: set = set()
+escapes_fixed = 0   # quantas vezes o WM_WINDOWPOSCHANGED teve de corrigir (testes e diagnóstico): o ideal é 0
+
+
+def on_window_pos_changed(lparam: int, own_hwnd: int) -> bool:
+    """Chame no WM_WINDOWPOSCHANGED do widget fixado. True se ele tinha escapado e foi devolvido ao desktop."""
+    if not IS_WINDOWS or not lparam or not own_hwnd or own_hwnd in _correcting:
+        return False
+    pos = WINDOWPOS.from_address(lparam)
+    if pos.flags & SWP_NOZORDER:   # arrastar, animar, setGeometry: sem mudança de ordem, sem andar na pilha
+        return False
+    escaped = needs_replace(own_hwnd)
+    zlog("CHANGED", own_hwnd, pos, "escaped -> back to desktop" if escaped else "ok")
+    if not escaped:
+        return False
+    global escapes_fixed
+    escapes_fixed += 1
+    _correcting.add(own_hwnd)
+    try:
+        send_to_desktop_layer(own_hwnd)
+    finally:
+        _correcting.discard(own_hwnd)
+    return True
+
+
+# --- Diagnóstico da ordem Z (desligado por padrão; AIMEDGET_ZORDER_DEBUG=1) ---
+
+ZORDER_DEBUG_ENV = "AIMEDGET_ZORDER_DEBUG"
+_zlog_file = [None]
+
+
+def zlog(kind: str, own_hwnd: int, pos, note: str = ""):
+    """Grava em `<crash_reports>/zorder_debug.log` as mudanças de ordem Z dos widgets fixados. Só observa."""
+    if os.environ.get(ZORDER_DEBUG_ENV) != "1":
+        return
+    try:
+        import time
+        if _zlog_file[0] is None:
+            from app.core.crash_reporter import get_crash_reports_dir
+            _zlog_file[0] = open(os.path.join(get_crash_reports_dir(), "zorder_debug.log"), "a",
+                                 encoding="utf-8", buffering=1)
+        after = ctypes.c_ssize_t(pos.hwndInsertAfter or 0).value
+        host = desktop_host()
+        _zlog_file[0].write(
+            f"{time.perf_counter() * 1000:12.1f} {kind:<8} hwnd=0x{own_hwnd:X} after=0x{after & 0xFFFFFFFF:X} "
+            f"flags=0x{pos.flags:X} owner={'desktop' if owner_of(own_hwnd) == host else 'other'} "
+            f"fg=0x{(_user32.GetForegroundWindow() or 0):X} {note}\n")
+    except OSError:
+        pass
+
+
+def _lands_over_an_app(insert_after, own_hwnd: int) -> bool:
+    """
+    "Logo abaixo de `insert_after`" deixaria uma janela de verdade entre o widget e o desktop? É o clique num widget:
+    o Windows não manda HWND_TOP, manda "logo abaixo da última janela sempre-no-topo" (medido: uma janela oculta de
+    outro app), e os outros membros do grupo vêm logo abaixo do clicado. Levado junto com o desktop, a vizinha é uma
+    janela colada nele (ex.: a "Default IME" do Explorer). Sem chegar ao desktop descendo a pilha (ele está no meio do
+    movimento), deixa passar, como antes; o WM_WINDOWPOSCHANGED ainda confere depois.
+    """
+    host = desktop_host()
+    w = ctypes.c_ssize_t(insert_after or 0).value
+    if not host or not w or w == host:
+        return False
+    crossed_app = False
+    for _ in range(_MAX_WALK):
+        w = _user32.GetWindow(w, GW_HWNDNEXT) or 0
+        if not w:
+            return False   # a vizinha nem está acima do desktop
+        if w == host:
+            return crossed_app
+        if not crossed_app and w != own_hwnd and _covers(w):
+            crossed_app = True
+    return False
 
 
 def _is_raise(insert_after) -> bool:

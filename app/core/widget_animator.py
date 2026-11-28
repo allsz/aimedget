@@ -361,6 +361,51 @@ class SlideFadeAnimator(QObject):
 SKIN_SWAP_MS = 150
 
 
+def _swap_with_effect(old_skin: QWidget, new_skin: QWidget) -> bool:
+    """
+    Troca com o efeito escolhido no Hub (app/core/skin_switch.py): fotografa as duas skins, mostra a nova invisível,
+    fecha a antiga e deixa uma janela por cima animar as fotos; no fim a nova aparece de verdade. False = usar o
+    dissolver de antes (efeito "fade", ou widget fixado na área de trabalho: a janela por cima ficaria acima dos apps).
+    """
+    from app.core import skin_switch
+
+    effect = skin_switch.current_effect()
+    pinned = getattr(old_skin, "desktop_mode_target", None)
+    if effect == "fade" or (callable(pinned) and pinned()):
+        return False
+    running = getattr(old_skin, "_skin_switch_overlay", None)
+    if running is not None:
+        try:
+            running.finish()        # troca seguida de outra: a anterior assenta antes de fotografar
+        except RuntimeError:
+            pass
+    try:
+        old_layer = skin_switch.window_layer(old_skin)
+        new_layer = skin_switch.window_layer(new_skin)
+        card_tl = old_skin.mapToGlobal(skin_switch.window_card_rect(old_skin).topLeft().toPoint())
+    except Exception:
+        return False
+
+    new_skin.setWindowOpacity(0.0)
+    new_skin.show()                 # antes de fechar a antiga: o foco não pula para o Hub
+    new_skin.raise_()
+    new_skin.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+    old_skin.close()
+    old_skin.deleteLater()
+
+    def _done():
+        try:
+            new_skin.setWindowOpacity(1.0)
+            new_skin._skin_switch_overlay = None
+        except RuntimeError:
+            pass
+
+    overlay = skin_switch.SkinSwitchOverlay(effect, old_layer, new_layer, card_tl, _done)
+    new_skin._skin_switch_overlay = overlay
+    overlay.start()
+    return True
+
+
 def swap_skin_windows(old_skin: QWidget | None, new_skin: QWidget, was_visible: bool, duration_ms: int = SKIN_SWAP_MS):
     """
     Troca uma janela de skin antiga por uma nova sem piscar e sem ativar o Hub no fundo.
@@ -385,6 +430,9 @@ def swap_skin_windows(old_skin: QWidget | None, new_skin: QWidget, was_visible: 
         if old_skin is not None:
             old_skin.close()
             old_skin.deleteLater()
+        return
+
+    if _swap_with_effect(old_skin, new_skin):
         return
 
     old_skin.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)

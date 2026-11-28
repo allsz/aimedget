@@ -671,6 +671,7 @@ def test_net_window_lives_in_the_group_layer(env):
     env.mgr.drag_end(b)
 
 
+@pytest.mark.native
 def test_group_windows_move_in_one_batch(env, monkeypatch):
     from app.core import desktop_layer
     if not desktop_layer.IS_WINDOWS:
@@ -772,6 +773,7 @@ def test_group_with_a_member_that_cannot_pin_stays_on_top(env):
     assert not a.is_desktop_mode()            # uma camada só: o grupo inteiro fica por cima
 
 
+@pytest.mark.native
 def test_picking_a_quadrant_in_the_hub_takes_the_widget_out_of_its_group(env, monkeypatch):
     """Bateria ancorada a Clima+Desempenho, posição escolhida no Hub: ela vai sozinha e SAI do grupo. Arrastá-la
     depois não leva os outros; os outros continuam juntos, onde estavam."""
@@ -825,6 +827,7 @@ def _row_of_three(env, mid="battery"):
     return a, b, c
 
 
+@pytest.mark.native
 def test_leaving_from_the_middle_closes_the_gap_without_animations(env):
     """Clima | Bateria | Armazenamento, a Bateria sai: os dois que ficam se juntam (sem vão preso no grupo) e a
     Bateria consegue encaixar de volta."""
@@ -864,6 +867,7 @@ def test_leaving_from_the_middle_slides_the_rest_together_then_ends_clean(env):
     assert len(env.store["groups"]) == 1
 
 
+@pytest.mark.native
 def test_leaving_from_the_end_moves_nobody(env):
     a, c, b = _row_of_three(env, mid="performance")                 # Clima | Desempenho | Armazenamento
     keep_a, keep_c = _rect(a), _rect(c)

@@ -249,7 +249,8 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(calls, [])                       # sem 2º fade...
         skin.reload_skin_theme.assert_called_once()       # ...mas o tema continua sendo relido, como antes
 
-    def test_the_mixer_crossfades_only_when_it_is_already_on_screen(self):
+    def test_the_mixer_animates_the_switch_only_when_it_is_already_on_screen(self):
+        # O mixer não usa mais a foto (theme_crossfade): mola de morph / encolhe e salta (ver test_mixer_skin_transition.py)
         from app.widgets.volume_mixer import mixer_flyout as mf
         from app.widgets.volume_mixer.theme import DEFAULT_THEME
         fly = mf.VolumeMixerFlyout()
@@ -257,13 +258,15 @@ class WiringTests(unittest.TestCase):
         self.addCleanup(fly.hide)
         shaped = dataclasses.replace(DEFAULT_THEME, tilt=-6.0)
         fly._apply_theme(shaped)                                       # oculto: aplica direto
-        self.assertIsNone(getattr(fly, "_theme_crossfade", None))
+        self.assertIsNone(fly._skin_tx)
+        fly._slide_t = fly._slide_target_t = 1.0
         fly.show()
         app.processEvents()
         fly._apply_theme(DEFAULT_THEME)                                # na tela: com a transição
-        self.assertIsNotNone(getattr(fly, "_theme_crossfade", None))
+        self.assertIsNotNone(fly._skin_tx)
         self.assertIs(fly.theme, DEFAULT_THEME)
-        fly._theme_crossfade.stop()
+        fly.hide()                                                     # termina a troca na hora
+        self.assertIsNone(fly._skin_tx)
 
     def test_the_hub_light_dark_change_uses_it_without_shrinking_the_window(self):
         from app.core.config_manager import config_manager

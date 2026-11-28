@@ -208,6 +208,10 @@ class GlowLayer(QWidget):
         self._breathe = 1.0
         self._color = QColor(110, 193, 255)
         self.has_room = False
+        self._sil_key = None
+        self._sil_halo = None
+        self._sil_tinted_key = None
+        self._sil_tinted = None
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setGeometry(0, 0, host.width(), host.height())
@@ -246,19 +250,77 @@ class GlowLayer(QWidget):
         room = min(box.left(), box.top(), self.width() - box.right(), self.height() - box.bottom())
         return max(0.0, min(GLOW_EXTENT, room - GLOW_EDGE_GAP))
 
+    def _sticker_info(self):
+        host = getattr(self, "_host", None)
+        if host is None or not shiboken6.isValid(host):
+            return None
+        fn = getattr(host, "anchor_sticker_info", None)
+        if fn is None:
+            return None
+        info = fn()
+        if not info or not info[0]:
+            return None
+        return info
+
+    def _host_card_rect(self) -> QRectF:
+        host = self._host
+        fn = getattr(host, "card_rect", None) or getattr(host, "get_card_rect")
+        return QRectF(fn())
+
     def _band(self) -> QRegion:
         """Só a faixa em volta do cartão precisa ser redesenhada: o halo nunca pinta dentro do contorno."""
+        if self._sticker_info() is not None:
+            return QRegion(self.rect())
         inner = QRegion(self.shape().toFillPolygon().toPolygon())
         # Encolhe 2 px (interseção com cópias deslocadas) para a borda suavizada também ser redesenhada.
         for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
             inner = inner.intersected(inner.translated(dx, dy))
         return QRegion(self.rect()).subtracted(inner)
 
+    def _paint_silhouette_glow(self, shape: QPainterPath, info) -> bool:
+        from PySide6.QtGui import QPixmap
+        from app.core.theme_art import _silhouette, bake_silhouette_glow, visual_bounds
+
+        stickers, lw, lh = info
+        card_rect = self._host_card_rect()
+        box = visual_bounds(stickers, card_rect, lw, lh)
+        room = min(box.left(), box.top(), self.width() - box.right(), self.height() - box.bottom())
+        extent = max(0.0, min(GLOW_EXTENT, room - GLOW_EDGE_GAP))
+        if extent <= 0.5:
+            return False
+
+        key = (
+            self.width(), self.height(), id(stickers),
+            round(card_rect.x(), 1), round(card_rect.y(), 1),
+            round(card_rect.width(), 1), round(card_rect.height(), 1),
+            round(extent, 1),
+        )
+        if key != self._sil_key or self._sil_halo is None:
+            self._sil_halo = bake_silhouette_glow(
+                self.width(), self.height(), shape, stickers, card_rect, lw, lh, extent,
+            )
+            self._sil_key = key
+            self._sil_tinted_key = None
+
+        tkey = (key, self._color.rgba())
+        if tkey != self._sil_tinted_key or self._sil_tinted is None:
+            self._sil_tinted = QPixmap.fromImage(_silhouette(self._sil_halo, self._color))
+            self._sil_tinted_key = tkey
+
+        p = QPainter(self)
+        p.setOpacity(max(0.0, min(1.0, self._level * (0.85 + 0.15 * self._breathe))))
+        p.drawPixmap(0, 0, self._sil_tinted)
+        p.end()
+        return True
+
     def paintEvent(self, event):
         if self._level <= 0.0:
             return
         shape = self.shape()
         if shape.isEmpty():
+            return
+        info = self._sticker_info()
+        if info is not None and self._paint_silhouette_glow(shape, info):
             return
         extent = self.extent(shape)
         if extent <= 0.5:

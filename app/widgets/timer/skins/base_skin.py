@@ -209,6 +209,13 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         card = self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD   # px lógicos do cartão no tamanho padrão
         return art_margin_px(self.skin_theme.stickers, card, card, k=scale, free=self.ART_FREE_PAD)
 
+    def anchor_sticker_info(self):
+        """Figurinhas do tema e lado lógico do cartão (para o brilho de ancoragem contornar a silhueta)."""
+        if self.skin_theme.stickers:
+            card = float(self.DEFAULT_SIZE - 2 * self.ART_FREE_PAD)
+            return (self.skin_theme.stickers, card, card)
+        return None
+
     ANCHOR_GLOW_ROOM = 16      # px de janela em volta do cartão enquanto o brilho de "ancorado" está aceso
     _anchor_room = False
 
@@ -216,8 +223,12 @@ class BaseTimerSkin(DesktopPinMixin, AnimatedSkinMixin, QWidget):
         """Margem extra da janela: a do tema e, com o brilho de ancorado aceso, o que falta da folga para ele."""
         # A folga do brilho é fixa, como no widget de música: mudar o tamanho da janela translúcida ao ancorar
         # mostrava um quadro com o quadrado fora do lugar.
+        wanted = self._wanted_art_margin(side)
+        held = getattr(self, "_crossfade_min_margin", 0)
+        if wanted > 0:
+            return max(wanted + self.ANCHOR_GLOW_ROOM, held)
         room = self.ANCHOR_GLOW_ROOM - self.ART_FREE_PAD + self._shape_overhang(side)
-        return max(self._wanted_art_margin(side), int(round(room)))
+        return max(wanted, int(round(room)), held)
 
     def _shape_overhang(self, side: int) -> int:
         """Quanto o contorno (`card_path_for`, skins de pacote) passa do cartão num quadrado de `side` px. Calculado
