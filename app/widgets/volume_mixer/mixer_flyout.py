@@ -298,7 +298,7 @@ class VolumeMixerFlyout(QWidget):
         self._start_anim_timer()
         self.update()
 
-    def _apply_window_canvas_size(self):
+    def _apply_window_canvas_size(self, override_pos: tuple[int, int] | None = None):
         """
         Ajusta o tamanho da janela e a reposiciona pela âncora. A janela fica SEMPRE com espaço para a gaveta:
         expandir/recolher só muda o que é pintado dentro dela. Redimensionar uma
@@ -310,14 +310,17 @@ class VolumeMixerFlyout(QWidget):
         win_w = int(self.CARD_W + ml + mr)
         win_h = int(self._slot_height() + mt + mb + self.SLIDE_TRAVEL_PX)
         if (win_w, win_h) == (self.width(), self.height()):
-            self._place_window()
+            if override_pos is not None:
+                self.move(override_pos[0], override_pos[1])
+            else:
+                self._place_window()
             return
         # Tamanho E posição numa operação só. Antes era setFixedSize + move (duas chamadas ao Windows): entre elas a
         # janela translúcida aparecia um quadro com o bitmap antigo na posição errada (o flicker/tearing ao expandir
         # e ao fim do recolhimento). Sem travar o tamanho primeiro, o setGeometry não é limitado pelo fixo antigo.
         self.setMinimumSize(0, 0)
         self.setMaximumSize(16777215, 16777215)
-        pos = self._target_pos(win_h)
+        pos = override_pos if override_pos is not None else self._target_pos(win_h)
         if pos is None:
             self.resize(win_w, win_h)
         else:
@@ -501,21 +504,40 @@ class VolumeMixerFlyout(QWidget):
         if was_enabled:
             self.setUpdatesEnabled(False)
         try:
-            # Sem unseen_while_relayout (setWindowOpacity(0.0)): trocar de visual no lugar nunca deve piscar a janela.
+            # Sem unseen_while_relayout e sem duplo salto (final -> start): calcula `start` ANTES do setGeometry
+            # para posicionar a janela direto em `start` numa única chamada Win32, deslizando suavemente até `final`.
             animate = self.isVisible() and animations_enabled()
-            start = final = QPointF()
+            start = final = None
             if animate:
                 self._glide.stop()
                 old_card_tl = QPointF(self.pos()) + self._card_rect().topLeft()
-            relayout()
-            if animate:
-                final = self.pos()
-                start = (old_card_tl - self._card_rect().topLeft()).toPoint()
-                if start != final:
-                    self.move(start)
+            self._skin_tx = tx
+            self._apply_theme_props(theme)
+            self._update_margins()
+            ml, mt, mr, mb = self._margins
+            win_h = int(self._slot_height() + mt + mb + self.SLIDE_TRAVEL_PX)
+            target = self._target_pos(win_h)
+            if animate and target is not None:
+                # Calcula onde o card ficará dentro da nova altura `win_h` antes de redimensionar
+                card_h = self._current_card_height()
+                slide_offset = (1.0 - self._slide_t) * self.SLIDE_TRAVEL_PX
+                v = self._vertical()
+                if v == "top":
+                    new_y0 = mt + self.SLIDE_TRAVEL_PX - slide_offset
+                elif v == "middle":
+                    new_y0 = mt + self._slot_height() / 2.0 - card_h / 2.0 + slide_offset
+                else:
+                    new_y0 = float(win_h - mb - self.SLIDE_TRAVEL_PX) + slide_offset - card_h
+                new_card_offset = QPointF(ml, new_y0)
+                start_pt = (old_card_tl - new_card_offset).toPoint()
+                final = QPoint(target[0], target[1])
+                start = start_pt
+                self._apply_window_canvas_size(override_pos=(start.x(), start.y()))
+            else:
+                self._apply_window_canvas_size()
             tx.start()
             self._start_anim_timer()
-            if animate and start != final:
+            if animate and start is not None and final is not None and start != final:
                 self._glide.start(start, final, SKIN_SWITCH_MS)
         finally:
             if was_enabled:
@@ -538,7 +560,7 @@ class VolumeMixerFlyout(QWidget):
                 if self.isVisible():
                     self.repaint()
 
-    def _apply_theme_now(self, theme: MixerTheme):
+    def _apply_theme_props(self, theme: MixerTheme):
         self.theme = theme
         self.master_slider.apply_colors(
             theme.accent, theme.thumb, theme.thumb_outer, theme.thumb_border, theme.track_inactive
@@ -549,6 +571,9 @@ class VolumeMixerFlyout(QWidget):
             row.apply_theme(theme)
         self._master_drawer.apply_theme(theme)
         self._master_drawer.lead = digits_overhang(theme.digits, self.HEADER_H)   # gaveta abaixo do número em imagem
+
+    def _apply_theme_now(self, theme: MixerTheme):
+        self._apply_theme_props(theme)
         self._update_margins()
         # A janela SEMPRE acompanha as margens (mesmo com o flyout na tela, ex.: trocar de tema no Hub): o card
         # fica no mesmo ponto da tela por construção, então não há salto; sem isso o card sairia cortado.

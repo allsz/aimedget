@@ -98,12 +98,12 @@ class TransitionTests(unittest.TestCase):
         self.assertEqual(tx.t(), 0.0)
         self.assertFalse(tx.finished())
 
-    def test_rows_never_overlap_with_art(self):
+    def test_content_never_blanks_out_during_art_transition(self):
         tx, clock = _tx(DEFAULT_THEME, PURPLE)
         for i in range(101):
             clock.now = 100.0 + 0.2 * i / 100
             s = tx.sample()
-            self.assertLess(s.old_content * s.new_content, 1e-9, f"fileiras sobrepostas em t={s.t:.2f}")
+            self.assertGreaterEqual(s.old_content + s.new_content, 0.99, f"conteúdo apagou em t={s.t:.2f}")
 
     def test_old_content_only_fades_out_and_new_only_in(self):
         tx, clock = _tx(DEFAULT_THEME, LIGHT_DEFAULT_THEME)

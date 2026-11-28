@@ -35,9 +35,9 @@ PULL = 0.55                 # quanto a figurinha vai para o centro do card ao se
 STAGGER = 0.035             # atraso entre figurinhas (fração da duração); o total nunca passa de STAGGER_MAX
 STAGGER_MAX = 0.15
 
-# Fatias do tempo (fração da duração): sem lacuna morta entre saída e entrada (evita piscar em trocas rápidas)
-CONTENT_OUT_ART, CONTENT_IN_ART = (0.0, 0.35), (0.35, 0.85)
-CONTENT_OUT_PLAIN, CONTENT_IN_PLAIN = (0.0, 0.45), (0.35, 0.85)
+# Fatias do tempo (fração da duração): crossfade contínuo (conteúdo nunca apaga virando caixa preta vazia)
+CONTENT_OUT_ART, CONTENT_IN_ART = (0.0, 0.70), (0.0, 0.70)
+CONTENT_OUT_PLAIN, CONTENT_IN_PLAIN = (0.0, 0.65), (0.0, 0.65)
 LEAVE = (0.0, 0.35)
 ARRIVE = (0.45, 0.85)
 
